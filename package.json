@@ -1,0 +1,36 @@
+{
+  "name": "bb-plugin-provider-pi-durable",
+  "version": "0.1.0",
+  "type": "module",
+  "engines": {
+    "bb": ">=0.45",
+    "bbPluginSdk": ">=0.5.22"
+  },
+  "bb": {
+    "name": "Pi Durable",
+    "description": "Run BB threads with Pi Durable ACID SQLite runtime.",
+    "branding": {
+      "icon": "./icons/pi-durable.svg"
+    },
+    "experimental_providers": [
+      {
+        "kind": "agent",
+        "id": "pi-durable",
+        "displayName": "Pi Durable"
+      }
+    ],
+    "server": "./dist/server.js",
+    "host": "./dist/host.js"
+  },
+  "dependencies": {
+    "@get-bb/plugin-sdk": "0.6.15",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@get-bb/plugin-sdk": "0.6.15",
+    "typescript": "^5.7.0"
+  },
+  "scripts": {
+    "build": "bb plugin build"
+  }
+}
