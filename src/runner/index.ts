@@ -1,24 +1,26 @@
-import * as crypto from "node:crypto";
-import { writeSync } from "node:fs";
+import { existsSync, readFileSync, writeSync } from "node:fs";
+import { join } from "node:path";
 import { Socket } from "node:net";
-import { StringDecoder } from "node:string_decoder";
-import { type OpenDurableOptions, openDurable } from "./runtime.ts";
+import { DefaultResourceLoader, ModelRuntime, SettingsManager } from "@earendil-works/pi-coding-agent";
+import { getAgentDir } from "./sessions.ts";
+import type { ModelThinkingLevel } from "./harness-setup.ts";
 import { findInitialAgentModel } from "./harness-setup.ts";
-import { ModelRuntime, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { attachJsonlLineReader, serializeJsonLine } from "./jsonl.ts";
+import { openDurable, type OpenDurableOptions } from "./runtime.ts";
 import { BBEventAdapter, type BBWireEvent } from "./bridge/bb-event-adapter.ts";
-import type { ModelThinkingLevel } from "@earendil-works/pi-ai";
 
-interface CliArgs {
+export interface CliArgs {
 	mode?: string;
 	session?: string;
 	continueSession?: boolean;
+	noSession?: boolean;
 	provider?: string;
 	model?: string;
 	thinking?: ModelThinkingLevel;
 	cwd?: string;
 	systemPromptPath?: string;
 	appendSystemPromptPath?: string;
+	extension?: string;
 }
 
 function parseCliArgs(argv: string[]): CliArgs {
@@ -28,21 +30,46 @@ function parseCliArgs(argv: string[]): CliArgs {
 		if (arg === "--mode" && i + 1 < argv.length) args.mode = argv[++i];
 		else if (arg === "--session" && i + 1 < argv.length) args.session = argv[++i];
 		else if (arg === "--continue") args.continueSession = true;
+		else if (arg === "--no-session") args.noSession = true;
 		else if (arg === "--provider" && i + 1 < argv.length) args.provider = argv[++i];
 		else if (arg === "--model" && i + 1 < argv.length) args.model = argv[++i];
 		else if (arg === "--thinking" && i + 1 < argv.length) args.thinking = argv[++i] as ModelThinkingLevel;
 		else if (arg === "--system-prompt" && i + 1 < argv.length) args.systemPromptPath = argv[++i];
 		else if (arg === "--append-system-prompt" && i + 1 < argv.length) args.appendSystemPromptPath = argv[++i];
+		else if (arg === "--extension" && i + 1 < argv.length) args.extension = argv[++i];
 		else if (!arg.startsWith("-") && !args.cwd) args.cwd = arg;
 	}
 	return args;
 }
 
+function getPiDurableVersion(): string {
+	try {
+		const durablePkg = require.resolve("@earendil-works/pi-durable/package.json");
+		if (existsSync(durablePkg)) {
+			const parsed = JSON.parse(readFileSync(durablePkg, "utf8"));
+			if (parsed.version) return parsed.version;
+		}
+	} catch {
+		// fallback
+	}
+	try {
+		const pluginPkg = join(__dirname, "..", "..", "package.json");
+		if (existsSync(pluginPkg)) {
+			const parsed = JSON.parse(readFileSync(pluginPkg, "utf8"));
+			const dep = parsed.dependencies?.["@earendil-works/pi-durable"]?.replace(/^[\^~]/, "");
+			if (dep) return dep;
+		}
+	} catch {
+		// fallback
+	}
+	return "1.0.0";
+}
+
 const argv = process.argv.slice(2);
 
-// Handle --version flag (Defect D-9)
+// Handle --version flag dynamically (Defect D-9, AP-027)
 if (argv.includes("--version") || argv.includes("-v")) {
-	console.log("1.0.4");
+	console.log(getPiDurableVersion());
 	process.exit(0);
 }
 
@@ -53,50 +80,137 @@ function output(data: unknown): void {
 	process.stdout.write(serializeJsonLine(data));
 }
 
-// Side channel setup (FD 3: outbound, FD 4: inbound)
-const hasFd3 = Boolean(process.env.BB_PI_BRIDGE_FD3 || process.env.PI_RPC_BRIDGE_CHANNEL);
-const sendToBridge = (payload: unknown) => {
-	if (!hasFd3) return;
-	try {
-		writeSync(3, `${JSON.stringify(payload)}\n`);
-	} catch {
-		// Ignore write errors to closed side channel
-	}
-};
+const CHILD_TO_BRIDGE_FD = 3;
+const BRIDGE_TO_CHILD_FD = 4;
+
+let sendToBridge = (_msg: unknown) => {};
+try {
+	sendToBridge = (msg: unknown) => {
+		const str = `${JSON.stringify(msg)}\n`;
+		try {
+			writeSync(CHILD_TO_BRIDGE_FD, Buffer.from(str, "utf8"));
+		} catch {
+			// Ignore write error if FD 3 is not open
+		}
+	};
+} catch {}
 
 async function main() {
-	const modelRuntime = await ModelRuntime.create();
-	const settingsManager = SettingsManager.create(args.cwd ?? process.cwd());
+	process.on("SIGTERM", () => process.exit(0));
+	process.on("SIGINT", () => process.exit(0));
+	process.stdin.on("end", () => process.exit(0));
 
-	// Handshake: notify bridge of model scope
-	const models = modelRuntime.getAvailableSnapshot();
+	const cwd = args.cwd ?? process.cwd();
+	const agentDir = getAgentDir();
+	const settingsManager = SettingsManager.create(cwd, agentDir);
+	const modelRuntime = await ModelRuntime.create();
+
+	// Load extensions and providers (Antigravity, OpenRouter, etc.)
+	const resourceLoader = new DefaultResourceLoader({ cwd, agentDir, settingsManager });
+	await resourceLoader.reload();
+	const extensionsResult = resourceLoader.getExtensions();
+	for (const { name, config } of extensionsResult.runtime.pendingProviderRegistrations) {
+		try { modelRuntime.registerProvider(name, config); } catch {}
+	}
+	for (const { provider } of extensionsResult.runtime.pendingNativeProviderRegistrations) {
+		try { modelRuntime.registerNativeProvider(provider); } catch {}
+	}
+	for (const { definition } of extensionsResult.runtime.pendingVirtualModelRegistrations) {
+		try { modelRuntime.registerVirtualModel(definition); } catch {}
+	}
+
+	// Models discovery
+	const availableModels = modelRuntime.getAvailableSnapshot();
 	const initialAgent = await findInitialAgentModel(
 		settingsManager,
 		modelRuntime,
 		args.model ? { provider: args.provider, model: args.model, thinking: args.thinking } : undefined,
 	);
 
-	sendToBridge({
-		kind: "model-scope",
-		scopedModelIds: models.map((m) => `${m.provider}/${m.id}`),
-		defaultModelId: initialAgent.model ? `${initialAgent.model.provider}/${initialAgent.model.modelId}` : undefined,
-	});
+	const defaultModel = initialAgent.model
+		? modelRuntime.getModel(initialAgent.model.provider, initialAgent.model.modelId) ?? availableModels[0]
+		: availableModels[0];
+	const defaultModelId = defaultModel ? `${defaultModel.provider}/${defaultModel.id}` : undefined;
+	const defaultThinkingLevel = initialAgent.thinkingLevel ?? "off";
 
-	// Optional FD 4 inbound channel
-	if (process.env.BB_PI_BRIDGE_FD4) {
-		try {
-			const fd4Socket = new Socket({ fd: 4, readable: true, writable: false });
-			attachJsonlLineReader(fd4Socket, (line) => {
-				try {
-					const msg = JSON.parse(line);
-					if (msg?.kind === "ping") sendToBridge({ kind: "pong" });
-				} catch {}
-			});
-		} catch {}
-	}
+	const modelScope = {
+		scopedModelIds: availableModels.map((m) => `${m.provider}/${m.id}`),
+		defaultModelId,
+	};
 
+	// Notify bridge of model scope and ready status over FD 3
+	sendToBridge({ kind: "model-scope", ...modelScope });
 	sendToBridge({ ready: true, kind: "ready" });
 
+	// Inbound side channel on FD 4
+	try {
+		const bridgeIn = new Socket({ fd: BRIDGE_TO_CHILD_FD, readable: true, writable: false });
+		bridgeIn.on("error", () => {});
+		bridgeIn.unref();
+
+		attachJsonlLineReader(bridgeIn, (line) => {
+			const trimmed = line.trim();
+			if (!trimmed) return;
+			try {
+				const req = JSON.parse(trimmed);
+				if (req.kind === "request") {
+					if (req.method === "model-scope") {
+						sendToBridge({ kind: "reply", id: req.id, result: modelScope });
+					} else if (req.method === "refresh-models") {
+						sendToBridge({ kind: "reply", id: req.id, result: { refreshed: true } });
+					} else if (req.method === "leaf") {
+						sendToBridge({ kind: "reply", id: req.id, result: { leafId: null } });
+					} else {
+						sendToBridge({ kind: "reply", id: req.id, result: {} });
+					}
+				}
+			} catch {}
+		});
+	} catch {
+		// FD 4 not open
+	}
+
+	const success = (id: string | undefined, command: string, data?: unknown) => {
+		output({ id, type: "response", command, success: true, data });
+	};
+
+	const error = (id: string | undefined, command: string, message: string) => {
+		output({ id, type: "response", command, success: false, error: message });
+	};
+
+	// Handle probe / catalog mode (--no-session)
+	if (args.noSession) {
+		attachJsonlLineReader(process.stdin, (line) => {
+			if (!line.trim()) return;
+			try {
+				const cmd = JSON.parse(line);
+				if (cmd.type === "get_available_models") {
+					const currentModels = modelRuntime.getAvailableSnapshot();
+					success(cmd.id, "get_available_models", { models: currentModels });
+				} else if (cmd.type === "get_state") {
+					success(cmd.id, "get_state", {
+						model: defaultModel ? { provider: defaultModel.provider, id: defaultModel.id, modelId: defaultModel.id } : null,
+						thinkingLevel: defaultThinkingLevel,
+						isStreaming: false,
+						isCompacting: false,
+						steeringMode: "one-at-a-time",
+						followUpMode: "one-at-a-time",
+						sessionId: "catalog",
+						autoCompactionEnabled: true,
+						messageCount: 0,
+						pendingMessageCount: 0,
+					});
+				} else {
+					success(cmd.id, cmd.type, {});
+				}
+			} catch (err) {
+				error(undefined, "unknown", err instanceof Error ? err.message : String(err));
+			}
+		});
+		return;
+	}
+
+	// Active durable session mode
 	const durableOptions: OpenDurableOptions = {
 		cwd: args.cwd,
 		continueSession: args.continueSession,
@@ -121,24 +235,15 @@ async function main() {
 		}
 	});
 
-	const success = (id: string | undefined, command: string, data?: unknown) => {
-		output({ id, type: "response", command, success: true, data });
-	};
-
-	const error = (id: string | undefined, command: string, message: string) => {
-		output({ id, type: "response", command, success: false, error: message });
-	};
-
-	// Handle stdin RPC commands
+	// Handle stdin RPC commands in active session
 	attachJsonlLineReader(process.stdin, async (line) => {
 		let cmd: any;
 		try {
 			cmd = JSON.parse(line);
 		} catch (e) {
+			error(undefined, "parse", `Invalid JSON: ${e}`);
 			return;
 		}
-
-		if (!cmd || typeof cmd !== "object" || !cmd.type) return;
 
 		switch (cmd.type) {
 			case "prompt": {
@@ -174,51 +279,56 @@ async function main() {
 			case "get_state": {
 				const current = durable.view.current();
 				const agentDoc = (current.conversation.docs["pi.agent"] ?? {}) as any;
+				const modelObj = agentDoc.model
+					? {
+							provider: agentDoc.model.provider,
+							id: agentDoc.model.id ?? agentDoc.model.modelId,
+							modelId: agentDoc.model.modelId ?? agentDoc.model.id,
+						}
+					: null;
 				success(cmd.id, "get_state", {
-					model: agentDoc.model,
-					thinkingLevel: agentDoc.thinkingLevel,
-					cwd: current.session.cwd,
-					sessionId: current.session.id,
+					model: modelObj,
+					thinkingLevel: agentDoc.thinkingLevel ?? "none",
+					cwd: args.cwd ?? process.cwd(),
+					sessionId: args.session ?? "default",
 				});
-				break;
-			}
-			case "get_session_stats": {
-				// Context statistics implementation (defect D-5)
-				const current = durable.view.current();
-				const usageDoc = (current.conversation.docs["pi.usage"] ?? {}) as any;
-				const tokens = usageDoc.totalTokens ?? (usageDoc.input ?? 0) + (usageDoc.output ?? 0);
-				const agentDoc = (current.conversation.docs["pi.agent"] ?? {}) as any;
-				const modelRef = agentDoc?.model;
-				const modelMeta = modelRef ? durable.modelRuntime.getModel(modelRef.provider, modelRef.modelId) : undefined;
-				const contextWindow = modelMeta?.contextWindow ?? 1048576;
-				success(cmd.id, "get_session_stats", {
-					contextUsage: { tokens, contextWindow },
-				});
-				break;
-			}
-			case "set_model": {
-				const modelsList = durable.modelRuntime.getAvailableSnapshot();
-				const target = modelsList.find((m) => m.provider === cmd.provider && m.id === cmd.modelId);
-				if (!target) {
-					error(cmd.id, "set_model", `Model not found: ${cmd.provider}/${cmd.modelId}`);
-					return;
-				}
-				await durable.controller.setModel({ provider: cmd.provider, modelId: cmd.modelId });
-				success(cmd.id, "set_model", target);
-				break;
-			}
-			case "set_thinking_level": {
-				// Explicit thinking level setter (defect D-10)
-				if (cmd.level) {
-					await durable.controller.setThinkingLevel(cmd.level);
-				} else {
-					await durable.controller.cycleThinking();
-				}
-				success(cmd.id, "set_thinking_level");
 				break;
 			}
 			case "get_available_models": {
-				success(cmd.id, "get_available_models", durable.modelRuntime.getAvailableSnapshot());
+				const currentModels = modelRuntime.getAvailableSnapshot();
+				success(cmd.id, "get_available_models", { models: currentModels });
+				break;
+			}
+			case "set_model": {
+				if (!cmd.provider || !cmd.modelId) {
+					error(cmd.id, "set_model", "Missing provider or modelId");
+					return;
+				}
+				await durable.controller.setModel({ provider: cmd.provider, modelId: cmd.modelId });
+				success(cmd.id, "set_model");
+				break;
+			}
+			case "set_thinking_level": {
+				await durable.controller.setThinkingLevel(cmd.level);
+				success(cmd.id, "set_thinking_level");
+				break;
+			}
+			case "get_session_stats": {
+				const current = durable.view.current();
+				const usageDoc = (current.conversation.docs["pi.usage"] ?? {}) as any;
+				const agentDoc = (current.conversation.docs["pi.agent"] ?? {}) as any;
+				const totalTokens = usageDoc.totalTokens ?? (usageDoc.input ?? 0) + (usageDoc.output ?? 0);
+				let contextWindow = 128000;
+				if (agentDoc.model?.provider && agentDoc.model?.modelId) {
+					const m = modelRuntime.getModel(agentDoc.model.provider, agentDoc.model.modelId);
+					if (m?.contextWindow) contextWindow = m.contextWindow;
+				}
+				success(cmd.id, "get_session_stats", {
+					contextUsage: {
+						tokens: totalTokens,
+						contextWindow,
+					},
+				});
 				break;
 			}
 			default: {
@@ -227,20 +337,9 @@ async function main() {
 			}
 		}
 	});
-
-	// Cleanup on SIGINT / SIGTERM
-	const cleanup = async () => {
-		try {
-			await durable.close();
-		} finally {
-			process.exit(0);
-		}
-	};
-	process.on("SIGINT", cleanup);
-	process.on("SIGTERM", cleanup);
 }
 
 main().catch((err) => {
-	console.error("Durable runner initialization failed:", err);
+	console.error(`Runner fatal error: ${err instanceof Error ? err.stack : err}`);
 	process.exit(1);
 });

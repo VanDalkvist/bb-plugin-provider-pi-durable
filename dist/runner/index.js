@@ -1,42 +1,17 @@
 import { createRequire as __createRequire } from "node:module";
 const require = __createRequire(import.meta.url);
+var __require = /* @__PURE__ */ ((x) => typeof require !== "undefined" ? require : typeof Proxy !== "undefined" ? new Proxy(x, {
+  get: (a, b) => (typeof require !== "undefined" ? require : a)[b]
+}) : x)(function(x) {
+  if (typeof require !== "undefined") return require.apply(this, arguments);
+  throw Error('Dynamic require of "' + x + '" is not supported');
+});
 
 // src/runner/index.ts
-import { writeSync } from "node:fs";
+import { existsSync as existsSync2, readFileSync as readFileSync2, writeSync } from "node:fs";
+import { join as join3 } from "node:path";
 import { Socket } from "node:net";
-
-// src/runner/runtime.ts
-import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import { clampThinkingLevel, getSupportedThinkingLevels } from "@earendil-works/pi-ai";
-import {
-  Harness,
-  ROOT_CONVERSATION_ID
-} from "@earendil-works/pi-durable";
-import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
-import {
-  DefaultResourceLoader,
-  ModelRuntime,
-  SettingsManager
-} from "@earendil-works/pi-coding-agent";
-
-// src/runner/harness-setup.ts
-import {
-  createRegistry
-} from "@earendil-works/pi-durable";
-import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
-import { CodingTools } from "@earendil-works/pi-durable/tools";
-import {
-  resolveCliModel
-} from "@earendil-works/pi-coding-agent";
-
-// src/runner/prompt.ts
-import { existsSync, readFileSync } from "node:fs";
-import { defineExtension, section } from "@earendil-works/pi-durable";
-import {
-  formatSkillsForPrompt,
-  loadProjectContextFiles,
-  loadSkills
-} from "@earendil-works/pi-coding-agent";
+import { DefaultResourceLoader as DefaultResourceLoader2, ModelRuntime as ModelRuntime2, SettingsManager as SettingsManager2 } from "@earendil-works/pi-coding-agent";
 
 // src/runner/sessions.ts
 import { createHash, randomUUID } from "node:crypto";
@@ -97,31 +72,94 @@ async function selectSession(cwdInput, continueSession, targetSession) {
   return { id: basename(directory), directory, database: join(directory, "session.sqlite"), cwd, created, release };
 }
 
+// src/runner/harness-setup.ts
+import {
+  createRegistry
+} from "@earendil-works/pi-durable";
+import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
+import { CodingTools } from "@earendil-works/pi-durable/tools";
+import {
+  resolveCliModel
+} from "@earendil-works/pi-coding-agent";
+
 // src/runner/prompt.ts
-var KEYS = ["preamble", "tools", "rules", "docs", "project_context", "skills", "append_prompt", "cwd"];
-function createPiPrompt(settings, fallbackCwd, options = {}) {
-  const resources = /* @__PURE__ */ new Map();
-  const load = (cwd) => {
-    let found = resources.get(cwd);
-    if (found === void 0) {
-      const agentDir = getAgentDir();
-      found = {
-        contextFiles: loadProjectContextFiles({ cwd, agentDir }),
-        skills: loadSkills({ cwd, agentDir, skillPaths: settings.getSkillPaths(), includeDefaults: true }).skills
-      };
-      resources.set(cwd, found);
-    }
-    return found;
-  };
-  let appendedContent = "";
-  if (options.appendSystemPromptPath && existsSync(options.appendSystemPromptPath)) {
-    try {
-      appendedContent = readFileSync(options.appendSystemPromptPath, "utf8").trim();
-    } catch (err) {
-      console.error(`Warning: failed to read append-system-prompt: ${err}`);
+import { existsSync, readFileSync } from "node:fs";
+import { join as join2 } from "node:path";
+import { defineExtension, section } from "@earendil-works/pi-durable";
+import { formatSkillsForPrompt } from "@earendil-works/pi-coding-agent";
+var CONTRIBUTIONS = {
+  read: {
+    snippet: "Read file contents",
+    guidelines: ["Use read to examine files instead of cat or sed."]
+  },
+  bash: {
+    snippet: "Execute bash commands (ls, grep, find, etc.)",
+    guidelines: [
+      "Use bash for file operations like ls, rg, find",
+      "You can inspect PI_* environment variables for current model and session details."
+    ]
+  },
+  edit: {
+    snippet: "Make precise file edits with exact text replacement, including multiple disjoint edits in one call",
+    guidelines: [
+      "Use edit for precise changes (edits[].oldText must match exactly)",
+      "When changing multiple separate locations in one file, use one edit call with multiple entries in edits[] instead of multiple edit calls",
+      "Each edits[].oldText is matched against the original file, not after earlier edits are applied. Do not emit overlapping or nested edits. Merge nearby changes into one edit.",
+      "Keep edits[].oldText as small as possible while still being unique in the file. Do not pad with large unchanged regions."
+    ]
+  },
+  write: {
+    snippet: "Create or overwrite files",
+    guidelines: ["Use write only for new files or complete rewrites."]
+  }
+};
+var KEYS = ["preamble", "tools", "rules", "docs", "addendum", "project_context", "skills", "cwd"];
+function loadContextFiles(cwd) {
+  const files = [];
+  const candidates = [
+    join2(cwd, "AGENTS.md"),
+    join2(cwd, ".bb", "AGENTS.md"),
+    join2(cwd, ".github", "copilot-instructions.md")
+  ];
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) {
+      try {
+        const content = readFileSync(candidate, "utf8").trim();
+        if (content) {
+          files.push({ path: candidate, content });
+        }
+      } catch {
+      }
     }
   }
-  let systemPromptOverride = "";
+  return files;
+}
+function buildRules(selectedTools) {
+  const rules = [];
+  const seen = /* @__PURE__ */ new Set();
+  const addRule = (rule) => {
+    const normalized = rule.trim();
+    if (!normalized || seen.has(normalized)) return;
+    seen.add(normalized);
+    rules.push(normalized);
+  };
+  if (selectedTools.includes("bash")) {
+    addRule("Use bash for file operations like ls, rg, find");
+  }
+  for (const name of selectedTools) {
+    const contrib = CONTRIBUTIONS[name];
+    if (contrib) {
+      for (const guideline of contrib.guidelines) {
+        addRule(guideline);
+      }
+    }
+  }
+  addRule("Be concise in your responses");
+  addRule("Show file paths clearly when working with files");
+  return rules.map((r) => `- ${r}`).join("\n");
+}
+function createPiPrompt(settings, fallbackCwd, options = {}) {
+  let systemPromptOverride;
   if (options.systemPromptPath && existsSync(options.systemPromptPath)) {
     try {
       systemPromptOverride = readFileSync(options.systemPromptPath, "utf8").trim();
@@ -129,6 +167,26 @@ function createPiPrompt(settings, fallbackCwd, options = {}) {
       console.error(`Warning: failed to read system-prompt: ${err}`);
     }
   }
+  let appendPrompt;
+  if (options.appendSystemPromptPath && existsSync(options.appendSystemPromptPath)) {
+    try {
+      appendPrompt = readFileSync(options.appendSystemPromptPath, "utf8").trim();
+    } catch (err) {
+      console.error(`Warning: failed to read append-system-prompt: ${err}`);
+    }
+  }
+  const resources = /* @__PURE__ */ new Map();
+  const load = (cwd) => {
+    let found = resources.get(cwd);
+    if (found === void 0) {
+      found = {
+        contextFiles: loadContextFiles(cwd),
+        skills: []
+      };
+      resources.set(cwd, found);
+    }
+    return found;
+  };
   const built = /* @__PURE__ */ new WeakMap();
   const build = (input) => {
     let sections = built.get(input);
@@ -141,23 +199,44 @@ function createPiPrompt(settings, fallbackCwd, options = {}) {
   const buildSections = (input) => {
     const cwd = input.env?.cwd ?? input.agent.cwd ?? fallbackCwd;
     const { contextFiles, skills } = load(cwd);
+    const selectedTools = input.agent.tools.map((t) => t.name);
     const sections = {};
     if (systemPromptOverride) {
       sections.preamble = systemPromptOverride;
+    } else {
+      sections.preamble = "You are an expert coding assistant operating inside pi, a coding agent harness. You help users by reading files, executing commands, editing code, and writing new files.";
+      const visibleTools = selectedTools.filter((name) => !!CONTRIBUTIONS[name]).map((name) => `- ${name}: ${CONTRIBUTIONS[name].snippet}`);
+      sections.tools = `<tools>
+${visibleTools.join("\n")}
+
+In addition to the tools above, you may have access to other custom tools depending on the project.
+</tools>`;
+      sections.rules = `<rules>
+${buildRules(selectedTools)}
+</rules>`;
+    }
+    if (appendPrompt) {
+      sections.addendum = `<addendum>
+${appendPrompt}
+</addendum>`;
     }
     if (contextFiles && contextFiles.length > 0) {
-      sections.project_context = contextFiles.map((cf) => `<project_instructions path="${cf.path}">
+      const rendered = contextFiles.map((cf) => `<project_instructions path="${cf.path}">
 ${cf.content}
 </project_instructions>`).join("\n\n");
+      sections.project_context = `<project_context>
+Project-specific instructions and guidelines:
+
+${rendered}
+</project_context>`;
     }
     if (skills && skills.length > 0) {
-      sections.skills = formatSkillsForPrompt(skills);
-    }
-    if (appendedContent) {
-      sections.append_prompt = appendedContent;
+      sections.skills = `<skills>
+${formatSkillsForPrompt(skills, "read")}
+</skills>`;
     }
     sections.cwd = `<cwd>
-${cwd}
+${cwd.replace(/\\/g, "/")}
 </cwd>`;
     return sections;
   };
@@ -234,7 +313,7 @@ async function findInitialAgentModel(settingsManager, modelRuntime, cli) {
     }
     return {
       model: { provider: resolved.model.provider, modelId: resolved.model.id },
-      thinkingLevel: cli.thinking ?? resolved.thinkingLevel ?? "none"
+      thinkingLevel: cli.thinking ?? resolved.thinkingLevel ?? "off"
     };
   }
   const defaultProvider = settingsManager.getDefaultProvider?.();
@@ -246,7 +325,7 @@ async function findInitialAgentModel(settingsManager, modelRuntime, cli) {
     if (matched) {
       return {
         model: { provider: matched.provider, modelId: matched.id },
-        thinkingLevel: defaultThinkingLevel ?? "none"
+        thinkingLevel: defaultThinkingLevel ?? "off"
       };
     }
   }
@@ -254,11 +333,63 @@ async function findInitialAgentModel(settingsManager, modelRuntime, cli) {
   if (available.length > 0) {
     return {
       model: { provider: available[0].provider, modelId: available[0].id },
-      thinkingLevel: "none"
+      thinkingLevel: "off"
     };
   }
   return {};
 }
+
+// src/runner/jsonl.ts
+import { StringDecoder } from "node:string_decoder";
+function serializeJsonLine(value) {
+  return `${JSON.stringify(value)}
+`;
+}
+function attachJsonlLineReader(stream, onLine) {
+  const decoder = new StringDecoder("utf8");
+  let buffer = "";
+  const emitLine = (line) => {
+    onLine(line.endsWith("\r") ? line.slice(0, -1) : line);
+  };
+  const onData = (chunk) => {
+    buffer += typeof chunk === "string" ? chunk : decoder.write(chunk);
+    while (true) {
+      const newlineIndex = buffer.indexOf("\n");
+      if (newlineIndex === -1) {
+        return;
+      }
+      emitLine(buffer.slice(0, newlineIndex));
+      buffer = buffer.slice(newlineIndex + 1);
+    }
+  };
+  const onEnd = () => {
+    buffer += decoder.end();
+    if (buffer.length > 0) {
+      emitLine(buffer);
+      buffer = "";
+    }
+  };
+  stream.on("data", onData);
+  stream.on("end", onEnd);
+  return () => {
+    stream.off("data", onData);
+    stream.off("end", onEnd);
+  };
+}
+
+// src/runner/runtime.ts
+import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
+import { clampThinkingLevel, getSupportedThinkingLevels } from "@earendil-works/pi-ai";
+import {
+  Harness,
+  ROOT_CONVERSATION_ID
+} from "@earendil-works/pi-durable";
+import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
+import {
+  DefaultResourceLoader,
+  ModelRuntime,
+  SettingsManager
+} from "@earendil-works/pi-coding-agent";
 
 // src/runner/subagent.ts
 import { Type } from "@earendil-works/pi-ai";
@@ -315,7 +446,7 @@ async function firstInput(harness, id) {
   let cursor;
   do {
     const page = await conversation.entries({}, 256, cursor, context);
-    first = page.items.findLast((entry) => entry.kind === "pi.user") ?? first;
+    first = [...page.items].reverse().find((entry) => entry.kind === "pi.user") ?? first;
     cursor = page.next;
   } while (cursor !== void 0);
   return titleOf(first);
@@ -577,60 +708,19 @@ async function openDurable(options = {}) {
   }
 }
 
-// src/runner/index.ts
-import { ModelRuntime as ModelRuntime2, SettingsManager as SettingsManager2 } from "@earendil-works/pi-coding-agent";
-
-// src/runner/jsonl.ts
-import { StringDecoder } from "node:string_decoder";
-function serializeJsonLine(value) {
-  return `${JSON.stringify(value)}
-`;
-}
-function attachJsonlLineReader(stream, onLine) {
-  const decoder = new StringDecoder("utf8");
-  let buffer = "";
-  const emitLine = (line) => {
-    onLine(line.endsWith("\r") ? line.slice(0, -1) : line);
-  };
-  const onData = (chunk) => {
-    buffer += typeof chunk === "string" ? chunk : decoder.write(chunk);
-    while (true) {
-      const newlineIndex = buffer.indexOf("\n");
-      if (newlineIndex === -1) {
-        return;
-      }
-      emitLine(buffer.slice(0, newlineIndex));
-      buffer = buffer.slice(newlineIndex + 1);
-    }
-  };
-  const onEnd = () => {
-    buffer += decoder.end();
-    if (buffer.length > 0) {
-      emitLine(buffer);
-      buffer = "";
-    }
-  };
-  stream.on("data", onData);
-  stream.on("end", onEnd);
-  return () => {
-    stream.off("data", onData);
-    stream.off("end", onEnd);
-  };
-}
-
 // src/runner/bridge/bb-event-adapter.ts
 function resolveToolCallArgs(callId, current) {
   const live = current.conversation.docs["pi.live"] ?? {};
-  const activeCalls = live.generation?.message?.content?.filter(
-    (b) => b.type === "toolCall"
+  const activeCalls = (live.generation?.message?.content ?? []).filter(
+    (b) => b?.type === "toolCall"
   );
-  if (activeCalls) {
+  if (activeCalls.length > 0) {
     const matched = activeCalls.find((c) => c.id === callId || c.callId === callId);
     if (matched?.arguments && typeof matched.arguments === "object") {
       return matched.arguments;
     }
   }
-  const entries = Object.values(current.conversation.entries ?? {});
+  const entries = current.conversation.entries ?? [];
   for (let i = entries.length - 1; i >= 0; i--) {
     const entry = entries[i];
     if (entry?.kind === "pi.assistant" && Array.isArray(entry?.model)) {
@@ -651,6 +741,9 @@ function resolveToolCallArgs(callId, current) {
   if (slot?.args && typeof slot.args === "object") {
     return slot.args;
   }
+  if (slot?.input && typeof slot.input === "object") {
+    return slot.input;
+  }
   return {};
 }
 var BBEventAdapter = class {
@@ -658,7 +751,7 @@ var BBEventAdapter = class {
   inTurn = false;
   lastGenerationText = "";
   lastThinkingText = "";
-  seenTools = /* @__PURE__ */ new Map();
+  activeTools = /* @__PURE__ */ new Map();
   constructor(output2) {
     this.output = output2;
   }
@@ -667,12 +760,12 @@ var BBEventAdapter = class {
     const hasActiveTools = (live.tools ?? []).some(
       (s) => s.status === "running" || s.status === "pending"
     );
-    const isBusy = live.run?.status === "running" || live.generation !== void 0 || hasActiveTools;
+    const isBusy = live.run !== void 0 || live.generation !== void 0 || hasActiveTools;
     if (isBusy && !this.inTurn) {
       this.inTurn = true;
       this.lastGenerationText = "";
       this.lastThinkingText = "";
-      this.seenTools.clear();
+      this.activeTools.clear();
       this.output({ type: "agent_start" });
       this.output({ type: "turn_start" });
     }
@@ -713,71 +806,139 @@ var BBEventAdapter = class {
     }
     for (const slot of live.tools ?? []) {
       const callId = slot.callId ?? String(slot.id);
-      const prev = this.seenTools.get(callId);
+      const toolName = slot.name ?? slot.toolName ?? "unknown";
+      const isDone = slot.status === "done" || slot.status === "terminal";
+      const isRunning = slot.status === "running";
+      const prev = this.activeTools.get(callId);
+      const getResultAndError = () => {
+        const entries = current.conversation.entries ?? [];
+        const toolResultEntry = entries.find((e) => {
+          const msg = e.model?.[0];
+          return msg?.role === "toolResult" && msg?.toolCallId === callId;
+        });
+        const toolResultMsg = toolResultEntry?.model?.[0];
+        const isError = toolResultMsg?.isError ?? slot.isError ?? false;
+        const result = toolResultMsg?.content ?? slot.output ?? "";
+        return { result, isError };
+      };
       if (!prev) {
-        const toolArgs = resolveToolCallArgs(callId, current);
-        const toolName = slot.toolName ?? "unknown";
-        this.output({
-          type: "tool_execution_start",
-          toolCallId: callId,
-          toolName,
-          args: toolArgs
-        });
-        const resultStr = typeof slot.result === "string" ? slot.result : "";
-        this.seenTools.set(callId, { status: slot.status, resultLen: resultStr.length });
-      } else if (slot.status === "running" && typeof slot.result === "string" && slot.result.length > prev.resultLen) {
-        const partial = slot.result.slice(prev.resultLen);
-        this.seenTools.set(callId, { status: slot.status, resultLen: slot.result.length });
-        this.output({
-          type: "tool_execution_update",
-          toolCallId: callId,
-          toolName: slot.toolName ?? "unknown",
-          partialResult: partial
-        });
-      }
-      if ((slot.status === "completed" || slot.status === "failed") && prev?.status !== slot.status) {
-        const isError = slot.status === "failed" || slot.isError === true;
-        this.seenTools.set(callId, {
-          status: slot.status,
-          resultLen: typeof slot.result === "string" ? slot.result.length : 0
-        });
-        this.output({
-          type: "tool_execution_end",
-          toolCallId: callId,
-          toolName: slot.toolName ?? "unknown",
-          result: slot.result ?? null,
-          isError
-        });
+        if (isRunning || isDone || slot.status === "pending") {
+          const toolArgs = resolveToolCallArgs(callId, current);
+          this.activeTools.set(callId, {
+            name: toolName,
+            status: slot.status,
+            outputLength: slot.output?.length ?? 0
+          });
+          this.output({
+            type: "tool_execution_start",
+            toolCallId: callId,
+            toolName,
+            args: toolArgs
+          });
+          if (slot.output) {
+            this.output({
+              type: "tool_execution_update",
+              toolCallId: callId,
+              toolName,
+              partialResult: slot.output
+            });
+          }
+          if (isDone) {
+            const { result, isError } = getResultAndError();
+            this.output({
+              type: "tool_execution_end",
+              toolCallId: callId,
+              toolName,
+              result,
+              isError
+            });
+          }
+        }
+      } else {
+        if (slot.output && slot.output.length > prev.outputLength) {
+          const delta = slot.output.slice(prev.outputLength);
+          prev.outputLength = slot.output.length;
+          this.output({
+            type: "tool_execution_update",
+            toolCallId: callId,
+            toolName,
+            partialResult: delta
+          });
+        }
+        if (isDone && prev.status !== "done" && prev.status !== "terminal") {
+          prev.status = slot.status;
+          const { result, isError } = getResultAndError();
+          this.output({
+            type: "tool_execution_end",
+            toolCallId: callId,
+            toolName,
+            result,
+            isError
+          });
+        }
       }
     }
     if (!isBusy && this.inTurn) {
       this.inTurn = false;
-      this.output({ type: "turn_end" });
-      const finalContent = [];
-      if (this.lastThinkingText) {
-        finalContent.push({ type: "thinking", thinking: this.lastThinkingText });
-      }
-      if (this.lastGenerationText) {
-        finalContent.push({ type: "text", text: this.lastGenerationText });
-      }
-      const usageDoc = current.conversation.docs["pi.usage"] ?? {};
-      const finalMsg = {
-        role: "assistant",
-        content: finalContent.length > 0 ? finalContent : [{ type: "text", text: "" }],
-        stopReason: "stop",
-        usage: {
-          input: usageDoc.input,
-          output: usageDoc.output,
-          cacheRead: usageDoc.cacheRead,
-          cacheWrite: usageDoc.cacheWrite,
-          totalTokens: usageDoc.totalTokens ?? (usageDoc.input ?? 0) + (usageDoc.output ?? 0),
-          cost: usageDoc.cost
+      const entries = current.conversation.entries ?? [];
+      for (const [callId, toolState] of this.activeTools.entries()) {
+        if (toolState.status !== "done" && toolState.status !== "terminal") {
+          toolState.status = "done";
+          const toolResultEntry = entries.find((e) => {
+            const msg = e.model?.[0];
+            return msg?.role === "toolResult" && msg?.toolCallId === callId;
+          });
+          const toolResultMsg = toolResultEntry?.model?.[0];
+          const isError = toolResultMsg?.isError ?? false;
+          const result = toolResultMsg?.content ?? "";
+          this.output({
+            type: "tool_execution_end",
+            toolCallId: callId,
+            toolName: toolState.name,
+            result,
+            isError
+          });
         }
-      };
-      this.output({
-        type: "agent_end",
-        messages: [finalMsg]
-      });
+      }
+      const lastAssistantEntry = [...entries].reverse().find((e) => e.kind === "pi.assistant");
+      const lastAssistantMsg = lastAssistantEntry?.model?.[0];
+      let finalMsg;
+      if (lastAssistantMsg) {
+        finalMsg = {
+          role: "assistant",
+          content: lastAssistantMsg.content ?? [{ type: "text", text: this.lastGenerationText }],
+          stopReason: lastAssistantMsg.stopReason ?? "stop",
+          usage: lastAssistantMsg.usage
+        };
+      } else {
+        const finalContent = [];
+        if (this.lastThinkingText) {
+          finalContent.push({ type: "thinking", thinking: this.lastThinkingText });
+        }
+        if (this.lastGenerationText) {
+          finalContent.push({ type: "text", text: this.lastGenerationText });
+        }
+        const usageDoc = current.conversation.docs["pi.usage"] ?? {};
+        finalMsg = {
+          role: "assistant",
+          content: finalContent.length > 0 ? finalContent : [{ type: "text", text: "" }],
+          stopReason: "stop",
+          usage: {
+            input: usageDoc.input,
+            output: usageDoc.output,
+            cacheRead: usageDoc.cacheRead,
+            cacheWrite: usageDoc.cacheWrite,
+            totalTokens: usageDoc.totalTokens ?? (usageDoc.input ?? 0) + (usageDoc.output ?? 0),
+            cost: usageDoc.cost
+          }
+        };
+      }
+      this.output({ type: "message_end", message: finalMsg });
+      this.output({ type: "turn_end", message: finalMsg });
+      this.output({ type: "agent_end", messages: [finalMsg] });
+      this.lastGenerationText = "";
+      this.lastThinkingText = "";
+      this.activeTools.clear();
     }
   }
 };
@@ -790,61 +951,167 @@ function parseCliArgs(argv2) {
     if (arg === "--mode" && i + 1 < argv2.length) args2.mode = argv2[++i];
     else if (arg === "--session" && i + 1 < argv2.length) args2.session = argv2[++i];
     else if (arg === "--continue") args2.continueSession = true;
+    else if (arg === "--no-session") args2.noSession = true;
     else if (arg === "--provider" && i + 1 < argv2.length) args2.provider = argv2[++i];
     else if (arg === "--model" && i + 1 < argv2.length) args2.model = argv2[++i];
     else if (arg === "--thinking" && i + 1 < argv2.length) args2.thinking = argv2[++i];
     else if (arg === "--system-prompt" && i + 1 < argv2.length) args2.systemPromptPath = argv2[++i];
     else if (arg === "--append-system-prompt" && i + 1 < argv2.length) args2.appendSystemPromptPath = argv2[++i];
+    else if (arg === "--extension" && i + 1 < argv2.length) args2.extension = argv2[++i];
     else if (!arg.startsWith("-") && !args2.cwd) args2.cwd = arg;
   }
   return args2;
 }
+function getPiDurableVersion() {
+  try {
+    const durablePkg = __require.resolve("@earendil-works/pi-durable/package.json");
+    if (existsSync2(durablePkg)) {
+      const parsed = JSON.parse(readFileSync2(durablePkg, "utf8"));
+      if (parsed.version) return parsed.version;
+    }
+  } catch {
+  }
+  try {
+    const pluginPkg = join3(__dirname, "..", "..", "package.json");
+    if (existsSync2(pluginPkg)) {
+      const parsed = JSON.parse(readFileSync2(pluginPkg, "utf8"));
+      const dep = parsed.dependencies?.["@earendil-works/pi-durable"]?.replace(/^[\^~]/, "");
+      if (dep) return dep;
+    }
+  } catch {
+  }
+  return "1.0.0";
+}
 var argv = process.argv.slice(2);
 if (argv.includes("--version") || argv.includes("-v")) {
-  console.log("1.0.4");
+  console.log(getPiDurableVersion());
   process.exit(0);
 }
 var args = parseCliArgs(argv);
 function output(data) {
   process.stdout.write(serializeJsonLine(data));
 }
-var hasFd3 = Boolean(process.env.BB_PI_BRIDGE_FD3 || process.env.PI_RPC_BRIDGE_CHANNEL);
-var sendToBridge = (payload) => {
-  if (!hasFd3) return;
-  try {
-    writeSync(3, `${JSON.stringify(payload)}
-`);
-  } catch {
-  }
+var CHILD_TO_BRIDGE_FD = 3;
+var BRIDGE_TO_CHILD_FD = 4;
+var sendToBridge = (_msg) => {
 };
+try {
+  sendToBridge = (msg) => {
+    const str = `${JSON.stringify(msg)}
+`;
+    try {
+      writeSync(CHILD_TO_BRIDGE_FD, Buffer.from(str, "utf8"));
+    } catch {
+    }
+  };
+} catch {
+}
 async function main() {
+  process.on("SIGTERM", () => process.exit(0));
+  process.on("SIGINT", () => process.exit(0));
+  process.stdin.on("end", () => process.exit(0));
+  const cwd = args.cwd ?? process.cwd();
+  const agentDir = getAgentDir();
+  const settingsManager = SettingsManager2.create(cwd, agentDir);
   const modelRuntime = await ModelRuntime2.create();
-  const settingsManager = SettingsManager2.create(args.cwd ?? process.cwd());
-  const models = modelRuntime.getAvailableSnapshot();
+  const resourceLoader = new DefaultResourceLoader2({ cwd, agentDir, settingsManager });
+  await resourceLoader.reload();
+  const extensionsResult = resourceLoader.getExtensions();
+  for (const { name, config } of extensionsResult.runtime.pendingProviderRegistrations) {
+    try {
+      modelRuntime.registerProvider(name, config);
+    } catch {
+    }
+  }
+  for (const { provider } of extensionsResult.runtime.pendingNativeProviderRegistrations) {
+    try {
+      modelRuntime.registerNativeProvider(provider);
+    } catch {
+    }
+  }
+  for (const { definition } of extensionsResult.runtime.pendingVirtualModelRegistrations) {
+    try {
+      modelRuntime.registerVirtualModel(definition);
+    } catch {
+    }
+  }
+  const availableModels = modelRuntime.getAvailableSnapshot();
   const initialAgent = await findInitialAgentModel(
     settingsManager,
     modelRuntime,
     args.model ? { provider: args.provider, model: args.model, thinking: args.thinking } : void 0
   );
-  sendToBridge({
-    kind: "model-scope",
-    scopedModelIds: models.map((m) => `${m.provider}/${m.id}`),
-    defaultModelId: initialAgent.model ? `${initialAgent.model.provider}/${initialAgent.model.modelId}` : void 0
-  });
-  if (process.env.BB_PI_BRIDGE_FD4) {
-    try {
-      const fd4Socket = new Socket({ fd: 4, readable: true, writable: false });
-      attachJsonlLineReader(fd4Socket, (line) => {
-        try {
-          const msg = JSON.parse(line);
-          if (msg?.kind === "ping") sendToBridge({ kind: "pong" });
-        } catch {
-        }
-      });
-    } catch {
-    }
-  }
+  const defaultModel = initialAgent.model ? modelRuntime.getModel(initialAgent.model.provider, initialAgent.model.modelId) ?? availableModels[0] : availableModels[0];
+  const defaultModelId = defaultModel ? `${defaultModel.provider}/${defaultModel.id}` : void 0;
+  const defaultThinkingLevel = initialAgent.thinkingLevel ?? "off";
+  const modelScope = {
+    scopedModelIds: availableModels.map((m) => `${m.provider}/${m.id}`),
+    defaultModelId
+  };
+  sendToBridge({ kind: "model-scope", ...modelScope });
   sendToBridge({ ready: true, kind: "ready" });
+  try {
+    const bridgeIn = new Socket({ fd: BRIDGE_TO_CHILD_FD, readable: true, writable: false });
+    bridgeIn.on("error", () => {
+    });
+    bridgeIn.unref();
+    attachJsonlLineReader(bridgeIn, (line) => {
+      const trimmed = line.trim();
+      if (!trimmed) return;
+      try {
+        const req = JSON.parse(trimmed);
+        if (req.kind === "request") {
+          if (req.method === "model-scope") {
+            sendToBridge({ kind: "reply", id: req.id, result: modelScope });
+          } else if (req.method === "refresh-models") {
+            sendToBridge({ kind: "reply", id: req.id, result: { refreshed: true } });
+          } else if (req.method === "leaf") {
+            sendToBridge({ kind: "reply", id: req.id, result: { leafId: null } });
+          } else {
+            sendToBridge({ kind: "reply", id: req.id, result: {} });
+          }
+        }
+      } catch {
+      }
+    });
+  } catch {
+  }
+  const success = (id, command, data) => {
+    output({ id, type: "response", command, success: true, data });
+  };
+  const error = (id, command, message) => {
+    output({ id, type: "response", command, success: false, error: message });
+  };
+  if (args.noSession) {
+    attachJsonlLineReader(process.stdin, (line) => {
+      if (!line.trim()) return;
+      try {
+        const cmd = JSON.parse(line);
+        if (cmd.type === "get_available_models") {
+          const currentModels = modelRuntime.getAvailableSnapshot();
+          success(cmd.id, "get_available_models", { models: currentModels });
+        } else if (cmd.type === "get_state") {
+          success(cmd.id, "get_state", {
+            model: defaultModel ? { provider: defaultModel.provider, id: defaultModel.id, modelId: defaultModel.id } : null,
+            thinkingLevel: defaultThinkingLevel,
+            isStreaming: false,
+            isCompacting: false,
+            steeringMode: "one-at-a-time",
+            followUpMode: "one-at-a-time",
+            sessionId: "catalog",
+            autoCompactionEnabled: true,
+            messageCount: 0,
+            pendingMessageCount: 0
+          });
+        } else {
+          success(cmd.id, cmd.type, {});
+        }
+      } catch (err) {
+        error(void 0, "unknown", err instanceof Error ? err.message : String(err));
+      }
+    });
+    return;
+  }
   const durableOptions = {
     cwd: args.cwd,
     continueSession: args.continueSession,
@@ -864,20 +1131,14 @@ async function main() {
       console.error(`Adapter sync error: ${err}`);
     }
   });
-  const success = (id, command, data) => {
-    output({ id, type: "response", command, success: true, data });
-  };
-  const error = (id, command, message) => {
-    output({ id, type: "response", command, success: false, error: message });
-  };
   attachJsonlLineReader(process.stdin, async (line) => {
     let cmd;
     try {
       cmd = JSON.parse(line);
     } catch (e) {
+      error(void 0, "parse", `Invalid JSON: ${e}`);
       return;
     }
-    if (!cmd || typeof cmd !== "object" || !cmd.type) return;
     switch (cmd.type) {
       case "prompt": {
         if (!cmd.message) {
@@ -912,49 +1173,54 @@ async function main() {
       case "get_state": {
         const current = durable.view.current();
         const agentDoc = current.conversation.docs["pi.agent"] ?? {};
+        const modelObj = agentDoc.model ? {
+          provider: agentDoc.model.provider,
+          id: agentDoc.model.id ?? agentDoc.model.modelId,
+          modelId: agentDoc.model.modelId ?? agentDoc.model.id
+        } : null;
         success(cmd.id, "get_state", {
-          model: agentDoc.model,
-          thinkingLevel: agentDoc.thinkingLevel,
-          cwd: current.session.cwd,
-          sessionId: current.session.id
+          model: modelObj,
+          thinkingLevel: agentDoc.thinkingLevel ?? "none",
+          cwd: args.cwd ?? process.cwd(),
+          sessionId: args.session ?? "default"
         });
+        break;
+      }
+      case "get_available_models": {
+        const currentModels = modelRuntime.getAvailableSnapshot();
+        success(cmd.id, "get_available_models", { models: currentModels });
+        break;
+      }
+      case "set_model": {
+        if (!cmd.provider || !cmd.modelId) {
+          error(cmd.id, "set_model", "Missing provider or modelId");
+          return;
+        }
+        await durable.controller.setModel({ provider: cmd.provider, modelId: cmd.modelId });
+        success(cmd.id, "set_model");
+        break;
+      }
+      case "set_thinking_level": {
+        await durable.controller.setThinkingLevel(cmd.level);
+        success(cmd.id, "set_thinking_level");
         break;
       }
       case "get_session_stats": {
         const current = durable.view.current();
         const usageDoc = current.conversation.docs["pi.usage"] ?? {};
-        const tokens = usageDoc.totalTokens ?? (usageDoc.input ?? 0) + (usageDoc.output ?? 0);
         const agentDoc = current.conversation.docs["pi.agent"] ?? {};
-        const modelRef = agentDoc?.model;
-        const modelMeta = modelRef ? durable.modelRuntime.getModel(modelRef.provider, modelRef.modelId) : void 0;
-        const contextWindow = modelMeta?.contextWindow ?? 1048576;
+        const totalTokens = usageDoc.totalTokens ?? (usageDoc.input ?? 0) + (usageDoc.output ?? 0);
+        let contextWindow = 128e3;
+        if (agentDoc.model?.provider && agentDoc.model?.modelId) {
+          const m = modelRuntime.getModel(agentDoc.model.provider, agentDoc.model.modelId);
+          if (m?.contextWindow) contextWindow = m.contextWindow;
+        }
         success(cmd.id, "get_session_stats", {
-          contextUsage: { tokens, contextWindow }
+          contextUsage: {
+            tokens: totalTokens,
+            contextWindow
+          }
         });
-        break;
-      }
-      case "set_model": {
-        const modelsList = durable.modelRuntime.getAvailableSnapshot();
-        const target = modelsList.find((m) => m.provider === cmd.provider && m.id === cmd.modelId);
-        if (!target) {
-          error(cmd.id, "set_model", `Model not found: ${cmd.provider}/${cmd.modelId}`);
-          return;
-        }
-        await durable.controller.setModel({ provider: cmd.provider, modelId: cmd.modelId });
-        success(cmd.id, "set_model", target);
-        break;
-      }
-      case "set_thinking_level": {
-        if (cmd.level) {
-          await durable.controller.setThinkingLevel(cmd.level);
-        } else {
-          await durable.controller.cycleThinking();
-        }
-        success(cmd.id, "set_thinking_level");
-        break;
-      }
-      case "get_available_models": {
-        success(cmd.id, "get_available_models", durable.modelRuntime.getAvailableSnapshot());
         break;
       }
       default: {
@@ -963,18 +1229,9 @@ async function main() {
       }
     }
   });
-  const cleanup = async () => {
-    try {
-      await durable.close();
-    } finally {
-      process.exit(0);
-    }
-  };
-  process.on("SIGINT", cleanup);
-  process.on("SIGTERM", cleanup);
 }
 main().catch((err) => {
-  console.error("Durable runner initialization failed:", err);
+  console.error(`Runner fatal error: ${err instanceof Error ? err.stack : err}`);
   process.exit(1);
 });
 //# sourceMappingURL=index.js.map

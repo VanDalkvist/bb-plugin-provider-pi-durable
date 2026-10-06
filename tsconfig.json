@@ -21,6 +21,7 @@
     "skipLibCheck": false
   },
   "include": [
+    "src/**/*",
     "server.ts",
     "app.tsx",
     "components",

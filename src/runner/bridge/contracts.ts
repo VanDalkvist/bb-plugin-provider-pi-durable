@@ -43,6 +43,9 @@ export interface BBTextDeltaEvent {
 	};
 }
 
+export type BBMessageUpdateEvent = BBThinkingDeltaEvent | BBTextDeltaEvent;
+
+
 export interface BBAssistantMessageUsage {
 	input?: number;
 	output?: number;
@@ -79,6 +82,12 @@ export interface BBTurnStartEvent {
 
 export interface BBTurnEndEvent {
 	type: "turn_end";
+	message?: BBAssistantMessage;
+}
+
+export interface BBMessageEndEvent {
+	type: "message_end";
+	message: BBAssistantMessage;
 }
 
 export interface BBAgentEndEvent {

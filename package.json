@@ -20,7 +20,7 @@
       }
     ],
     "server": "./dist/server.js",
-    "host": "./dist/host.js"
+    "host": "./src/host/index.ts"
   },
   "dependencies": {
     "@earendil-works/pi-coding-agent": "^1.0.4",
@@ -37,6 +37,7 @@
   },
   "scripts": {
     "build:runner": "node scripts/build-runner.mjs",
+    "build:host": "bb plugin build",
     "build": "node scripts/build-runner.mjs && bb plugin build"
   }
 }

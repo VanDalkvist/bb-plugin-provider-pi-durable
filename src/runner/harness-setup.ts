@@ -1,5 +1,6 @@
 import type { Context } from "@earendil-works/chord";
 import type { ModelThinkingLevel } from "@earendil-works/pi-ai";
+export type { ModelThinkingLevel };
 import {
 	createRegistry,
 	type EnvTarget,
@@ -103,7 +104,7 @@ export async function findInitialAgentModel(
 		}
 		return {
 			model: { provider: resolved.model.provider, modelId: resolved.model.id },
-			thinkingLevel: cli.thinking ?? resolved.thinkingLevel ?? "none",
+			thinkingLevel: cli.thinking ?? resolved.thinkingLevel ?? "off",
 		};
 	}
 
@@ -117,7 +118,7 @@ export async function findInitialAgentModel(
 		if (matched) {
 			return {
 				model: { provider: matched.provider, modelId: matched.id },
-				thinkingLevel: defaultThinkingLevel ?? "none",
+				thinkingLevel: defaultThinkingLevel ?? "off",
 			};
 		}
 	}
@@ -126,7 +127,7 @@ export async function findInitialAgentModel(
 	if (available.length > 0) {
 		return {
 			model: { provider: available[0].provider, modelId: available[0].id },
-			thinkingLevel: "none",
+			thinkingLevel: "off",
 		};
 	}
 
