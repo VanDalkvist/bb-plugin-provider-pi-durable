@@ -1,15 +1,16 @@
 import { getSharedCatalog } from "./catalog.ts";
 import { SessionRegistry } from "./session-registry.ts";
+import { handleDiscoveryRequest } from "./discovery-handler.ts";
+import {
+	sendJsonRpcResult,
+	sendJsonRpcError,
+	sendJsonRpcNotification,
+} from "./jsonrpc.ts";
 import {
 	extractInputText,
 	isCompactCommand,
 	extractCompactInstructions,
 } from "./prompt-input.ts";
-import {
-	PROVIDER_BRIDGE_PROTOCOL_VERSION,
-	THREAD_DELTA_GRAMMAR_V2,
-	THREAD_DELTA_GRAMMAR_V3,
-} from "./types.ts";
 
 export class ProviderBridge {
 	private sendRaw: (json: string) => void;
@@ -23,15 +24,15 @@ export class ProviderBridge {
 	}
 
 	public sendResult(id: string | number, result: Record<string, unknown>) {
-		this.sendRaw(JSON.stringify({ jsonrpc: "2.0", id, result }) + "\n");
+		sendJsonRpcResult(this.sendRaw, id, result);
 	}
 
 	public sendError(id: string | number, code: number, message: string) {
-		this.sendRaw(JSON.stringify({ jsonrpc: "2.0", id, error: { code, message } }) + "\n");
+		sendJsonRpcError(this.sendRaw, id, code, message);
 	}
 
 	public sendNotification(method: string, params: Record<string, unknown>) {
-		this.sendRaw(JSON.stringify({ jsonrpc: "2.0", method, params }) + "\n");
+		sendJsonRpcNotification(this.sendRaw, method, params);
 	}
 
 	public async handleLine(line: string): Promise<void> {
@@ -56,70 +57,13 @@ export class ProviderBridge {
 		const { id, method, params = {} } = req;
 
 		try {
+			const discoveryResult = await handleDiscoveryRequest(method, params, getSharedCatalog(params.cwd));
+			if (discoveryResult !== null) {
+				this.sendResult(id, discoveryResult);
+				return;
+			}
+
 			switch (method) {
-				case "initialize": {
-					this.sendResult(id, {
-						protocolVersion: PROVIDER_BRIDGE_PROTOCOL_VERSION,
-						capabilities: {
-							sessionRestore: true,
-							threadArchive: false,
-							threadRename: false,
-							threadGoalClear: false,
-							fork: "checkpoint",
-							approvalEnforcedBy: "runtime",
-							grammarVersions: [THREAD_DELTA_GRAMMAR_V2, THREAD_DELTA_GRAMMAR_V3],
-							steerMode: "inject",
-							skills: { configure: true },
-						},
-					});
-					break;
-				}
-
-				case "model/list": {
-					const catalog = getSharedCatalog(params.cwd);
-					const models = await catalog.listModels();
-					this.sendResult(id, { models, selectedOnlyModels: [] });
-					break;
-				}
-
-				case "provider/health": {
-					const catalog = getSharedCatalog(params.cwd);
-					const health = await catalog.getHealth();
-					this.sendResult(id, health as Record<string, unknown>);
-					break;
-				}
-
-				case "provider/usage": {
-					this.sendResult(id, { supported: false });
-					break;
-				}
-
-				case "provider/installation/status": {
-					this.sendResult(id, {
-						executableName: "pi-durable",
-						executablePath: process.execPath,
-						installed: true,
-						installSource: "external",
-						currentVersion: "1.0.4",
-						latestVersion: null,
-						minimumSupportedVersion: "1.0.0",
-						npmPackageName: "@earendil-works/pi-durable",
-						npmGlobalPackageVersion: null,
-						installAction: null,
-						needsUpdate: false,
-						versionUnsupported: false,
-					});
-					break;
-				}
-
-				case "provider/installation/run": {
-					this.sendResult(id, {
-						status: "verified",
-						currentVersion: "1.0.4",
-					});
-					break;
-				}
-
 				case "thread/start":
 				case "thread/resume": {
 					const threadId = params.threadId;
@@ -145,8 +89,9 @@ export class ProviderBridge {
 
 				case "turn/start": {
 					const targetCwd = params.cwd || params.options?.cwd;
+					const providerThreadId = params.providerThreadId || `pi_durable_${Date.now()}`;
 					const session = await this.registry.reconcileCwd(params.threadId, targetCwd)
-						?? await this.registry.createOrGet(params.threadId, `pi_durable_${Date.now()}`, params);
+						?? await this.registry.createOrGet(params.threadId, providerThreadId, params);
 
 					if (isCompactCommand(params.input)) {
 						if (params.clientRequestId && /^creq_[23456789abcdefghijkmnpqrstuvwxyz]{10}$/u.test(params.clientRequestId)) {
@@ -206,7 +151,11 @@ export class ProviderBridge {
 					if (params.clientRequestId && /^creq_[23456789abcdefghijkmnpqrstuvwxyz]{10}$/u.test(params.clientRequestId)) {
 						this.sendNotification("thread/delta", {
 							threadId: params.threadId,
-							deltas: [{ kind: "input.accepted", clientRequestId: params.clientRequestId }],
+							deltas: [{
+								kind: "input.accepted",
+								clientRequestId: params.clientRequestId,
+								providerTurnId: params.expectedTurnId,
+							}],
 						});
 					}
 
@@ -215,7 +164,24 @@ export class ProviderBridge {
 				}
 
 				case "thread/stop": {
-					await this.registry.stop(params.threadId);
+					if (params.intent === "interrupt") {
+						const session = this.registry.get(params.threadId);
+						if (session) {
+							await session.abort();
+						}
+						if (params.activeTurnId) {
+							this.sendNotification("thread/delta", {
+								threadId: params.threadId,
+								deltas: [{
+									kind: "turn.boundary",
+									providerTurnId: params.activeTurnId,
+									status: "interrupted",
+								}],
+							});
+						}
+					} else {
+						await this.registry.stop(params.threadId);
+					}
 					this.sendResult(id, { ok: true });
 					break;
 				}

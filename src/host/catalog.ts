@@ -17,18 +17,26 @@ export class ModelCatalog {
 	}
 
 	public async start(): Promise<void> {
-		if (this.runner) return;
+		if (this.runner && !this.runner.exited) return;
+
+		if (this.runner?.exited) {
+			this.runner = null;
+			this.readyPromise = new Promise((resolve) => {
+				this.readyResolve = resolve;
+			});
+		}
+
 		const extensionPath = requireExtensionPath();
 		this.runner = new RunnerProcess({
 			cwd: this.cwd,
 			args: ["--mode", "rpc", "--no-session", "--extension", extensionPath],
-			onChannelMessage: (msg) => {
-				if (msg.kind === "model-scope") {
+			onChannelMessage: (msg: any) => {
+				if (msg?.kind === "model-scope") {
 					this.modelScope = {
 						scopedModelIds: msg.scopedModelIds,
 						defaultModelId: msg.defaultModelId,
 					};
-				} else if (msg.kind === "ready") {
+				} else if (msg?.kind === "ready") {
 					this.readyResolve();
 				}
 			},

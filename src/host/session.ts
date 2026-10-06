@@ -111,6 +111,14 @@ export class PiThreadSession {
 		});
 	}
 
+	public async abort(): Promise<void> {
+		try {
+			await this.runner.requestOk({ type: "abort" });
+		} catch (err) {
+			console.warn(`[PiThreadSession] Abort request failed: ${err}`);
+		}
+	}
+
 	public async compact(instructions?: string): Promise<void> {
 		this.isProcessing = true;
 		try {

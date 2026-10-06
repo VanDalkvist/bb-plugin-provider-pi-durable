@@ -1,5 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
+import { resolveRunnerPath } from "./paths.ts";
 import type { RunnerEvent } from "./types.ts";
 
 export interface RunnerProcessOptions {
@@ -21,7 +22,7 @@ export class RunnerProcess {
 
 	constructor(options: RunnerProcessOptions) {
 		this.options = options;
-		const runnerPath = process.env.PI_DURABLE_RUNNER_PATH || `${__dirname}/runner/index.js`;
+		const runnerPath = process.env.PI_DURABLE_RUNNER_PATH || resolveRunnerPath();
 
 		this.child = spawn(process.execPath, [runnerPath, ...options.args], {
 			cwd: options.cwd,

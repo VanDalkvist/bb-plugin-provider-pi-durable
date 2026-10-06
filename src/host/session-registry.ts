@@ -10,7 +10,12 @@ export class SessionRegistry {
 	}
 
 	public get(threadId: string): PiThreadSession | undefined {
-		return this.sessions.get(threadId);
+		const session = this.sessions.get(threadId);
+		if (session && session.runner.exited) {
+			this.sessions.delete(threadId);
+			return undefined;
+		}
+		return session;
 	}
 
 	public async createOrGet(
@@ -21,6 +26,9 @@ export class SessionRegistry {
 		const existing = this.sessions.get(threadId);
 		if (existing && !existing.runner.exited) {
 			return existing;
+		}
+		if (existing && existing.runner.exited) {
+			this.sessions.delete(threadId);
 		}
 
 		const rawModel = params.model ?? params.options?.model;
@@ -77,8 +85,11 @@ export class SessionRegistry {
 	}
 
 	public async reconcileCwd(threadId: string, targetCwd?: string): Promise<PiThreadSession | undefined> {
-		const session = this.sessions.get(threadId);
-		if (!session || !targetCwd || session.options.cwd === targetCwd) {
+		const session = this.get(threadId);
+		if (!session) {
+			return undefined;
+		}
+		if (!targetCwd || session.options.cwd === targetCwd) {
 			return session;
 		}
 
