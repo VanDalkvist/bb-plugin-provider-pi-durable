@@ -1,7 +1,12 @@
 import { existsSync, readFileSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import { Socket } from "node:net";
-import { DefaultResourceLoader, ModelRuntime, SettingsManager } from "@earendil-works/pi-coding-agent";
+import {
+	DefaultResourceLoader,
+	ModelRuntime,
+	SettingsManager,
+	resolveModelScopeWithDiagnostics,
+} from "@earendil-works/pi-coding-agent";
 import { getAgentDir } from "./sessions.ts";
 import type { ModelThinkingLevel } from "./harness-setup.ts";
 import { findInitialAgentModel } from "./harness-setup.ts";
@@ -137,6 +142,15 @@ async function main() {
 
 	// Models discovery
 	const availableModels = modelRuntime.getAvailableSnapshot();
+	const enabledPatterns = settingsManager.getEnabledModels();
+	const scopedScope = enabledPatterns && enabledPatterns.length > 0
+		? await resolveModelScopeWithDiagnostics(enabledPatterns, modelRuntime)
+		: undefined;
+	const scopedModelList = scopedScope && scopedScope.scopedModels.length > 0
+		? scopedScope.scopedModels.map((sm) => sm.model)
+		: availableModels;
+	const scopedModelIds = scopedModelList.map((m) => `${m.provider}/${m.id}`);
+
 	const initialAgent = await findInitialAgentModel(
 		settingsManager,
 		modelRuntime,
@@ -144,13 +158,13 @@ async function main() {
 	);
 
 	const defaultModel = initialAgent.model
-		? modelRuntime.getModel(initialAgent.model.provider, initialAgent.model.modelId) ?? availableModels[0]
-		: availableModels[0];
+		? modelRuntime.getModel(initialAgent.model.provider, initialAgent.model.modelId) ?? scopedModelList[0]
+		: scopedModelList[0];
 	const defaultModelId = defaultModel ? `${defaultModel.provider}/${defaultModel.id}` : undefined;
 	const defaultThinkingLevel = initialAgent.thinkingLevel ?? "off";
 
 	const modelScope = {
-		scopedModelIds: availableModels.map((m) => `${m.provider}/${m.id}`),
+		scopedModelIds,
 		defaultModelId,
 	};
 
@@ -203,8 +217,7 @@ async function main() {
 			try {
 				const cmd = JSON.parse(line);
 				if (cmd.type === "get_available_models") {
-					const currentModels = modelRuntime.getAvailableSnapshot();
-					success(cmd.id, "get_available_models", { models: currentModels });
+					success(cmd.id, "get_available_models", { models: scopedModelList });
 				} else if (cmd.type === "get_state") {
 					success(cmd.id, "get_state", {
 						model: defaultModel ? { provider: defaultModel.provider, id: defaultModel.id, modelId: defaultModel.id } : null,

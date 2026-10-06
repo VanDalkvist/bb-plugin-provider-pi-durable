@@ -11,7 +11,12 @@ var __require = /* @__PURE__ */ ((x) => typeof require !== "undefined" ? require
 import { existsSync as existsSync2, readFileSync as readFileSync2, writeSync } from "node:fs";
 import { join as join3 } from "node:path";
 import { Socket } from "node:net";
-import { DefaultResourceLoader as DefaultResourceLoader2, ModelRuntime as ModelRuntime2, SettingsManager as SettingsManager2 } from "@earendil-works/pi-coding-agent";
+import {
+  DefaultResourceLoader as DefaultResourceLoader2,
+  ModelRuntime as ModelRuntime2,
+  SettingsManager as SettingsManager2,
+  resolveModelScopeWithDiagnostics as resolveModelScopeWithDiagnostics2
+} from "@earendil-works/pi-coding-agent";
 
 // src/runner/sessions.ts
 import { createHash, randomUUID } from "node:crypto";
@@ -394,7 +399,8 @@ import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite
 import {
   DefaultResourceLoader,
   ModelRuntime,
-  SettingsManager
+  SettingsManager,
+  resolveModelScopeWithDiagnostics
 } from "@earendil-works/pi-coding-agent";
 
 // src/runner/subagent.ts
@@ -551,7 +557,10 @@ async function openDurable(options = {}) {
     } while (cursor !== void 0);
     let current = root;
     let conversation = await root.viewState(context);
-    const models = () => modelRuntime.getAvailableSnapshot().map((model) => ({
+    const enabledPatterns = settingsManager.getEnabledModels();
+    const scopedScope = enabledPatterns && enabledPatterns.length > 0 ? await resolveModelScopeWithDiagnostics(enabledPatterns, modelRuntime) : void 0;
+    const scopedModelList = scopedScope && scopedScope.scopedModels.length > 0 ? scopedScope.scopedModels.map((sm) => sm.model) : modelRuntime.getAvailableSnapshot();
+    const models = () => scopedModelList.map((model) => ({
       provider: model.provider,
       modelId: model.id,
       name: model.name,
@@ -1022,16 +1031,20 @@ async function main() {
     }
   }
   const availableModels = modelRuntime.getAvailableSnapshot();
+  const enabledPatterns = settingsManager.getEnabledModels();
+  const scopedScope = enabledPatterns && enabledPatterns.length > 0 ? await resolveModelScopeWithDiagnostics2(enabledPatterns, modelRuntime) : void 0;
+  const scopedModelList = scopedScope && scopedScope.scopedModels.length > 0 ? scopedScope.scopedModels.map((sm) => sm.model) : availableModels;
+  const scopedModelIds = scopedModelList.map((m) => `${m.provider}/${m.id}`);
   const initialAgent = await findInitialAgentModel(
     settingsManager,
     modelRuntime,
     args.model ? { provider: args.provider, model: args.model, thinking: args.thinking } : void 0
   );
-  const defaultModel = initialAgent.model ? modelRuntime.getModel(initialAgent.model.provider, initialAgent.model.modelId) ?? availableModels[0] : availableModels[0];
+  const defaultModel = initialAgent.model ? modelRuntime.getModel(initialAgent.model.provider, initialAgent.model.modelId) ?? scopedModelList[0] : scopedModelList[0];
   const defaultModelId = defaultModel ? `${defaultModel.provider}/${defaultModel.id}` : void 0;
   const defaultThinkingLevel = initialAgent.thinkingLevel ?? "off";
   const modelScope = {
-    scopedModelIds: availableModels.map((m) => `${m.provider}/${m.id}`),
+    scopedModelIds,
     defaultModelId
   };
   sendToBridge({ kind: "model-scope", ...modelScope });
@@ -1075,8 +1088,7 @@ async function main() {
       try {
         const cmd = JSON.parse(line);
         if (cmd.type === "get_available_models") {
-          const currentModels = modelRuntime.getAvailableSnapshot();
-          success(cmd.id, "get_available_models", { models: currentModels });
+          success(cmd.id, "get_available_models", { models: scopedModelList });
         } else if (cmd.type === "get_state") {
           success(cmd.id, "get_state", {
             model: defaultModel ? { provider: defaultModel.provider, id: defaultModel.id, modelId: defaultModel.id } : null,

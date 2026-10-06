@@ -19,6 +19,7 @@ import {
 	DefaultResourceLoader,
 	ModelRuntime,
 	SettingsManager,
+	resolveModelScopeWithDiagnostics,
 } from "@earendil-works/pi-coding-agent";
 import {
 	configureHarnessHttp,
@@ -215,8 +216,16 @@ export async function openDurable(options: OpenDurableOptions = {}): Promise<Ope
 		} while (cursor !== undefined);
 		let current: Conversation = root;
 		let conversation: AttachedReplicatedState<ConversationView> = await root.viewState(context);
+		const enabledPatterns = settingsManager.getEnabledModels();
+		const scopedScope = enabledPatterns && enabledPatterns.length > 0
+			? await resolveModelScopeWithDiagnostics(enabledPatterns, modelRuntime)
+			: undefined;
+		const scopedModelList = scopedScope && scopedScope.scopedModels.length > 0
+			? scopedScope.scopedModels.map((sm) => sm.model)
+			: modelRuntime.getAvailableSnapshot();
+
 		const models = (): ModelSummary[] =>
-			modelRuntime.getAvailableSnapshot().map((model) => ({
+			scopedModelList.map((model) => ({
 				provider: model.provider,
 				modelId: model.id,
 				name: model.name,
