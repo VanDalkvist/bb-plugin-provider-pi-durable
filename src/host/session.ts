@@ -106,9 +106,8 @@ export class PiThreadSession {
 
 	public async steer(text: string): Promise<void> {
 		await this.runner.requestOk({
-			type: "prompt",
+			type: "steer",
 			message: text,
-			streamingBehavior: "steer",
 		});
 	}
 

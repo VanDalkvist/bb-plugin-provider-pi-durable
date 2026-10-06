@@ -272,7 +272,8 @@ async function main() {
 					return;
 				}
 				success(cmd.id, "prompt");
-				await durable.controller.submit(cmd.message, "steer");
+				const behavior = (cmd.streamingBehavior as "steer" | "followUp") || "followUp";
+				await durable.controller.submit(cmd.message, behavior);
 				break;
 			}
 			case "steer": {

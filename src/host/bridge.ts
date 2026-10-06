@@ -201,8 +201,16 @@ export class ProviderBridge {
 						return;
 					}
 
-					this.sendResult(id, { threadId: params.threadId });
 					await session.steer(text);
+
+					if (params.clientRequestId && /^creq_[23456789abcdefghijkmnpqrstuvwxyz]{10}$/u.test(params.clientRequestId)) {
+						this.sendNotification("thread/delta", {
+							threadId: params.threadId,
+							deltas: [{ kind: "input.accepted", clientRequestId: params.clientRequestId }],
+						});
+					}
+
+					this.sendResult(id, { threadId: params.threadId });
 					break;
 				}
 
