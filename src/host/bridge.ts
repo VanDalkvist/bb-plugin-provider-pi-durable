@@ -1,7 +1,11 @@
 import { getSharedCatalog } from "./catalog.ts";
 import { SessionRegistry } from "./session.ts";
 import {
-	promptInputSchema,
+	extractInputText,
+	isCompactCommand,
+	extractCompactInstructions,
+} from "./prompt-input.ts";
+import {
 	PROVIDER_BRIDGE_PROTOCOL_VERSION,
 	THREAD_DELTA_GRAMMAR_V2,
 	THREAD_DELTA_GRAMMAR_V3,
@@ -140,7 +144,23 @@ export class ProviderBridge {
 					const session = await this.registry.reconcileCwd(params.threadId, targetCwd)
 						?? await this.registry.createOrGet(params.threadId, `pi_durable_${Date.now()}`, params);
 
-					const text = this.extractInputText(params.input);
+					if (isCompactCommand(params.input)) {
+						if (params.clientRequestId && /^creq_[23456789abcdefghijkmnpqrstuvwxyz]{10}$/u.test(params.clientRequestId)) {
+							this.sendNotification("thread/delta", {
+								threadId: params.threadId,
+								deltas: [{ kind: "input.accepted", clientRequestId: params.clientRequestId }],
+							});
+						}
+						this.sendResult(id, { threadId: params.threadId });
+						const instructions = extractCompactInstructions(params.input);
+						session.compact(instructions).then(
+							() => session.refreshContextUsage(),
+							(err) => console.error("Compaction failed:", err),
+						);
+						return;
+					}
+
+					const text = extractInputText(params.input);
 					if (!text) {
 						this.sendError(id, -32602, "Missing input text");
 						return;
@@ -169,7 +189,7 @@ export class ProviderBridge {
 						return;
 					}
 
-					const text = this.extractInputText(params.input);
+					const text = extractInputText(params.input);
 					if (!text) {
 						this.sendError(id, -32602, "Missing steer text");
 						return;
@@ -204,16 +224,6 @@ export class ProviderBridge {
 		} catch (err: any) {
 			this.sendError(id, -32000, err.message || String(err));
 		}
-	}
-
-	private extractInputText(input: unknown): string {
-		const parsed = promptInputSchema.safeParse(input);
-		if (!parsed.success) return "";
-		return parsed.data
-			.filter((chunk) => chunk.type === "text")
-			.map((chunk: any) => chunk.text)
-			.join("\n")
-			.trim();
 	}
 
 	public async shutdown(): Promise<void> {

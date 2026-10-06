@@ -55,9 +55,10 @@ export class PiThreadSession {
 			this.readyPromise,
 			new Promise((_, reject) => setTimeout(() => reject(new Error("Runner startup ready timed out")), 20000)),
 		]).catch(() => {});
+		await this.refreshContextUsage().catch(() => {});
 	}
 
-	private handleRunnerEvent(event: any) {
+	private async handleRunnerEvent(event: any) {
 		const deltas = this.translator.translate(event, {
 			threadId: this.options.threadId,
 			cwd: this.options.cwd,
@@ -67,6 +68,10 @@ export class PiThreadSession {
 				threadId: this.options.threadId,
 				deltas,
 			});
+		}
+
+		if (event.type === "turn_end" || event.type === "compaction_end" || event.type === "agent_end") {
+			await this.refreshContextUsage().catch(() => {});
 		}
 	}
 
@@ -89,6 +94,36 @@ export class PiThreadSession {
 			message: text,
 			streamingBehavior: "steer",
 		});
+	}
+
+	public async compact(instructions?: string): Promise<void> {
+		this.isProcessing = true;
+		try {
+			await this.runner.requestOk({
+				type: "compact",
+				instructions,
+			});
+		} finally {
+			this.isProcessing = false;
+		}
+	}
+
+	public async refreshContextUsage(): Promise<void> {
+		const stats = await this.getSessionStats();
+		if (stats && typeof stats.contextWindow === "number" && stats.contextWindow > 0) {
+			this.sendNotification("thread/delta", {
+				threadId: this.options.threadId,
+				deltas: [
+					{
+						kind: "contextWindow",
+						used: stats.tokens,
+						size: stats.contextWindow,
+						estimated: true,
+						attach: "currentOrLast",
+					},
+				],
+			});
+		}
 	}
 
 	public async getSessionStats(): Promise<{ tokens: number | null; contextWindow: number }> {

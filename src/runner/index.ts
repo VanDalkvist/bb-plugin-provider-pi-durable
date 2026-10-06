@@ -9,6 +9,7 @@ import { attachJsonlLineReader, serializeJsonLine } from "./jsonl.ts";
 import { openDurable, type OpenDurableOptions } from "./runtime.ts";
 import { ROOT_CONVERSATION_ID, watchEvents } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
+import { estimateContextTokens } from "@earendil-works/pi-ai/utils/estimate";
 import { BBEventAdapter } from "./bridge/bb-event-adapter.ts";
 import type { BBWireEvent } from "./bridge/contracts.ts";
 
@@ -275,9 +276,7 @@ async function main() {
 				break;
 			}
 			case "compact": {
-				output({ type: "compaction_start", reason: "manual" });
 				await durable.controller.compact(cmd.instructions);
-				output({ type: "compaction_end", reason: "manual", aborted: false });
 				success(cmd.id, "compact");
 				break;
 			}
@@ -320,17 +319,26 @@ async function main() {
 			}
 			case "get_session_stats": {
 				const current = durable.view.current();
-				const usageDoc = (current.conversation.docs["pi.usage"] ?? {}) as any;
 				const agentDoc = (current.conversation.docs["pi.agent"] ?? {}) as any;
-				const totalTokens = usageDoc.totalTokens ?? (usageDoc.input ?? 0) + (usageDoc.output ?? 0);
 				let contextWindow = 128000;
 				if (agentDoc.model?.provider && agentDoc.model?.modelId) {
 					const m = modelRuntime.getModel(agentDoc.model.provider, agentDoc.model.modelId);
 					if (m?.contextWindow) contextWindow = m.contextWindow;
 				}
+				let tokens: number | null = null;
+				try {
+					const conv = await durable.harness.conversation(ROOT_CONVERSATION_ID, BACKGROUND_CONTEXT);
+					if (conv) {
+						const ctxView = await conv.context(BACKGROUND_CONTEXT);
+						const estimate = estimateContextTokens(ctxView.messages);
+						tokens = estimate.tokens;
+					}
+				} catch (err) {
+					console.error(`Error estimating context tokens: ${err}`);
+				}
 				success(cmd.id, "get_session_stats", {
 					contextUsage: {
-						tokens: totalTokens,
+						tokens,
 						contextWindow,
 					},
 				});

@@ -132,6 +132,23 @@ export class BBEventAdapter {
 				break;
 			}
 
+			case "compaction_start": {
+				this.output({
+					type: "compaction_start",
+					reason: event.reason === "threshold" ? "threshold" : "manual",
+				});
+				break;
+			}
+
+			case "compaction_end": {
+				this.output({
+					type: "compaction_end",
+					reason: event.reason === "threshold" ? "threshold" : "manual",
+					aborted: false,
+				});
+				break;
+			}
+
 			case "turn_end": {
 				const finalMsg = this.lastAssistantMessage ?? buildFinalAssistantMessage(
 					current,

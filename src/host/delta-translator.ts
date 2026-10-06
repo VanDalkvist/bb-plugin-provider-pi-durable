@@ -1,3 +1,9 @@
+import {
+	translateToolStart,
+	translateToolUpdate,
+	translateToolEnd,
+} from "./tool-delta-translator.ts";
+
 export interface DeltaTranslatorContext {
 	threadId: string;
 	cwd?: string;
@@ -28,10 +34,41 @@ export class DeltaTranslator {
 			case "turn_start": {
 				if (!this.turnOpenSent) {
 					this.turnOpenSent = true;
-					deltas.push({
-						kind: "turn.open",
-					});
+					deltas.push({ kind: "turn.open" });
 				}
+				break;
+			}
+
+			case "compaction_start": {
+				const isManual = event.reason === "manual";
+				if (isManual && !this.turnOpenSent) {
+					this.turnOpenSent = true;
+					deltas.push({ kind: "turn.open" });
+				}
+				deltas.push({
+					kind: "item.open",
+					key: { channel: "compaction" },
+					item: { type: "compaction" },
+					...(isManual ? {} : { attach: "currentOrLast" }),
+				});
+				break;
+			}
+
+			case "compaction_end": {
+				deltas.push({ kind: "context.compacted" });
+				deltas.push({ kind: "turn.boundary", status: "completed" });
+				this.turnOpenSent = false;
+				break;
+			}
+
+			case "context_window": {
+				deltas.push({
+					kind: "contextWindow",
+					used: typeof event.usedTokens === "number" ? event.usedTokens : null,
+					size: typeof event.contextWindow === "number" ? event.contextWindow : null,
+					estimated: true,
+					attach: "currentOrLast",
+				});
 				break;
 			}
 
@@ -93,86 +130,23 @@ export class DeltaTranslator {
 			}
 
 			case "tool_execution_start": {
-				const callId = String(event.toolCallId);
-				const toolName = String(event.toolName);
-				const args = event.args ?? {};
-
-				let shape: any;
-				if (toolName === "bash") {
-					shape = {
-						type: "command",
-						command: typeof args.command === "string" ? args.command : "",
-						cwd: typeof args.cwd === "string" ? args.cwd : fallbackCwd,
-					};
-				} else if (toolName === "edit" || toolName === "write") {
-					const filePath = typeof args.path === "string" ? args.path : "";
-					shape = {
-						type: "fileChange",
-						changes: filePath ? [{ path: filePath, kind: toolName === "write" ? "create" : "modify" }] : [],
-					};
-				} else {
-					shape = {
-						type: "tool",
-						tool: toolName,
-						server: "pi",
-						args,
-					};
-				}
-
-				this.activeTools.set(callId, shape);
-				deltas.push({
-					kind: "item.open",
-					key: { providerItemId: callId },
-					item: shape,
-				});
+				const { shape, delta } = translateToolStart(event, fallbackCwd);
+				this.activeTools.set(String(event.toolCallId), shape);
+				deltas.push(delta);
 				break;
 			}
 
 			case "tool_execution_update": {
-				const callId = String(event.toolCallId);
-				const toolName = String(event.toolName);
-				if (event.partialResult) {
-					if (toolName === "bash") {
-						deltas.push({
-							kind: "command.outputSnapshot",
-							key: { providerItemId: callId },
-							text: String(event.partialResult),
-						});
-					} else {
-						deltas.push({
-							kind: "item.progress",
-							key: { providerItemId: callId },
-							message: String(event.partialResult),
-						});
-					}
-				}
+				const delta = translateToolUpdate(event);
+				if (delta) deltas.push(delta);
 				break;
 			}
 
 			case "tool_execution_end": {
 				const callId = String(event.toolCallId);
-				const toolName = String(event.toolName);
-				const shape = this.activeTools.get(callId) ?? {
-					type: toolName === "bash" ? "command" : "tool",
-					...(toolName === "bash"
-						? { command: "", cwd: fallbackCwd }
-						: { tool: toolName, server: "pi" }),
-				};
+				const cachedShape = this.activeTools.get(callId);
 				this.activeTools.delete(callId);
-
-				const resultText = typeof event.result === "string"
-					? event.result
-					: JSON.stringify(event.result ?? "");
-
-				deltas.push({
-					kind: "item.close",
-					key: { providerItemId: callId },
-					status: event.isError ? "failed" : "completed",
-					exitCode: event.isError ? 1 : 0,
-					resultText,
-					aggregatedOutput: shape.type === "command" ? resultText : undefined,
-					item: shape,
-				});
+				deltas.push(translateToolEnd(event, cachedShape, fallbackCwd));
 				break;
 			}
 
@@ -198,7 +172,7 @@ export class DeltaTranslator {
 					const totTok = Number(usage.totalTokens ?? (inTok + outTok));
 					deltas.push({
 						kind: "usage",
-						modelContextWindow: 200000,
+						modelContextWindow: event.contextWindow ?? 128000,
 						last: {
 							totalTokens: totTok,
 							inputTokens: inTok,
