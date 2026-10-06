@@ -1,11 +1,11 @@
 # Master Architectural Implementation Plan: Remediation & Full Parity of Pi Durable in BB IDE
 
 **Document ID:** `plans/pi-durable-bb-provider-arch-master-plan`  
-**Version:** 3.0.0 (Master Unified Roadmap: Remediation + Feature Parity)  
+**Version:** 3.1.0 (Master Unified Roadmap: Remediation + Feature Parity)  
 **Target Repository:** `/Users/vanya/Projects/bb-plugin-provider-pi-durable`  
 **Governing Standard:** `arch-rules.md` (AP-010 – AP-071) & `arch-improvement-loop` State Machine  
 **Upstream PRDs:**
-- `prd/pi-durable-provider-remediation` (Audit of 10 Critical Divergences in Implemented Features)
+- `prd/pi-durable-provider-remediation` (Audit of 11 Critical Divergences in Implemented Features)
 - `prd/pi-durable-bb-provider-full-parity` (Complete Engine Capabilities & Parity Features)  
 **Execution Model:** 12 Distinct Sequential Arch Improvement Loop Cycles (Cycle 56 to Cycle 67), each executed in a dedicated thread with strict verification gates.
 
@@ -61,15 +61,15 @@ Every individual cycle (Cycles 56 through 67) must be executed in its own dedica
 
 ```
 STAGE 1: FOUNDATION HARDENING & AUDIT REMEDIATION (Cycles 56–59)
-Eliminate all 10 divergences in already-implemented session, streaming, tool, and model code.
+Eliminate all 11 divergences in already-implemented session, streaming, tool, and model code.
   - Cycle 56: Process Lifecycle, Lock Cleanup & Session Path Normalization (D-1, D-2)
   - Cycle 57: Tool Fault Integrity, Error Reporting & Diff Metadata Forwarding (D-5, D-6, D-9)
-  - Cycle 58: Full Native Event Streaming & Multi-Block Reasoning Channels (D-3, D-4, D-10)
+  - Cycle 58: Full Native Event Streaming, Multi-Block Reasoning Channels & Checkpoint ID Propagation (D-3, D-4, D-10, D-11)
   - Cycle 59: Model Reasoning Compatibility & Cumulative Usage Integrity (D-7, D-8)
 
 STAGE 2: ADVANCED ENGINE CAPABILITIES & FULL PARITY (Cycles 60–67)
 Build new advanced capabilities on top of the hardened, defect-free foundation.
-  - Cycle 60: Checkpoint Thread Forking & History Branching (`thread/fork`)
+  - Cycle 60: Checkpoint Thread Forking, Session Rewind & Message Editing (`thread/fork` & `bb thread edit-message`)
   - Cycle 61: Provider Usage & Granular Spend Ledger (`provider/usage`)
   - Cycle 62: Visual Subagent Delegation Cards & Hierarchy (`type: "delegation"`)
   - Cycle 63: Live Task Graph Synchronization (`harness.taskGraph()`)
@@ -131,8 +131,8 @@ Build new advanced capabilities on top of the hardened, defect-free foundation.
 
 ---
 
-### Cycle 58: Full Native Event Streaming & Multi-Block Reasoning Channels
-- **PRD Divergences Covered:** D-3, D-4, D-10.
+### Cycle 58: Full Native Event Streaming, Multi-Block Reasoning Channels & Checkpoint ID Propagation
+- **PRD Divergences Covered:** D-3, D-4, D-10, D-11.
 - **Architectural Problem:**
   1. `bb-event-adapter.ts` hardcodes `contentIndex: 0` for all thinking and text deltas, corrupting streams when multiple reasoning blocks or text parts occur.
   2. Dropped native events: `snapshot`, `auto_retry_start/end`, `deferred_poll`, `task_failed`, `agent_changed`.
@@ -178,23 +178,30 @@ Build new advanced capabilities on top of the hardened, defect-free foundation.
 
 ---
 
-### Cycle 60: Checkpoint Thread Forking & History Branching (`thread/fork`)
-- **PRD Epics Covered:** FR-1, FR-2, UJ-1, JTBD-2.
+### Cycle 60: Checkpoint Thread Forking, Session Rewind & Message Editing (`thread/fork` & `bb thread edit-message`)
+- **PRD Epics Covered:** FR-1, FR-2, FR-16, D-11, UJ-1, UJ-7, JTBD-2, JTBD-6.
+- **Architectural Problem:**
+  1. `thread/fork` in `bridge.ts` ignores `sourceProviderThreadId` and `sourceProviderCheckpointId`, falling back to creating an unbranched fresh session.
+  2. When a user runs `bb thread edit-message` or clicks "Edit" in BB UI on turn $N \ge 2$, BB issues `thread.rewind.prepare`, calling `thread/fork` with `sourceProviderCheckpointId`. Without branch staging and history rewind, message editing fails with HTTP 409 or loses prior context.
 - **Target Solution:**
-  1. Add IPC command `fork` to runner.
-  2. Implement `src/runner/fork.ts` (< 150 lines) using `@earendil-works/pi-durable`'s `prepareForkDocumentCopies` and `conversation.fork(checkpointEntryId, { ownership: { kind: "ownerless" } })`.
-  3. Mint a fresh provider UUIDv7 `sessionId` in `pi.provider` for model prompt cache isolation.
-  4. In `src/host/bridge.ts` and `src/host/session.ts`, forward `sourceProviderThreadId` and checkpoint to runner upon `thread/fork`.
+  1. Add IPC command `fork` to runner accepting `{ sourceProviderThreadId, checkpointId, targetThreadId, cwd }`.
+  2. In `src/runner/fork.ts`, execute `@earendil-works/pi-durable`'s `conversation.fork(checkpointEntryId, { ownership: { kind: "ownerless" } })`, preserving all document states `asOf` that checkpoint commit and minting a fresh provider UUIDv7 `sessionId`.
+  3. Support branching across SQLite database directories: clone/fork database into `~/.bb/pi-bridge-sessions/<targetThreadId>/session.sqlite`.
+  4. In `src/host/bridge.ts`, handle `thread/fork`:
+     - If `params.threadId` contains `:rewind:`, register staged rewind session for the lease.
+     - On subsequent `thread.start` with `fork: { sourceProviderThreadId: stagedProviderThreadId }`, adopt the staged session and bind the new prompt.
+  5. Ensure non-destructive file retention: all disk modifications in workspace remain intact during history rewinds.
 - **File Impact & Line Budget (AP-019):**
-  - `src/runner/fork.ts`: new file (~110 lines).
-  - `src/runner/index.ts`: wire command (~20 lines).
-  - `src/host/bridge.ts`: +15 lines.
-  - `src/host/session.ts`: +20 lines.
+  - `src/runner/fork.ts`: new file (~120 lines).
+  - `src/runner/index.ts`: wire command (~25 lines).
+  - `src/host/bridge.ts`: +25 lines.
+  - `src/host/session.ts`: +30 lines.
 - **Test Suite (TDD):**
-  - `tests/thread-fork.test.ts`: fork at checkpoint 5 of 10-turn session; assert child session contains exact documents up to entry 5, has a new provider UUID, and accepts prompts referencing checkpoint history.
+  - `tests/thread-fork-and-rewind.test.ts`: test fork at checkpoint of multi-turn session; test `thread.rewind.prepare` lifecycle and assert child session contains exact documents up to checkpoint; test simulated `bb thread edit-message` handshake.
 - **Verification Gates:**
   - `npm test` passes.
-  - Live BB CLI check: `bb thread fork <thread-id>`.
+  - Live BB CLI check: `bb thread fork <thread-id>` branches cleanly.
+  - Live BB CLI check: `bb thread edit-message <thread-id> --message "..."` rewinds history to preceding checkpoint and reruns cleanly while keeping workspace changes.
 
 ---
 
