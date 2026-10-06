@@ -701,9 +701,11 @@ async function openDurable(options = {}) {
       }
     };
   } catch (error) {
-    await harness?.close(context).catch(() => {
+    await harness?.close(context).catch((err) => {
+      console.warn("[DurableRuntime] Cleanup harness close failed:", err);
     });
-    await location.release().catch(() => {
+    await location.release().catch((err) => {
+      console.warn("[DurableRuntime] Cleanup location release failed:", err);
     });
     throw error;
   }
@@ -1031,7 +1033,8 @@ async function main() {
             sendToBridge({ kind: "reply", id: req.id, result: {} });
           }
         }
-      } catch {
+      } catch (err) {
+        console.error("[Runner] Failed to parse or process bridge channel message:", err);
       }
     });
   } catch {

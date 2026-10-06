@@ -54,7 +54,7 @@ function loadContextFiles(cwd: string): Array<{ path: string; content: string }>
 					files.push({ path: candidate, content });
 				}
 			} catch {
-				// ignore read errors
+				// intentionally ignored: skip unreadable instructions files
 			}
 		}
 	}

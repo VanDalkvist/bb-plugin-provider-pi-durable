@@ -50,6 +50,7 @@ export async function selectSession(
 			const entries = await readdir(directory);
 			created = !entries.includes("session.sqlite");
 		} catch {
+			// intentionally ignored: directory inspection error falls back to existing session
 			created = false;
 		}
 	} else if (continueSession) {

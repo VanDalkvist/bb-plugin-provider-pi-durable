@@ -1,5 +1,5 @@
 import { getSharedCatalog } from "./catalog.ts";
-import { SessionRegistry } from "./session.ts";
+import { SessionRegistry } from "./session-registry.ts";
 import {
 	extractInputText,
 	isCompactCommand,
@@ -12,15 +12,17 @@ import {
 } from "./types.ts";
 
 export class ProviderBridge {
+	private sendRaw: (json: string) => void;
 	private registry: SessionRegistry;
 
-	constructor(private sendRaw: (json: string) => void) {
+	constructor(sendRaw: (json: string) => void) {
+		this.sendRaw = sendRaw;
 		this.registry = new SessionRegistry((method, params) => {
 			this.sendNotification(method, params);
 		});
 	}
 
-	public sendResult(id: string | number, result: any) {
+	public sendResult(id: string | number, result: Record<string, unknown>) {
 		this.sendRaw(JSON.stringify({ jsonrpc: "2.0", id, result }) + "\n");
 	}
 
@@ -28,7 +30,7 @@ export class ProviderBridge {
 		this.sendRaw(JSON.stringify({ jsonrpc: "2.0", id, error: { code, message } }) + "\n");
 	}
 
-	public sendNotification(method: string, params: any) {
+	public sendNotification(method: string, params: Record<string, unknown>) {
 		this.sendRaw(JSON.stringify({ jsonrpc: "2.0", method, params }) + "\n");
 	}
 
@@ -36,15 +38,17 @@ export class ProviderBridge {
 		const trimmed = line.trim();
 		if (!trimmed) return;
 
-		let req: any;
+		let req: { id?: string | number; method?: string; params?: any };
 		try {
 			req = JSON.parse(trimmed);
-		} catch {
+		} catch (err) {
+			console.error(`[ProviderBridge] Invalid JSON received from daemon: ${trimmed}`, err);
+			this.sendError(0, -32700, "Parse error: Invalid JSON");
 			return;
 		}
 
-		if (req.method) {
-			await this.handleRequest(req);
+		if (req && typeof req.method === "string") {
+			await this.handleRequest(req as { id: string | number; method: string; params?: any });
 		}
 	}
 
@@ -81,7 +85,7 @@ export class ProviderBridge {
 				case "provider/health": {
 					const catalog = getSharedCatalog(params.cwd);
 					const health = await catalog.getHealth();
-					this.sendResult(id, health);
+					this.sendResult(id, health as Record<string, unknown>);
 					break;
 				}
 
@@ -153,10 +157,12 @@ export class ProviderBridge {
 						}
 						this.sendResult(id, { threadId: params.threadId });
 						const instructions = extractCompactInstructions(params.input);
-						session.compact(instructions).then(
-							() => session.refreshContextUsage(),
-							(err) => console.error("Compaction failed:", err),
-						);
+						try {
+							await session.compact(instructions);
+							await session.refreshContextUsage();
+						} catch (err) {
+							console.error(`[ProviderBridge] Compaction failed for thread ${params.threadId}:`, err);
+						}
 						return;
 					}
 

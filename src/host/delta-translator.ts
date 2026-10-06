@@ -3,6 +3,7 @@ import {
 	translateToolUpdate,
 	translateToolEnd,
 } from "./tool-delta-translator.ts";
+import type { RunnerEvent, ThreadDelta } from "./types.ts";
 
 export interface DeltaTranslatorContext {
 	threadId: string;
@@ -11,7 +12,7 @@ export interface DeltaTranslatorContext {
 }
 
 export class DeltaTranslator {
-	private activeTools = new Map<string, any>();
+	private activeTools = new Map<string, Record<string, unknown>>();
 	private currentThinkingIndex = 0;
 	private currentAgentText = "";
 	private turnOpenSent = false;
@@ -25,8 +26,8 @@ export class DeltaTranslator {
 		this.turnBoundarySent = false;
 	}
 
-	public translate(event: any, ctx: DeltaTranslatorContext): any[] {
-		const deltas: any[] = [];
+	public translate(event: RunnerEvent, ctx: DeltaTranslatorContext): ThreadDelta[] {
+		const deltas: ThreadDelta[] = [];
 		const fallbackCwd = ctx.cwd || process.cwd();
 
 		switch (event.type) {
@@ -73,10 +74,10 @@ export class DeltaTranslator {
 			}
 
 			case "message_update": {
-				const asst = event.assistantMessageEvent;
+				const asst = event.assistantMessageEvent as Record<string, unknown> | undefined;
 				if (!asst) break;
 
-				if (asst.type === "thinking_delta" && asst.delta) {
+				if (asst.type === "thinking_delta" && typeof asst.delta === "string") {
 					const idx = typeof asst.contentIndex === "number" ? asst.contentIndex : this.currentThinkingIndex;
 					deltas.push({
 						kind: "item.textDelta",
@@ -90,10 +91,10 @@ export class DeltaTranslator {
 						kind: "item.textClose",
 						key: { channel: `thinking-${idx}` },
 						channel: "reasoningText",
-						text: asst.content ?? "",
+						text: (asst.content as string) ?? "",
 					});
 					this.currentThinkingIndex++;
-				} else if (asst.type === "text_delta" && asst.delta) {
+				} else if (asst.type === "text_delta" && typeof asst.delta === "string") {
 					this.currentAgentText += asst.delta;
 					deltas.push({
 						kind: "item.textDelta",
@@ -106,12 +107,12 @@ export class DeltaTranslator {
 			}
 
 			case "message_end": {
-				const msg = event.message;
+				const msg = event.message as { content?: Array<{ type?: string; text?: string }> } | undefined;
 				let finalText = this.currentAgentText;
 				if (msg?.content && Array.isArray(msg.content)) {
 					const textParts = msg.content
-						.filter((p: any) => p && p.type === "text" && typeof p.text === "string")
-						.map((p: any) => p.text);
+						.filter((p) => p && p.type === "text" && typeof p.text === "string")
+						.map((p) => p.text as string);
 					if (textParts.length > 0) {
 						finalText = textParts.join("");
 					}
@@ -165,14 +166,15 @@ export class DeltaTranslator {
 					this.currentAgentText = "";
 				}
 
-				const usage = event.message?.usage ?? event.messages?.[0]?.usage;
+				const rawMsg = event.message ?? (event.messages as unknown[])?.[0];
+				const usage = (rawMsg as { usage?: Record<string, unknown> } | undefined)?.usage;
 				if (usage) {
 					const inTok = Number(usage.input ?? 0);
 					const outTok = Number(usage.output ?? 0);
 					const totTok = Number(usage.totalTokens ?? (inTok + outTok));
 					deltas.push({
 						kind: "usage",
-						modelContextWindow: event.contextWindow ?? 128000,
+						modelContextWindow: (event.contextWindow as number) ?? 128000,
 						last: {
 							totalTokens: totTok,
 							inputTokens: inTok,

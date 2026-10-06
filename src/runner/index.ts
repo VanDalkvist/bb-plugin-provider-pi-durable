@@ -114,13 +114,25 @@ async function main() {
 	await resourceLoader.reload();
 	const extensionsResult = resourceLoader.getExtensions();
 	for (const { name, config } of extensionsResult.runtime.pendingProviderRegistrations) {
-		try { modelRuntime.registerProvider(name, config); } catch {}
+		try {
+			modelRuntime.registerProvider(name, config);
+		} catch {
+			// intentionally ignored: provider registration may already exist or fail gracefully
+		}
 	}
 	for (const { provider } of extensionsResult.runtime.pendingNativeProviderRegistrations) {
-		try { modelRuntime.registerNativeProvider(provider); } catch {}
+		try {
+			modelRuntime.registerNativeProvider(provider);
+		} catch {
+			// intentionally ignored: native provider may already be registered
+		}
 	}
 	for (const { definition } of extensionsResult.runtime.pendingVirtualModelRegistrations) {
-		try { modelRuntime.registerVirtualModel(definition); } catch {}
+		try {
+			modelRuntime.registerVirtualModel(definition);
+		} catch {
+			// intentionally ignored: virtual model may already be registered
+		}
 	}
 
 	// Models discovery
@@ -168,10 +180,12 @@ async function main() {
 						sendToBridge({ kind: "reply", id: req.id, result: {} });
 					}
 				}
-			} catch {}
+			} catch (err) {
+				console.error("[Runner] Failed to parse or process bridge channel message:", err);
+			}
 		});
 	} catch {
-		// FD 4 not open
+		// intentionally ignored: FD 4 is not open when running without parent bridge channel
 	}
 
 	const success = (id: string | undefined, command: string, data?: unknown) => {

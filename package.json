@@ -38,6 +38,7 @@
   "scripts": {
     "build:runner": "node scripts/build-runner.mjs",
     "build:host": "bb plugin build",
-    "build": "node scripts/build-runner.mjs && bb plugin build"
+    "build": "node scripts/build-runner.mjs && bb plugin build",
+    "test": "node --test tests/*.test.ts"
   }
 }

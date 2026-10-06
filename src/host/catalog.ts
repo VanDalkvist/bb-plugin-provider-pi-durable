@@ -3,12 +3,14 @@ import { RunnerProcess } from "./runner-process.ts";
 import type { AvailableModelDescriptor, ModelScope } from "./types.ts";
 
 export class ModelCatalog {
+	private cwd: string;
 	private runner: RunnerProcess | null = null;
 	private modelScope: ModelScope = {};
 	private readyPromise: Promise<void>;
 	private readyResolve!: () => void;
 
-	constructor(private cwd: string = process.cwd()) {
+	constructor(cwd: string = process.cwd()) {
+		this.cwd = cwd;
 		this.readyPromise = new Promise((resolve) => {
 			this.readyResolve = resolve;
 		});
@@ -32,10 +34,14 @@ export class ModelCatalog {
 			},
 		});
 
-		await Promise.race([
-			this.readyPromise,
-			new Promise((_, reject) => setTimeout(() => reject(new Error("Catalog runner startup timed out")), 20000)),
-		]).catch(() => {});
+		try {
+			await Promise.race([
+				this.readyPromise,
+				new Promise((_, reject) => setTimeout(() => reject(new Error("Catalog runner startup timed out")), 20000)),
+			]);
+		} catch (err) {
+			console.warn(`[Catalog] Startup ready check timed out or failed: ${err}`);
+		}
 	}
 
 	public async listModels(): Promise<AvailableModelDescriptor[]> {
@@ -84,8 +90,9 @@ export class ModelCatalog {
 				return { status: "ready" };
 			}
 			return { status: "unauthenticated", statusMessage: "No authenticated models available in Pi." };
-		} catch (err: any) {
-			return { status: "unknown", statusMessage: err.message };
+		} catch (err) {
+			const msg = err instanceof Error ? err.message : String(err);
+			return { status: "unknown", statusMessage: msg };
 		}
 	}
 

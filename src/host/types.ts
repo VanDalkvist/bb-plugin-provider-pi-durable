@@ -53,14 +53,24 @@ export interface SessionOptions {
 	onExtensionUiRequest?: (request: unknown) => void;
 }
 
+export interface RunnerEvent {
+	type: string;
+	[key: string]: unknown;
+}
+
+export interface ThreadDelta {
+	kind: string;
+	[key: string]: unknown;
+}
+
 export interface PiThreadSessionEntry {
 	threadId: string;
 	providerThreadId: string;
 	cwd?: string;
-	session: any;
+	session: unknown;
 	sessionSerial: number;
 	closing: boolean;
-	construction: any;
+	construction: SessionOptions;
 	constructionModel?: { provider: string; id: string };
 }
 

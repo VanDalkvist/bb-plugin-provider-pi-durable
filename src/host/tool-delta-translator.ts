@@ -1,8 +1,13 @@
+import type { RunnerEvent, ThreadDelta } from "./types.ts";
+
 /**
  * Translates tool execution events into BB thread deltas.
  */
-
-export function buildToolItemShape(toolName: string, args: Record<string, any>, fallbackCwd: string): any {
+export function buildToolItemShape(
+	toolName: string,
+	args: Record<string, unknown>,
+	fallbackCwd: string,
+): Record<string, unknown> {
 	if (toolName === "bash") {
 		return {
 			type: "command",
@@ -27,13 +32,16 @@ export function buildToolItemShape(toolName: string, args: Record<string, any>, 
 	};
 }
 
-export function translateToolStart(event: any, fallbackCwd: string): { shape: any; delta: any } {
+export function translateToolStart(
+	event: RunnerEvent,
+	fallbackCwd: string,
+): { shape: Record<string, unknown>; delta: ThreadDelta } {
 	const callId = String(event.toolCallId);
 	const toolName = String(event.toolName);
-	const args = event.args ?? {};
+	const args = (event.args && typeof event.args === "object" ? event.args : {}) as Record<string, unknown>;
 	const shape = buildToolItemShape(toolName, args, fallbackCwd);
 
-	const delta = {
+	const delta: ThreadDelta = {
 		kind: "item.open",
 		key: { providerItemId: callId },
 		item: shape,
@@ -41,7 +49,7 @@ export function translateToolStart(event: any, fallbackCwd: string): { shape: an
 	return { shape, delta };
 }
 
-export function translateToolUpdate(event: any): any | null {
+export function translateToolUpdate(event: RunnerEvent): ThreadDelta | null {
 	const callId = String(event.toolCallId);
 	const toolName = String(event.toolName);
 	if (!event.partialResult) return null;
@@ -61,7 +69,11 @@ export function translateToolUpdate(event: any): any | null {
 	};
 }
 
-export function translateToolEnd(event: any, cachedShape?: any, fallbackCwd = process.cwd()): any {
+export function translateToolEnd(
+	event: RunnerEvent,
+	cachedShape?: Record<string, unknown>,
+	fallbackCwd = process.cwd(),
+): ThreadDelta {
 	const callId = String(event.toolCallId);
 	const toolName = String(event.toolName);
 	const shape = cachedShape ?? {

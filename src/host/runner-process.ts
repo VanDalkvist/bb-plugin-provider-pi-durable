@@ -1,75 +1,68 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { openSync } from "node:fs";
-import { dirname, join } from "node:path";
 import { StringDecoder } from "node:string_decoder";
-import { resolveRunnerPath } from "./paths.ts";
+import type { RunnerEvent } from "./types.ts";
 
 export interface RunnerProcessOptions {
-	cwd?: string;
+	cwd: string;
 	args: string[];
 	env?: Record<string, string>;
-	onEvent?: (event: any) => void;
-	onChannelMessage?: (msg: any) => void;
-	onExit?: (info: { code: number | null; signal: string | null }) => void;
+	onEvent?: (event: RunnerEvent) => void;
+	onChannelMessage?: (msg: unknown) => void;
 }
 
 export class RunnerProcess {
-	public child: ChildProcess;
-	public exited = false;
-	private pendingRequests = new Map<string, { resolve: (val: any) => void; reject: (err: any) => void; timer?: NodeJS.Timeout }>();
-	private nextId = 0;
-	private stdoutDecoder = new StringDecoder("utf8");
-	private stdoutBuf = "";
+	private options: RunnerProcessOptions;
+	private child: ChildProcess;
 	private channelDecoder = new StringDecoder("utf8");
 	private channelBuf = "";
+	private pendingRequests = new Map<string, { resolve: (val: unknown) => void; reject: (err: Error) => void; timer?: NodeJS.Timeout }>();
+	private nextRequestId = 0;
+	public exited = false;
 
-	constructor(private options: RunnerProcessOptions) {
-		const runnerScript = resolveRunnerPath();
-		const pluginRoot = dirname(dirname(runnerScript));
-		const nodePaths = [
-			join(pluginRoot, "node_modules"),
-			process.env.NODE_PATH,
-			"/opt/homebrew/lib/node_modules",
-		].filter(Boolean).join(":");
+	constructor(options: RunnerProcessOptions) {
+		this.options = options;
+		const runnerPath = process.env.PI_DURABLE_RUNNER_PATH || `${__dirname}/runner/index.js`;
 
-		const childEnv = {
-			...process.env,
-			...options.env,
-			ELECTRON_RUN_AS_NODE: "1",
-			NODE_PATH: nodePaths,
-		};
-
-		// Spawn child with stdio [pipe, pipe, inherit, pipe (FD 3), pipe (FD 4)]
-		this.child = spawn(process.execPath, [runnerScript, ...options.args], {
-			cwd: options.cwd || process.cwd(),
-			env: childEnv,
-			stdio: ["pipe", "pipe", "inherit", "pipe", "pipe"],
+		this.child = spawn(process.execPath, [runnerPath, ...options.args], {
+			cwd: options.cwd,
+			stdio: ["pipe", "pipe", "pipe", "pipe", "pipe"],
+			env: {
+				...process.env,
+				...options.env,
+			},
 		});
 
-		this.setupStdio();
+		this.setupStdout();
 		this.setupChannel();
 		this.setupLifecycle();
 	}
 
-	private setupStdio() {
+	private setupStdout() {
+		let stdoutBuf = "";
+		const decoder = new StringDecoder("utf8");
+
 		this.child.stdout?.on("data", (chunk: Buffer) => {
-			this.stdoutBuf += this.stdoutDecoder.write(chunk);
-			const lines = this.stdoutBuf.split("\n");
-			this.stdoutBuf = lines.pop() ?? "";
+			stdoutBuf += decoder.write(chunk);
+			const lines = stdoutBuf.split("\n");
+			stdoutBuf = lines.pop() ?? "";
+
 			for (const line of lines) {
 				const trimmed = line.trim();
 				if (!trimmed) continue;
 				try {
-					const parsed = JSON.parse(trimmed);
+					const parsed = JSON.parse(trimmed) as RunnerEvent;
 					this.handleIncoming(parsed);
-				} catch {}
+				} catch (err) {
+					console.error(`[RunnerProcess] Failed to parse or handle stdout line: ${trimmed}`, err);
+				}
 			}
 		});
 	}
 
 	private setupChannel() {
 		// FD 3 is child-to-host channel
-		const channelIn = (this.child.stdio as any[])[3];
+		const stdioList = this.child.stdio as unknown as Array<NodeJS.ReadableStream | null>;
+		const channelIn = stdioList[3];
 		if (channelIn) {
 			channelIn.on("data", (chunk: Buffer) => {
 				this.channelBuf += this.channelDecoder.write(chunk);
@@ -81,7 +74,9 @@ export class RunnerProcess {
 					try {
 						const parsed = JSON.parse(trimmed);
 						this.options.onChannelMessage?.(parsed);
-					} catch {}
+					} catch (err) {
+						console.error(`[RunnerProcess] Failed to parse channel message: ${trimmed}`, err);
+					}
 				}
 			});
 		}
@@ -95,67 +90,101 @@ export class RunnerProcess {
 				reject(new Error(`Runner process exited (code ${code}, signal ${signal})`));
 			}
 			this.pendingRequests.clear();
-			this.options.onExit?.({ code, signal });
+		});
+
+		this.child.stderr?.on("data", (chunk: Buffer) => {
+			const text = chunk.toString("utf8");
+			if (!text.includes("DeprecationWarning")) {
+				console.error(`[RunnerProcess:stderr] ${text}`);
+			}
 		});
 	}
 
-	private handleIncoming(msg: any) {
-		if (msg.type === "response" && msg.id !== undefined) {
-			const pending = this.pendingRequests.get(String(msg.id));
+	private handleIncoming(msg: RunnerEvent) {
+		if (typeof msg.id !== "undefined") {
+			const reqId = String(msg.id);
+			const pending = this.pendingRequests.get(reqId);
 			if (pending) {
-				this.pendingRequests.delete(String(msg.id));
 				if (pending.timer) clearTimeout(pending.timer);
-				if (msg.success) {
-					pending.resolve(msg.data);
+				this.pendingRequests.delete(reqId);
+				if (msg.error) {
+					const errObj = msg.error as { message?: string };
+					pending.reject(new Error(errObj?.message || String(msg.error)));
 				} else {
-					pending.reject(new Error(msg.error || "Runner command failed"));
+					pending.resolve(msg.result ?? msg);
 				}
 				return;
 			}
 		}
-		this.options.onEvent?.(msg);
+
+		// Dispatch normal event to subscriber
+		try {
+			this.options.onEvent?.(msg);
+		} catch (err) {
+			console.error(`[RunnerProcess] onEvent subscriber threw an error:`, err);
+		}
 	}
 
-	public async request(cmd: Record<string, any>, timeoutMs = 60000): Promise<any> {
-		if (this.exited) throw new Error("Runner process has exited");
-		this.nextId += 1;
-		const id = String(this.nextId);
+	public async request(cmd: Record<string, unknown>, timeoutMs = 30000): Promise<unknown> {
+		if (this.exited || !this.child.stdin) {
+			throw new Error("Runner process is not running");
+		}
+
+		this.nextRequestId++;
+		const id = `req_${this.nextRequestId}`;
+		const payload = { ...cmd, id };
+
 		return new Promise((resolve, reject) => {
 			const timer = setTimeout(() => {
 				this.pendingRequests.delete(id);
-				reject(new Error(`Runner request timed out after ${timeoutMs}ms (${cmd.type})`));
+				reject(new Error(`Runner request timed out (${timeoutMs}ms): ${cmd.type || JSON.stringify(cmd)}`));
 			}, timeoutMs);
-			timer.unref?.();
 
 			this.pendingRequests.set(id, { resolve, reject, timer });
-			const payload = JSON.stringify({ ...cmd, id }) + "\n";
-			this.child.stdin?.write(payload);
+			this.child.stdin?.write(JSON.stringify(payload) + "\n");
 		});
 	}
 
-	public async requestOk(cmd: Record<string, any>, timeoutMs = 60000): Promise<any> {
+	public async requestOk(cmd: Record<string, unknown>, timeoutMs = 30000): Promise<any> {
 		return this.request(cmd, timeoutMs);
 	}
 
-	public sendChannel(msg: any) {
-		if (this.exited) return;
-		const channelOut = (this.child.stdio as any[])[4];
+	public sendChannel(msg: unknown): void {
+		const stdioList = this.child.stdio as unknown as Array<NodeJS.WritableStream | null>;
+		const channelOut = stdioList[4];
 		if (channelOut) {
 			channelOut.write(JSON.stringify(msg) + "\n");
 		}
 	}
 
-	public kill() {
-		this.exited = true;
-		this.child.kill("SIGTERM");
-	}
-
 	public async closeGracefully(timeoutMs = 5000): Promise<void> {
 		if (this.exited) return;
+
+		// Intentionally best-effort abort before termination per AP-022
 		try {
-			await this.request({ type: "abort" }, Math.max(1000, Math.floor(timeoutMs / 2))).catch(() => {});
-		} finally {
-			this.kill();
+			await this.request({ type: "abort" }, Math.max(1000, Math.floor(timeoutMs / 2)));
+		} catch {
+			// intentionally ignored: process may already be terminating or unresponsive
+		}
+
+		this.child.stdin?.end();
+		await new Promise<void>((resolve) => {
+			const timer = setTimeout(() => {
+				this.kill();
+				resolve();
+			}, timeoutMs);
+
+			this.child.once("exit", () => {
+				clearTimeout(timer);
+				resolve();
+			});
+		});
+	}
+
+	public kill(): void {
+		if (!this.exited) {
+			this.child.kill("SIGKILL");
+			this.exited = true;
 		}
 	}
 }
