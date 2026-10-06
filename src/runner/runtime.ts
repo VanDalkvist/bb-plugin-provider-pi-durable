@@ -88,6 +88,7 @@ export interface OpenDurableResult {
 	readonly controller: DurableController;
 	readonly settings: SettingsManager;
 	readonly modelRuntime: ModelRuntime;
+	readonly harness: Harness;
 	close(): Promise<void>;
 }
 
@@ -360,6 +361,7 @@ export async function openDurable(options: OpenDurableOptions = {}): Promise<Ope
 			controller,
 			settings: settingsManager,
 			modelRuntime,
+			harness,
 			close() {
 				closing ??= (async () => {
 					unsubscribe();

@@ -683,6 +683,7 @@ async function openDurable(options = {}) {
       controller,
       settings: settingsManager,
       modelRuntime,
+      harness,
       close() {
         closing ??= (async () => {
           unsubscribe();
@@ -708,41 +709,9 @@ async function openDurable(options = {}) {
   }
 }
 
-// src/runner/bridge/tool-args-resolver.ts
-function resolveToolCallArgs(callId, current) {
-  const live = current.conversation.docs["pi.live"] ?? {};
-  const activeCalls = (live.generation?.message?.content ?? []).filter(
-    (b) => b?.type === "toolCall"
-  );
-  if (activeCalls.length > 0) {
-    const matched = activeCalls.find((c) => c.id === callId || c.callId === callId);
-    if (matched?.arguments && typeof matched.arguments === "object") {
-      return matched.arguments;
-    }
-  }
-  const entries = current.conversation.entries ?? [];
-  for (let i = entries.length - 1; i >= 0; i--) {
-    const entry = entries[i];
-    if (entry?.kind === "pi.assistant" && Array.isArray(entry?.model)) {
-      for (const msg of entry.model) {
-        if (Array.isArray(msg?.content)) {
-          for (const part of msg.content) {
-            if (part.type === "toolCall" && (part.id === callId || part.callId === callId)) {
-              if (part.arguments && typeof part.arguments === "object") {
-                return part.arguments;
-              }
-            }
-          }
-        }
-      }
-    }
-  }
-  const slot = (live.tools ?? []).find((s) => (s.callId ?? String(s.id)) === callId);
-  if (slot?.args && typeof slot.args === "object") {
-    return slot.args;
-  }
-  return {};
-}
+// src/runner/index.ts
+import { ROOT_CONVERSATION_ID as ROOT_CONVERSATION_ID2, watchEvents } from "@earendil-works/pi-durable";
+import { BACKGROUND_CONTEXT as BACKGROUND_CONTEXT2 } from "@earendil-works/chord/context";
 
 // src/runner/bridge/assistant-message-builder.ts
 function buildFinalAssistantMessage(current, lastGenerationText, lastThinkingText) {
@@ -783,168 +752,137 @@ function buildFinalAssistantMessage(current, lastGenerationText, lastThinkingTex
 // src/runner/bridge/bb-event-adapter.ts
 var BBEventAdapter = class {
   output;
-  inTurn = false;
-  lastGenerationText = "";
-  lastThinkingText = "";
-  activeTools = /* @__PURE__ */ new Map();
+  lastAssistantMessage;
+  currentText = "";
+  currentThinking = "";
   constructor(output2) {
     this.output = output2;
   }
-  sync(current) {
-    const live = current.conversation.docs["pi.live"] ?? {};
-    const hasActiveTools = (live.tools ?? []).some(
-      (s) => s.status === "running" || s.status === "pending"
-    );
-    const isBusy = live.run !== void 0 || live.generation !== void 0 || hasActiveTools;
-    if (isBusy && !this.inTurn) {
-      this.inTurn = true;
-      this.lastGenerationText = "";
-      this.lastThinkingText = "";
-      this.activeTools.clear();
-      this.output({ type: "agent_start" });
-      this.output({ type: "turn_start" });
-    }
-    if (live.generation?.message?.content) {
-      let currentText = "";
-      let currentThinking = "";
-      for (const block of live.generation.message.content) {
-        if (block.type === "text") {
-          currentText += block.text ?? "";
-        } else if (block.type === "thinking") {
-          currentThinking += block.thinking ?? "";
-        }
+  handleEvent(event, current) {
+    switch (event.type) {
+      case "run_start": {
+        this.currentText = "";
+        this.currentThinking = "";
+        this.lastAssistantMessage = void 0;
+        this.output({ type: "agent_start" });
+        break;
       }
-      if (currentThinking.length > this.lastThinkingText.length) {
-        const delta = currentThinking.slice(this.lastThinkingText.length);
-        this.lastThinkingText = currentThinking;
-        this.output({
-          type: "message_update",
-          assistantMessageEvent: {
-            type: "thinking_delta",
-            contentIndex: 0,
-            delta
-          }
-        });
+      case "turn_start": {
+        this.output({ type: "turn_start" });
+        break;
       }
-      if (currentText.length > this.lastGenerationText.length) {
-        const delta = currentText.slice(this.lastGenerationText.length);
-        this.lastGenerationText = currentText;
-        this.output({
-          type: "message_update",
-          assistantMessageEvent: {
-            type: "text_delta",
-            contentIndex: 0,
-            delta
-          }
-        });
-      }
-    }
-    const getResultAndError = (callId, slot) => {
-      const entries = current.conversation.entries ?? [];
-      const toolResultEntry = entries.find((e) => {
-        const msg = e.model?.[0];
-        return msg?.role === "toolResult" && msg?.toolCallId === callId;
-      });
-      const toolResultMsg = toolResultEntry?.model?.[0];
-      const isError = toolResultMsg?.isError ?? slot?.isError ?? false;
-      const result = toolResultMsg?.content ?? slot?.output ?? "";
-      return { result, isError };
-    };
-    for (const slot of live.tools ?? []) {
-      const callId = slot.callId ?? String(slot.id);
-      const toolName = slot.name ?? slot.toolName ?? "unknown";
-      const isRunning = slot.status === "running";
-      const isDone = slot.status === "done" || slot.status === "terminal";
-      const prev = this.activeTools.get(callId);
-      if (!prev) {
-        if (isRunning || isDone || slot.status === "pending") {
-          const toolArgs = resolveToolCallArgs(callId, current);
-          this.activeTools.set(callId, {
-            name: toolName,
-            status: slot.status,
-            outputLength: slot.output?.length ?? 0
-          });
-          this.output({
-            type: "tool_execution_start",
-            toolCallId: callId,
-            toolName,
-            args: toolArgs
-          });
-          if (slot.output) {
+      case "message_update": {
+        for (const change of event.changes) {
+          if (change.type === "thinking_delta") {
+            this.currentThinking += change.delta;
             this.output({
-              type: "tool_execution_update",
-              toolCallId: callId,
-              toolName,
-              partialResult: slot.output
+              type: "message_update",
+              assistantMessageEvent: {
+                type: "thinking_delta",
+                contentIndex: 0,
+                delta: change.delta
+              }
+            });
+          } else if (change.type === "text_delta") {
+            this.currentText += change.delta;
+            this.output({
+              type: "message_update",
+              assistantMessageEvent: {
+                type: "text_delta",
+                contentIndex: 0,
+                delta: change.delta
+              }
             });
           }
         }
-      } else {
-        if (slot.output && slot.output.length > prev.outputLength) {
-          const delta = slot.output.slice(prev.outputLength);
-          prev.outputLength = slot.output.length;
+        break;
+      }
+      case "tool_execution_start": {
+        this.output({
+          type: "tool_execution_start",
+          toolCallId: event.toolCallId,
+          toolName: event.toolName,
+          args: event.args ?? {}
+        });
+        break;
+      }
+      case "tool_execution_update": {
+        let partialResult = "";
+        if (event.output) {
+          if ("set" in event.output) {
+            partialResult = event.output.set;
+          } else if ("append" in event.output) {
+            partialResult = event.output.append ?? "";
+          }
+        }
+        if (partialResult) {
           this.output({
             type: "tool_execution_update",
-            toolCallId: callId,
-            toolName,
-            partialResult: delta
+            toolCallId: event.toolCallId,
+            toolName: event.toolName,
+            partialResult
           });
         }
+        break;
       }
-    }
-    for (const [callId, toolState] of this.activeTools.entries()) {
-      if (toolState.status === "done" || toolState.status === "terminal") {
-        continue;
-      }
-      const currentSlot = (live.tools ?? []).find(
-        (s) => (s.callId ?? String(s.id)) === callId
-      );
-      const isSlotDone = currentSlot && (currentSlot.status === "done" || currentSlot.status === "terminal");
-      const isSlotGone = currentSlot === void 0;
-      const entries = current.conversation.entries ?? [];
-      const hasCommittedResult = entries.some((e) => {
-        const msg = e.model?.[0];
-        return msg?.role === "toolResult" && msg?.toolCallId === callId;
-      });
-      if (isSlotDone || isSlotGone || hasCommittedResult) {
-        toolState.status = "done";
-        const { result, isError } = getResultAndError(callId, currentSlot);
+      case "tool_execution_end": {
+        const toolResultMsg = event.entry?.model?.[0];
+        const isError = toolResultMsg?.isError ?? false;
+        let result = "";
+        if (Array.isArray(toolResultMsg?.content)) {
+          result = toolResultMsg.content.map((block) => block && typeof block === "object" && "text" in block ? block.text : "").filter(Boolean).join("\n");
+        } else if (typeof toolResultMsg?.content === "string") {
+          result = toolResultMsg.content;
+        }
         this.output({
           type: "tool_execution_end",
-          toolCallId: callId,
-          toolName: toolState.name,
+          toolCallId: event.toolCallId,
+          toolName: event.toolName,
           result,
           isError
         });
+        break;
       }
-    }
-    if (!isBusy && this.inTurn) {
-      this.inTurn = false;
-      for (const [callId, toolState] of this.activeTools.entries()) {
-        if (toolState.status !== "done" && toolState.status !== "terminal") {
-          toolState.status = "done";
-          const { result, isError } = getResultAndError(callId);
+      case "message_end": {
+        const msg = event.entry?.model?.[0];
+        if (msg?.role === "assistant") {
+          this.lastAssistantMessage = {
+            role: "assistant",
+            content: msg.content ?? [{ type: "text", text: this.currentText }],
+            stopReason: msg.stopReason ?? "stop",
+            usage: msg.usage
+          };
           this.output({
-            type: "tool_execution_end",
-            toolCallId: callId,
-            toolName: toolState.name,
-            result,
-            isError
+            type: "message_end",
+            message: this.lastAssistantMessage
           });
         }
+        break;
       }
-      this.activeTools.clear();
-      const finalMsg = buildFinalAssistantMessage(
-        current,
-        this.lastGenerationText,
-        this.lastThinkingText
-      );
-      this.output({ type: "message_end", message: finalMsg });
-      this.output({ type: "turn_end", message: finalMsg });
-      this.output({ type: "agent_end", messages: [finalMsg] });
-      this.lastGenerationText = "";
-      this.lastThinkingText = "";
-      this.activeTools.clear();
+      case "turn_end": {
+        const finalMsg = this.lastAssistantMessage ?? buildFinalAssistantMessage(
+          current,
+          this.currentText,
+          this.currentThinking
+        );
+        this.output({
+          type: "turn_end",
+          message: finalMsg
+        });
+        break;
+      }
+      case "run_end": {
+        const finalMsg = this.lastAssistantMessage ?? buildFinalAssistantMessage(
+          current,
+          this.currentText,
+          this.currentThinking
+        );
+        this.output({
+          type: "agent_end",
+          messages: [finalMsg]
+        });
+        break;
+      }
     }
   }
 };
@@ -1130,11 +1068,14 @@ async function main() {
   };
   const durable = await openDurable(durableOptions);
   const adapter = new BBEventAdapter((evt) => output(evt));
-  durable.view.subscribe(() => {
+  const stream = await watchEvents(durable.harness, ROOT_CONVERSATION_ID2, BACKGROUND_CONTEXT2);
+  stream.start(async (batch) => {
     try {
-      adapter.sync(durable.view.current());
+      for (const event of batch) {
+        adapter.handleEvent(event, durable.view.current());
+      }
     } catch (err) {
-      console.error(`Adapter sync error: ${err}`);
+      console.error(`Adapter stream error: ${err}`);
     }
   });
   attachJsonlLineReader(process.stdin, async (line) => {

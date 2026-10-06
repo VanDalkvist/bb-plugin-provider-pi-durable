@@ -7,6 +7,8 @@ import type { ModelThinkingLevel } from "./harness-setup.ts";
 import { findInitialAgentModel } from "./harness-setup.ts";
 import { attachJsonlLineReader, serializeJsonLine } from "./jsonl.ts";
 import { openDurable, type OpenDurableOptions } from "./runtime.ts";
+import { ROOT_CONVERSATION_ID, watchEvents } from "@earendil-works/pi-durable";
+import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { BBEventAdapter } from "./bridge/bb-event-adapter.ts";
 import type { BBWireEvent } from "./bridge/contracts.ts";
 
@@ -225,14 +227,16 @@ async function main() {
 
 	const durable = await openDurable(durableOptions);
 
-	// Setup event adapter
+	// Setup native Pi Durable event stream adapter
 	const adapter = new BBEventAdapter((evt: BBWireEvent) => output(evt));
-
-	durable.view.subscribe(() => {
+	const stream = await watchEvents(durable.harness, ROOT_CONVERSATION_ID, BACKGROUND_CONTEXT);
+	stream.start(async (batch) => {
 		try {
-			adapter.sync(durable.view.current());
+			for (const event of batch) {
+				adapter.handleEvent(event, durable.view.current());
+			}
 		} catch (err) {
-			console.error(`Adapter sync error: ${err}`);
+			console.error(`Adapter stream error: ${err}`);
 		}
 	});
 

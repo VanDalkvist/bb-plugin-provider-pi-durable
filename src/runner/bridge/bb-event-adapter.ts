@@ -1,217 +1,162 @@
-import type { LiveState, ToolSlot } from "@earendil-works/pi-durable";
+import type { AgentEvent } from "@earendil-works/pi-durable";
 import type { DurableView } from "../runtime.ts";
-import type { BBWireEvent } from "./contracts.ts";
-import { resolveToolCallArgs } from "./tool-args-resolver.ts";
+import type { BBWireEvent, BBAssistantMessage } from "./contracts.ts";
 import { buildFinalAssistantMessage } from "./assistant-message-builder.ts";
 
-export { resolveToolCallArgs };
-
-interface ToolTrackingState {
-	name: string;
-	status: string;
-	outputLength: number;
-}
+export { resolveToolCallArgs } from "./tool-args-resolver.ts";
 
 /**
- * Encapsulates LiveState tracking and converts deltas into valid BB Wire JSONL events.
+ * Transforms native @earendil-works/pi-durable AgentEvents into BB Wire JSONL events.
+ * Relies directly on the first-party transactional watchEvents stream.
  */
 export class BBEventAdapter {
 	private readonly output: (event: BBWireEvent) => void;
-	private inTurn = false;
-	private lastGenerationText = "";
-	private lastThinkingText = "";
-	private activeTools = new Map<string, ToolTrackingState>();
+	private lastAssistantMessage?: BBAssistantMessage;
+	private currentText = "";
+	private currentThinking = "";
 
 	constructor(output: (event: BBWireEvent) => void) {
 		this.output = output;
 	}
 
-	public sync(current: DurableView): void {
-		const live = (current.conversation.docs["pi.live"] ?? {}) as LiveState;
-
-		// Turn liveness predicate (AP-011, AP-023)
-		const hasActiveTools = (live.tools ?? []).some(
-			(s) => s.status === "running" || s.status === "pending",
-		);
-		const isBusy = live.run !== undefined || live.generation !== undefined || hasActiveTools;
-
-		// 1. Transition into active turn
-		if (isBusy && !this.inTurn) {
-			this.inTurn = true;
-			this.lastGenerationText = "";
-			this.lastThinkingText = "";
-			this.activeTools.clear();
-			this.output({ type: "agent_start" });
-			this.output({ type: "turn_start" });
-		}
-
-		// 2. Stream generation deltas
-		if (live.generation?.message?.content) {
-			let currentText = "";
-			let currentThinking = "";
-
-			for (const block of live.generation.message.content) {
-				if (block.type === "text") {
-					currentText += block.text ?? "";
-				} else if (block.type === "thinking") {
-					currentThinking += block.thinking ?? "";
-				}
+	public handleEvent(event: AgentEvent, current: DurableView): void {
+		switch (event.type) {
+			case "run_start": {
+				this.currentText = "";
+				this.currentThinking = "";
+				this.lastAssistantMessage = undefined;
+				this.output({ type: "agent_start" });
+				break;
 			}
 
-			// Stream thinking delta with contentIndex: 0 (defect D-2)
-			if (currentThinking.length > this.lastThinkingText.length) {
-				const delta = currentThinking.slice(this.lastThinkingText.length);
-				this.lastThinkingText = currentThinking;
-				this.output({
-					type: "message_update",
-					assistantMessageEvent: {
-						type: "thinking_delta",
-						contentIndex: 0,
-						delta,
-					},
-				});
+			case "turn_start": {
+				this.output({ type: "turn_start" });
+				break;
 			}
 
-			// Stream text delta
-			if (currentText.length > this.lastGenerationText.length) {
-				const delta = currentText.slice(this.lastGenerationText.length);
-				this.lastGenerationText = currentText;
-				this.output({
-					type: "message_update",
-					assistantMessageEvent: {
-						type: "text_delta",
-						contentIndex: 0,
-						delta,
-					},
-				});
-			}
-		}
-
-		const getResultAndError = (callId: string, slot?: ToolSlot) => {
-			const entries = current.conversation.entries ?? [];
-			const toolResultEntry = entries.find((e: any) => {
-				const msg = e.model?.[0] as any;
-				return msg?.role === "toolResult" && msg?.toolCallId === callId;
-			});
-			const toolResultMsg = (toolResultEntry as any)?.model?.[0] as any;
-			const isError = toolResultMsg?.isError ?? (slot as any)?.isError ?? false;
-			const result = toolResultMsg?.content ?? slot?.output ?? "";
-			return { result, isError };
-		};
-
-		// 3. Process tool slots with exact Pi Durable schema (Defect A-1 / D-1)
-		for (const slot of live.tools ?? []) {
-			const callId = slot.callId ?? String((slot as any).id);
-			const toolName = slot.name ?? (slot as any).toolName ?? "unknown";
-			const isRunning = slot.status === "running";
-			const isDone = slot.status === "done" || (slot.status as string) === "terminal";
-			const prev = this.activeTools.get(callId);
-
-			if (!prev) {
-				// Tool slot newly observed
-				if (isRunning || isDone || slot.status === "pending") {
-					const toolArgs = resolveToolCallArgs(callId, current);
-					this.activeTools.set(callId, {
-						name: toolName,
-						status: slot.status,
-						outputLength: slot.output?.length ?? 0,
-					});
-
-					this.output({
-						type: "tool_execution_start",
-						toolCallId: callId,
-						toolName,
-						args: toolArgs,
-					});
-
-					if (slot.output) {
+			case "message_update": {
+				for (const change of event.changes) {
+					if (change.type === "thinking_delta") {
+						this.currentThinking += change.delta;
 						this.output({
-							type: "tool_execution_update",
-							toolCallId: callId,
-							toolName,
-							partialResult: slot.output,
+							type: "message_update",
+							assistantMessageEvent: {
+								type: "thinking_delta",
+								contentIndex: 0,
+								delta: change.delta,
+							},
+						});
+					} else if (change.type === "text_delta") {
+						this.currentText += change.delta;
+						this.output({
+							type: "message_update",
+							assistantMessageEvent: {
+								type: "text_delta",
+								contentIndex: 0,
+								delta: change.delta,
+							},
 						});
 					}
 				}
-			} else {
-				// Existing tool slot update
-				if (slot.output && slot.output.length > prev.outputLength) {
-					const delta = slot.output.slice(prev.outputLength);
-					prev.outputLength = slot.output.length;
+				break;
+			}
+
+			case "tool_execution_start": {
+				this.output({
+					type: "tool_execution_start",
+					toolCallId: event.toolCallId,
+					toolName: event.toolName,
+					args: event.args ?? {},
+				});
+				break;
+			}
+
+			case "tool_execution_update": {
+				let partialResult = "";
+				if (event.output) {
+					if ("set" in event.output) {
+						partialResult = event.output.set;
+					} else if ("append" in event.output) {
+						partialResult = event.output.append ?? "";
+					}
+				}
+				if (partialResult) {
 					this.output({
 						type: "tool_execution_update",
-						toolCallId: callId,
-						toolName,
-						partialResult: delta,
+						toolCallId: event.toolCallId,
+						toolName: event.toolName,
+						partialResult,
 					});
 				}
-			}
-		}
-
-		// 3b. Real-time tool completion: check active tools across live slots & committed entries (Cycle 51)
-		for (const [callId, toolState] of this.activeTools.entries()) {
-			if (toolState.status === "done" || toolState.status === "terminal") {
-				continue;
+				break;
 			}
 
-			const currentSlot = (live.tools ?? []).find(
-				(s) => (s.callId ?? String((s as any).id)) === callId,
-			);
-			const isSlotDone = currentSlot && (currentSlot.status === "done" || (currentSlot.status as string) === "terminal");
-			const isSlotGone = currentSlot === undefined;
+			case "tool_execution_end": {
+				const toolResultMsg = event.entry?.model?.[0] as any;
+				const isError = toolResultMsg?.isError ?? false;
+				let result = "";
 
-			const entries = current.conversation.entries ?? [];
-			const hasCommittedResult = entries.some((e: any) => {
-				const msg = e.model?.[0] as any;
-				return msg?.role === "toolResult" && msg?.toolCallId === callId;
-			});
+				if (Array.isArray(toolResultMsg?.content)) {
+					result = toolResultMsg.content
+						.map((block: any) => (block && typeof block === "object" && "text" in block ? block.text : ""))
+						.filter(Boolean)
+						.join("\n");
+				} else if (typeof toolResultMsg?.content === "string") {
+					result = toolResultMsg.content;
+				}
 
-			if (isSlotDone || isSlotGone || hasCommittedResult) {
-				toolState.status = "done";
-				const { result, isError } = getResultAndError(callId, currentSlot);
 				this.output({
 					type: "tool_execution_end",
-					toolCallId: callId,
-					toolName: toolState.name,
+					toolCallId: event.toolCallId,
+					toolName: event.toolName,
 					result,
 					isError,
 				});
+				break;
 			}
-		}
 
-		// 4. Transition out of turn (AP-026)
-		if (!isBusy && this.inTurn) {
-			this.inTurn = false;
-
-			// Finalize any uncompleted tools before ending turn
-			for (const [callId, toolState] of this.activeTools.entries()) {
-				if (toolState.status !== "done" && toolState.status !== "terminal") {
-					toolState.status = "done";
-					const { result, isError } = getResultAndError(callId);
+			case "message_end": {
+				const msg = event.entry?.model?.[0] as any;
+				if (msg?.role === "assistant") {
+					this.lastAssistantMessage = {
+						role: "assistant",
+						content: msg.content ?? [{ type: "text", text: this.currentText }],
+						stopReason: msg.stopReason ?? "stop",
+						usage: msg.usage,
+					};
 					this.output({
-						type: "tool_execution_end",
-						toolCallId: callId,
-						toolName: toolState.name,
-						result,
-						isError,
+						type: "message_end",
+						message: this.lastAssistantMessage,
 					});
 				}
+				break;
 			}
-			this.activeTools.clear();
 
-			const finalMsg = buildFinalAssistantMessage(
-				current,
-				this.lastGenerationText,
-				this.lastThinkingText,
-			);
+			case "turn_end": {
+				const finalMsg = this.lastAssistantMessage ?? buildFinalAssistantMessage(
+					current,
+					this.currentText,
+					this.currentThinking,
+				);
+				this.output({
+					type: "turn_end",
+					message: finalMsg,
+				});
+				break;
+			}
 
-			this.output({ type: "message_end", message: finalMsg });
-			this.output({ type: "turn_end", message: finalMsg });
-			this.output({ type: "agent_end", messages: [finalMsg] });
-
-			this.lastGenerationText = "";
-			this.lastThinkingText = "";
-			this.activeTools.clear();
+			case "run_end": {
+				const finalMsg = this.lastAssistantMessage ?? buildFinalAssistantMessage(
+					current,
+					this.currentText,
+					this.currentThinking,
+				);
+				this.output({
+					type: "agent_end",
+					messages: [finalMsg],
+				});
+				break;
+			}
 		}
 	}
 }
