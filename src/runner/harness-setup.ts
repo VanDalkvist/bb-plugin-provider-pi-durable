@@ -1,0 +1,134 @@
+import type { Context } from "@earendil-works/chord";
+import type { ModelThinkingLevel } from "@earendil-works/pi-ai";
+import {
+	createRegistry,
+	type EnvTarget,
+	type HarnessSettings,
+	type ModelRef,
+	type Registry,
+} from "@earendil-works/pi-durable";
+import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
+import { CodingTools } from "@earendil-works/pi-durable/tools";
+import {
+	type ModelRuntime,
+	type SettingsManager,
+	resolveCliModel,
+} from "@earendil-works/pi-coding-agent";
+import { createPiPrompt, type PromptOptions } from "./prompt.ts";
+
+export function configureHarnessHttp(settingsManager: SettingsManager): void {
+	const proxy = settingsManager.getGlobalSettings()?.httpProxy?.trim();
+	if (proxy) {
+		process.env.HTTP_PROXY ??= proxy;
+		process.env.HTTPS_PROXY ??= proxy;
+	}
+}
+
+export function createHarnessSettings(settingsManager: SettingsManager): HarnessSettings {
+	return {
+		get stream() {
+			const provider = settingsManager.getProviderRetrySettings?.() ?? {};
+			const idle = settingsManager.getHttpIdleTimeoutMs?.() ?? 300_000;
+			return {
+				timeoutMs: provider.timeoutMs ?? (idle === 0 ? 2147483647 : idle),
+				maxRetryDelayMs: provider.maxRetryDelayMs,
+				...(provider.maxRetries === undefined ? {} : { maxRetries: provider.maxRetries }),
+			};
+		},
+		get compaction() {
+			return settingsManager.getCompactionSettings?.() ?? {};
+		},
+		get retry() {
+			return settingsManager.getRetrySettings?.() ?? {};
+		},
+		get steeringMode() {
+			return settingsManager.getSteeringMode?.() ?? "immediate";
+		},
+		get followUpMode() {
+			return settingsManager.getFollowUpMode?.() ?? "queue";
+		},
+	};
+}
+
+export function createCodingRegistry(
+	settingsManager: SettingsManager,
+	cwd: string,
+	promptOptions?: PromptOptions,
+): Registry {
+	const registry = createRegistry();
+	registry.install(CodingTools);
+	registry.install(createPiPrompt(settingsManager, cwd, promptOptions));
+	return registry;
+}
+
+export class ExecutionEnvs {
+	readonly #defaultCwd: string;
+	readonly #envs = new Map<string, NodeExecutionEnv>();
+
+	constructor(defaultCwd: string) {
+		this.#defaultCwd = defaultCwd;
+	}
+
+	readonly env = ({ cwd = this.#defaultCwd }: EnvTarget): NodeExecutionEnv => {
+		let env = this.#envs.get(cwd);
+		if (env === undefined) {
+			env = new NodeExecutionEnv({ cwd });
+			this.#envs.set(cwd, env);
+		}
+		return env;
+	};
+
+	async cleanup(context: Context): Promise<void> {
+		const envs = [...this.#envs.values()];
+		this.#envs.clear();
+		for (const env of envs) await env.cleanup(context);
+	}
+}
+
+export interface InitialModel {
+	readonly model?: ModelRef;
+	readonly thinkingLevel?: ModelThinkingLevel;
+	readonly fallbackMessage?: string;
+}
+
+export async function findInitialAgentModel(
+	settingsManager: SettingsManager,
+	modelRuntime: ModelRuntime,
+	cli?: { readonly provider?: string; readonly model: string; readonly thinking?: ModelThinkingLevel },
+): Promise<InitialModel> {
+	if (cli !== undefined) {
+		const resolved = resolveCliModel({ cliProvider: cli.provider, cliModel: cli.model, modelRuntime });
+		if (resolved.error !== undefined || resolved.model === undefined) {
+			throw new Error(`Could not resolve model: ${resolved.error ?? cli.model}`);
+		}
+		return {
+			model: { provider: resolved.model.provider, modelId: resolved.model.id },
+			thinkingLevel: cli.thinking ?? resolved.thinkingLevel ?? "none",
+		};
+	}
+
+	const defaultProvider = settingsManager.getDefaultProvider?.();
+	const defaultModelId = settingsManager.getDefaultModel?.();
+	const defaultThinkingLevel = settingsManager.getDefaultThinkingLevel?.() as ModelThinkingLevel;
+
+	if (defaultProvider && defaultModelId) {
+		const models = modelRuntime.getAvailableSnapshot();
+		const matched = models.find((m) => m.provider === defaultProvider && m.id === defaultModelId);
+		if (matched) {
+			return {
+				model: { provider: matched.provider, modelId: matched.id },
+				thinkingLevel: defaultThinkingLevel ?? "none",
+			};
+		}
+	}
+
+	const available = modelRuntime.getAvailableSnapshot();
+	if (available.length > 0) {
+		return {
+			model: { provider: available[0].provider, modelId: available[0].id },
+			thinkingLevel: "none",
+		};
+	}
+
+	return {};
+}

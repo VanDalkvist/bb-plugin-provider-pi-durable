@@ -1,31 +1,72 @@
-# Pi Durable Provider Plugin for BB
+# Pi Durable Provider Plugin for BB IDE
 
-Run BB IDE threads with the Pi Durable ACID SQLite engine and persistent conversation sessions.
+Run BB IDE threads with the **Pi Durable** transactional ACID SQLite engine and persistent conversation sessions.
 
 ## Overview
 
-`bb-plugin-provider-pi-durable` connects BB IDE to the Pi Durable runtime. Unlike standard transient processes, every thread run in Pi Durable is backed by an ACID SQLite store, preserving full event history, deterministic resumption, execution logs, and live state streaming.
+`bb-plugin-provider-pi-durable` is an atomic, self-contained provider plugin that integrates the Pi Durable runtime into the Beyond Boundaries (BB IDE) environment.
+
+Unlike transient providers that store state only in memory or flat text logs, every thread in Pi Durable is backed by a transactional SQLite store (`session.sqlite`). This guarantees zero token loss on crashes or process termination (`kill -9`), deterministic thread resumption, a persistent task graph, and subagent orchestration.
+
+The plugin includes an internal, pre-bundled RPC bridge runner (`dist/runner/index.js`), eliminating the need for custom external binaries or repository checkouts on user machines.
+
+---
 
 ## Features
 
-- **ACID Session Persistence:** All turns, tool executions, and model generations are committed directly to disk using transactional SQLite storage.
-- **Dynamic Model Catalog:** Seamlessly discovers all models configured in your Pi environment (Anthropic, OpenAI, OpenRouter, Google, Bedrock, and custom local models) without hardcoded models or artificial limitations.
-- **Live Bidirectional Bridge:** Uses dedicated IPC channels (FD 3 & FD 4) for immediate readiness, model scope discovery, thinking level negotiation, and interactive UI requests.
-- **Native Skill Roots:** Automatically resolves native skills from `.pi/agent/skills`, `.agents/skills`, and project-level roots.
-- **Multi-Level Reasoning Support:** Supports all thinking levels (`none`, `low`, `medium`, `high`, `xhigh`, `max`) depending on model capabilities.
+- **Self-Contained & Atomic:** Ships with its own built-in runner; no external `pi-durable-rpc` binary or mono-repo clones required.
+- **ACID Session Persistence:** All turns, tool executions, and model generations are committed directly to disk using transactional SQLite (`node:sqlite`).
+- **Interactive Terminal Widget:** Real-time bash command streaming with live stdout/stderr, working directory, and exit code display.
+- **Visual File Diffs:** Full syntax-highlighted Diff Viewer in BB chat for `edit` and `write` tool calls.
+- **Reasoning Stream Accordion:** Real-time thinking and reasoning blocks streamed directly into the collapsible Thinking accordion in BB UI.
+- **Context Window Meter:** Accurate live token usage (`usedTokens / contextWindow`) rendered on the status bar ring indicator.
+- **Full CLI & Workflow Output:** Guaranteed final output capture for `bb thread output <thread-id>` and automated workflows.
+- **Model Selector & Reasoning Control:** Seamless model switching across providers (Google Antigravity, Anthropic, OpenAI) with multi-level thinking control (`none`, `low`, `medium`, `high`, `xhigh`, `max`).
+- **Project Guidelines Injection:** Automatically injects project-level `AGENTS.md` and custom thread instructions.
 
-## Requirements
+---
 
-- BB IDE `>= 0.45.0`
-- `pi` CLI installed and authenticated on the host machine.
-- `pi-durable-rpc` available in `$PATH` (or customized via `BB_PI_DURABLE_BRIDGE_COMMAND`).
+## System Requirements & Prerequisites
+
+To use Pi Durable in BB IDE, ensure the following prerequisites are installed on your host machine:
+
+1. **BB IDE:** `>= 0.45.0`
+2. **Node.js:** `>= 22.19.0` (required for built-in `node:sqlite` support)
+3. **Pi Durable Core Engine:** Install the `@earendil-works/pi-durable` package:
+   ```bash
+   npm install -g @earendil-works/pi-durable
+   ```
+4. **Model Authentication:** Authenticate your model providers using the standard `pi` CLI:
+   ```bash
+   pi
+   ```
+   *(Ensure at least one provider such as Google Antigravity, Anthropic, or OpenAI is logged in).*
+
+---
 
 ## Configuration
 
-You can override the bridge launch command via environment variables:
+The plugin works out-of-the-box with default paths, but supports optional environment overrides:
 
-- `BB_PI_DURABLE_BRIDGE_COMMAND`: Custom path to the `pi-durable-rpc` binary or runner.
-- `BB_PI_DURABLE_BRIDGE_ARGS`: JSON array of additional CLI arguments.
+| Variable | Description | Default |
+|---|---|---|
+| `BB_PI_DURABLE_PACKAGE_PATH` | Explicit filesystem path to `@earendil-works/pi-durable` (useful for monorepos or local package checkouts). | Auto-discovered from project, global `npm root -g`, or `~/.pi/agent/`. |
+| `BB_PI_DURABLE_BRIDGE_COMMAND` | Custom executable command for the bridge runner (for core engine developers). | Internal bundled runner (`dist/runner/index.js`). |
+| `BB_PI_DURABLE_BRIDGE_ARGS` | JSON array of additional CLI arguments passed to the runner. | `[]` |
+
+---
+
+## Troubleshooting
+
+### "Could not find @earendil-works/pi-durable"
+If the plugin reports that Pi Durable is not installed:
+1. Run `npm install -g @earendil-works/pi-durable` on your machine.
+2. If installed in a non-standard location or monorepo, set `BB_PI_DURABLE_PACKAGE_PATH=/path/to/@earendil-works/pi-durable`.
+
+### "Pi has no authenticated model provider available"
+Run `pi` in your terminal to log in to your desired provider (Google, Anthropic, OpenAI), then reload BB IDE.
+
+---
 
 ## License
 
