@@ -1,11 +1,11 @@
 # Master Architectural Implementation Plan: Remediation & Full Parity of Pi Durable in BB IDE
 
 **Document ID:** `plans/pi-durable-bb-provider-arch-master-plan`  
-**Version:** 3.1.0 (Master Unified Roadmap: Remediation + Feature Parity)  
+**Version:** 3.2.0 (Master Unified Roadmap: Remediation + Feature Parity)  
 **Target Repository:** `/Users/vanya/Projects/bb-plugin-provider-pi-durable`  
 **Governing Standard:** `arch-rules.md` (AP-010 – AP-071) & `arch-improvement-loop` State Machine  
 **Upstream PRDs:**
-- `prd/pi-durable-provider-remediation` (Audit of 11 Critical Divergences in Implemented Features)
+- `prd/pi-durable-provider-remediation` (Audit of 12 Critical Divergences in Implemented Features)
 - `prd/pi-durable-bb-provider-full-parity` (Complete Engine Capabilities & Parity Features)  
 **Execution Model:** 12 Distinct Sequential Arch Improvement Loop Cycles (Cycle 56 to Cycle 67), each executed in a dedicated thread with strict verification gates.
 
@@ -61,10 +61,10 @@ Every individual cycle (Cycles 56 through 67) must be executed in its own dedica
 
 ```
 STAGE 1: FOUNDATION HARDENING & AUDIT REMEDIATION (Cycles 56–59)
-Eliminate all 11 divergences in already-implemented session, streaming, tool, and model code.
+Eliminate all 12 divergences in already-implemented session, streaming, tool, and model code.
   - Cycle 56: Process Lifecycle, Lock Cleanup & Session Path Normalization (D-1, D-2)
   - Cycle 57: Tool Fault Integrity, Error Reporting & Diff Metadata Forwarding (D-5, D-6, D-9)
-  - Cycle 58: Full Native Event Streaming, Multi-Block Reasoning Channels & Checkpoint ID Propagation (D-3, D-4, D-10, D-11)
+  - Cycle 58: Full Native Event Streaming, Reasoning Channels & Thinking Accordion Lifecycle (D-3, D-4, D-10, D-11, D-12)
   - Cycle 59: Model Reasoning Compatibility & Cumulative Usage Integrity (D-7, D-8)
 
 STAGE 2: ADVANCED ENGINE CAPABILITIES & FULL PARITY (Cycles 60–67)
@@ -131,25 +131,40 @@ Build new advanced capabilities on top of the hardened, defect-free foundation.
 
 ---
 
-### Cycle 58: Full Native Event Streaming, Multi-Block Reasoning Channels & Checkpoint ID Propagation
-- **PRD Divergences Covered:** D-3, D-4, D-10, D-11.
+### Cycle 58: Full Native Event Streaming, Reasoning Channels & Thinking Accordion Lifecycle
+- **PRD Divergences Covered:** D-3, D-4, D-10, D-11, D-12 (FR-17, FR-R10, FR-R11).
 - **Architectural Problem:**
-  1. `bb-event-adapter.ts` hardcodes `contentIndex: 0` for all thinking and text deltas, corrupting streams when multiple reasoning blocks or text parts occur.
+  1. Model thinking/reasoning is completely invisible in the BB IDE thread:
+     - `catalog.ts` ignores `m.reasoning` and `m.thinkingLevelMap`, hardcoding reasoning efforts and missing `none`.
+     - `turn/start` does not reconcile or dynamically apply `reasoningLevel` to the runner via `set_thinking_level`.
+     - `bb-event-adapter.ts` hardcodes `contentIndex: 0`, drops `thinking_start`, drops `block` events, and never emits `thinking_end`.
+     - `delta-translator.ts` streams `reasoningText` but never sends `item.textClose`, leaving reasoning unclosed so BB never emits `item/completed` with `type: "reasoning"` (no `Thought for Xs` accordion).
   2. Dropped native events: `snapshot`, `auto_retry_start/end`, `deferred_poll`, `task_failed`, `agent_changed`.
   3. Reconnecting to a running session drops active in-flight tool and thinking states because `snapshot` is ignored.
+  4. `turn.boundary` lacks `providerCheckpointId`, which causes BB IDE to record null and reject message edits with HTTP 409 conflict.
 - **Target Solution:**
-  1. In `bb-event-adapter.ts`, map `change.contentIndex` directly from `MessageChange` into `assistantMessageEvent.contentIndex` and `key: { channel: "thinking-${contentIndex}" }`.
-  2. Handle `snapshot`: replay currently running tools (`live.tools`) and active generation message on attachment.
-  3. Handle `auto_retry_start/end`: emit `item.progress` with retry count and backoff delay.
-  4. Handle `task_failed`: emit failure boundary delta.
+  1. **Catalog & Effort Mapping:** In `catalog.ts`, map `m.reasoning` to `supportedReasoningEfforts`: non-reasoning models get only `none`; reasoning models get `none` (mapped to `off`), `low`, `medium`, `high`, `max`.
+  2. **Turn Reasoning Reconciliation:** In `bridge.ts` and `session.ts`, translate `params.options.reasoningLevel` and call runner IPC `set_thinking_level` dynamically.
+  3. **Event Adapter Parity:** In `bb-event-adapter.ts`, preserve real `change.contentIndex`, emit `thinking_start` / `thinking_delta`, handle `block`, and emit `thinking_end` when transitioning to text/tool or on turn completion.
+  4. **Delta Translator & Accordion Lifecycle:** In `delta-translator.ts`, stream `item.textDelta` with `key: { channel: "thinking-${idx}" }` and `channel: "reasoningText"`. On `thinking_end` (or before starting text/tools), emit `item.textClose` on `reasoningText` to finalize the reasoning item into BB's `Thought for Xs` accordion.
+  5. **Snapshot & Reconnect:** Map `snapshot` events to restore live in-flight tool slots and background state.
+  6. **Turn Checkpoint ID:** Capture tail `EntryId` on `agent_end` and pass as `providerCheckpointId` in `turn.boundary` delta.
 - **File Impact & Line Budget (AP-019):**
-  - `src/runner/bridge/bb-event-adapter.ts`: +40 lines (~180 lines).
-  - `src/host/delta-translator.ts`: handle retry progress and multi-index thinking channels (~220 lines).
+  - `src/host/catalog.ts`: +20 lines (~130 lines).
+  - `src/host/bridge.ts`: +15 lines (~215 lines).
+  - `src/runner/bridge/bb-event-adapter.ts`: +45 lines (~185 lines).
+  - `src/host/delta-translator.ts`: +35 lines (~235 lines).
+  - `tests/event-stream-parity.test.ts`: new file (~140 lines).
 - **Test Suite (TDD):**
-  - `tests/event-stream-parity.test.ts`: test multi-block thinking preserves separate channels; test snapshot restores in-flight tools; test auto-retry emits progress notifications.
+  - Verify non-reasoning model catalog returns only `reasoningEffort: "none"`.
+  - Verify reasoning model streams `item.textDelta` on `channel: "reasoningText"` and finalizes with `item.textClose`.
+  - Verify transition from thinking to text automatically closes thinking channel.
+  - Verify `contentIndex` > 0 maintains isolated text/reasoning channels.
+  - Verify `snapshot` with 2 running tools emits proper `tool_execution_start` deltas.
+  - Verify `turn.boundary` contains valid `providerCheckpointId`.
 - **Verification Gates:**
-  - Unit tests pass.
-  - Reconnecting to busy thread immediately renders ongoing thinking and active tools.
+  - `npm test` passes.
+  - Live BB test: Reasoning model produces live thinking stream and collapsible `Thought for Xs` accordion.
 
 ---
 
