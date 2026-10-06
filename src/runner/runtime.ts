@@ -160,11 +160,8 @@ export async function openDurable(options: OpenDurableOptions = {}): Promise<Ope
 			const m = settingsManager.getDefaultModel();
 			return p && m ? { provider: p, modelId: m } : undefined;
 		};
-		const getModelContextWindow = (provider: string, modelId: string) => {
-			return modelRuntime.getModel(provider, modelId)?.contextWindow;
-		};
 
-		const settings = createHarnessSettings(settingsManager, getActiveModel, getModelContextWindow);
+		const settings = createHarnessSettings(settingsManager, getActiveModel);
 		const registry = createCodingRegistry(settingsManager, location.cwd, options.prompt);
 		registry.install(Subagent);
 

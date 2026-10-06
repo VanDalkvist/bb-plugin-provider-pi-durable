@@ -254,7 +254,7 @@ function configureHarnessHttp(settingsManager) {
     process.env.HTTPS_PROXY ??= proxy;
   }
 }
-function createHarnessSettings(settingsManager, getActiveModel, getModelContextWindow) {
+function createHarnessSettings(settingsManager, getActiveModel) {
   return {
     get stream() {
       const provider = settingsManager.getProviderRetrySettings?.() ?? {};
@@ -272,14 +272,7 @@ function createHarnessSettings(settingsManager, getActiveModel, getModelContextW
         const m = settingsManager.getDefaultModel();
         return p && m ? { provider: p, id: m } : void 0;
       })();
-      const compaction = { ...settingsManager.getCompactionSettings?.(model) ?? {} };
-      if (model && getModelContextWindow) {
-        const cw = getModelContextWindow(model.provider, model.id);
-        if (typeof cw === "number" && cw > 3e5 && compaction.reserveTokens === 16384) {
-          compaction.reserveTokens = cw - 3e5;
-        }
-      }
-      return compaction;
+      return settingsManager.getCompactionSettings?.(model) ?? {};
     },
     get retry() {
       return settingsManager.getRetrySettings?.() ?? {};
@@ -507,10 +500,7 @@ async function openDurable(options = {}) {
       const m = settingsManager.getDefaultModel();
       return p && m ? { provider: p, modelId: m } : void 0;
     };
-    const getModelContextWindow = (provider, modelId) => {
-      return modelRuntime.getModel(provider, modelId)?.contextWindow;
-    };
-    const settings = createHarnessSettings(settingsManager, getActiveModel, getModelContextWindow);
+    const settings = createHarnessSettings(settingsManager, getActiveModel);
     const registry = createCodingRegistry(settingsManager, location.cwd, options.prompt);
     registry.install(Subagent);
     const pendingReports = [];

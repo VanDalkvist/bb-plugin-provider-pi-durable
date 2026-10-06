@@ -28,7 +28,6 @@ export function configureHarnessHttp(settingsManager: SettingsManager): void {
 export function createHarnessSettings(
 	settingsManager: SettingsManager,
 	getActiveModel?: () => { provider: string; modelId: string } | undefined,
-	getModelContextWindow?: (provider: string, modelId: string) => number | undefined,
 ): HarnessSettings {
 	return {
 		get stream() {
@@ -49,14 +48,7 @@ export function createHarnessSettings(
 						const m = settingsManager.getDefaultModel();
 						return p && m ? { provider: p, id: m } : undefined;
 					})();
-			const compaction = { ...(settingsManager.getCompactionSettings?.(model) ?? {}) };
-			if (model && getModelContextWindow) {
-				const cw = getModelContextWindow(model.provider, model.id);
-				if (typeof cw === "number" && cw > 300_000 && compaction.reserveTokens === 16384) {
-					compaction.reserveTokens = cw - 300_000;
-				}
-			}
-			return compaction;
+			return settingsManager.getCompactionSettings?.(model) ?? {};
 		},
 		get retry() {
 			return settingsManager.getRetrySettings?.() ?? {};
