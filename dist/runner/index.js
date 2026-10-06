@@ -708,7 +708,7 @@ async function openDurable(options = {}) {
   }
 }
 
-// src/runner/bridge/bb-event-adapter.ts
+// src/runner/bridge/tool-args-resolver.ts
 function resolveToolCallArgs(callId, current) {
   const live = current.conversation.docs["pi.live"] ?? {};
   const activeCalls = (live.generation?.message?.content ?? []).filter(
@@ -741,11 +741,46 @@ function resolveToolCallArgs(callId, current) {
   if (slot?.args && typeof slot.args === "object") {
     return slot.args;
   }
-  if (slot?.input && typeof slot.input === "object") {
-    return slot.input;
-  }
   return {};
 }
+
+// src/runner/bridge/assistant-message-builder.ts
+function buildFinalAssistantMessage(current, lastGenerationText, lastThinkingText) {
+  const entries = current.conversation.entries ?? [];
+  const lastAssistantEntry = [...entries].reverse().find((e) => e.kind === "pi.assistant");
+  const lastAssistantMsg = lastAssistantEntry?.model?.[0];
+  if (lastAssistantMsg) {
+    return {
+      role: "assistant",
+      content: lastAssistantMsg.content ?? [{ type: "text", text: lastGenerationText }],
+      stopReason: lastAssistantMsg.stopReason ?? "stop",
+      usage: lastAssistantMsg.usage
+    };
+  }
+  const finalContent = [];
+  if (lastThinkingText) {
+    finalContent.push({ type: "thinking", thinking: lastThinkingText });
+  }
+  if (lastGenerationText) {
+    finalContent.push({ type: "text", text: lastGenerationText });
+  }
+  const usageDoc = current.conversation.docs["pi.usage"] ?? {};
+  return {
+    role: "assistant",
+    content: finalContent.length > 0 ? finalContent : [{ type: "text", text: "" }],
+    stopReason: "stop",
+    usage: {
+      input: usageDoc.input,
+      output: usageDoc.output,
+      cacheRead: usageDoc.cacheRead,
+      cacheWrite: usageDoc.cacheWrite,
+      totalTokens: usageDoc.totalTokens ?? (usageDoc.input ?? 0) + (usageDoc.output ?? 0),
+      cost: usageDoc.cost
+    }
+  };
+}
+
+// src/runner/bridge/bb-event-adapter.ts
 var BBEventAdapter = class {
   output;
   inTurn = false;
@@ -804,23 +839,23 @@ var BBEventAdapter = class {
         });
       }
     }
+    const getResultAndError = (callId, slot) => {
+      const entries = current.conversation.entries ?? [];
+      const toolResultEntry = entries.find((e) => {
+        const msg = e.model?.[0];
+        return msg?.role === "toolResult" && msg?.toolCallId === callId;
+      });
+      const toolResultMsg = toolResultEntry?.model?.[0];
+      const isError = toolResultMsg?.isError ?? slot?.isError ?? false;
+      const result = toolResultMsg?.content ?? slot?.output ?? "";
+      return { result, isError };
+    };
     for (const slot of live.tools ?? []) {
       const callId = slot.callId ?? String(slot.id);
       const toolName = slot.name ?? slot.toolName ?? "unknown";
-      const isDone = slot.status === "done" || slot.status === "terminal";
       const isRunning = slot.status === "running";
+      const isDone = slot.status === "done" || slot.status === "terminal";
       const prev = this.activeTools.get(callId);
-      const getResultAndError = () => {
-        const entries = current.conversation.entries ?? [];
-        const toolResultEntry = entries.find((e) => {
-          const msg = e.model?.[0];
-          return msg?.role === "toolResult" && msg?.toolCallId === callId;
-        });
-        const toolResultMsg = toolResultEntry?.model?.[0];
-        const isError = toolResultMsg?.isError ?? slot.isError ?? false;
-        const result = toolResultMsg?.content ?? slot.output ?? "";
-        return { result, isError };
-      };
       if (!prev) {
         if (isRunning || isDone || slot.status === "pending") {
           const toolArgs = resolveToolCallArgs(callId, current);
@@ -843,16 +878,6 @@ var BBEventAdapter = class {
               partialResult: slot.output
             });
           }
-          if (isDone) {
-            const { result, isError } = getResultAndError();
-            this.output({
-              type: "tool_execution_end",
-              toolCallId: callId,
-              toolName,
-              result,
-              isError
-            });
-          }
         }
       } else {
         if (slot.output && slot.output.length > prev.outputLength) {
@@ -865,32 +890,40 @@ var BBEventAdapter = class {
             partialResult: delta
           });
         }
-        if (isDone && prev.status !== "done" && prev.status !== "terminal") {
-          prev.status = slot.status;
-          const { result, isError } = getResultAndError();
-          this.output({
-            type: "tool_execution_end",
-            toolCallId: callId,
-            toolName,
-            result,
-            isError
-          });
-        }
+      }
+    }
+    for (const [callId, toolState] of this.activeTools.entries()) {
+      if (toolState.status === "done" || toolState.status === "terminal") {
+        continue;
+      }
+      const currentSlot = (live.tools ?? []).find(
+        (s) => (s.callId ?? String(s.id)) === callId
+      );
+      const isSlotDone = currentSlot && (currentSlot.status === "done" || currentSlot.status === "terminal");
+      const isSlotGone = currentSlot === void 0;
+      const entries = current.conversation.entries ?? [];
+      const hasCommittedResult = entries.some((e) => {
+        const msg = e.model?.[0];
+        return msg?.role === "toolResult" && msg?.toolCallId === callId;
+      });
+      if (isSlotDone || isSlotGone || hasCommittedResult) {
+        toolState.status = "done";
+        const { result, isError } = getResultAndError(callId, currentSlot);
+        this.output({
+          type: "tool_execution_end",
+          toolCallId: callId,
+          toolName: toolState.name,
+          result,
+          isError
+        });
       }
     }
     if (!isBusy && this.inTurn) {
       this.inTurn = false;
-      const entries = current.conversation.entries ?? [];
       for (const [callId, toolState] of this.activeTools.entries()) {
         if (toolState.status !== "done" && toolState.status !== "terminal") {
           toolState.status = "done";
-          const toolResultEntry = entries.find((e) => {
-            const msg = e.model?.[0];
-            return msg?.role === "toolResult" && msg?.toolCallId === callId;
-          });
-          const toolResultMsg = toolResultEntry?.model?.[0];
-          const isError = toolResultMsg?.isError ?? false;
-          const result = toolResultMsg?.content ?? "";
+          const { result, isError } = getResultAndError(callId);
           this.output({
             type: "tool_execution_end",
             toolCallId: callId,
@@ -900,39 +933,12 @@ var BBEventAdapter = class {
           });
         }
       }
-      const lastAssistantEntry = [...entries].reverse().find((e) => e.kind === "pi.assistant");
-      const lastAssistantMsg = lastAssistantEntry?.model?.[0];
-      let finalMsg;
-      if (lastAssistantMsg) {
-        finalMsg = {
-          role: "assistant",
-          content: lastAssistantMsg.content ?? [{ type: "text", text: this.lastGenerationText }],
-          stopReason: lastAssistantMsg.stopReason ?? "stop",
-          usage: lastAssistantMsg.usage
-        };
-      } else {
-        const finalContent = [];
-        if (this.lastThinkingText) {
-          finalContent.push({ type: "thinking", thinking: this.lastThinkingText });
-        }
-        if (this.lastGenerationText) {
-          finalContent.push({ type: "text", text: this.lastGenerationText });
-        }
-        const usageDoc = current.conversation.docs["pi.usage"] ?? {};
-        finalMsg = {
-          role: "assistant",
-          content: finalContent.length > 0 ? finalContent : [{ type: "text", text: "" }],
-          stopReason: "stop",
-          usage: {
-            input: usageDoc.input,
-            output: usageDoc.output,
-            cacheRead: usageDoc.cacheRead,
-            cacheWrite: usageDoc.cacheWrite,
-            totalTokens: usageDoc.totalTokens ?? (usageDoc.input ?? 0) + (usageDoc.output ?? 0),
-            cost: usageDoc.cost
-          }
-        };
-      }
+      this.activeTools.clear();
+      const finalMsg = buildFinalAssistantMessage(
+        current,
+        this.lastGenerationText,
+        this.lastThinkingText
+      );
       this.output({ type: "message_end", message: finalMsg });
       this.output({ type: "turn_end", message: finalMsg });
       this.output({ type: "agent_end", messages: [finalMsg] });

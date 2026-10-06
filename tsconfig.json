@@ -18,14 +18,10 @@
       ]
     },
     "noEmit": true,
-    "skipLibCheck": false
+    "allowImportingTsExtensions": true,
+    "skipLibCheck": true
   },
   "include": [
-    "src/**/*",
-    "server.ts",
-    "app.tsx",
-    "components",
-    "lib",
-    "hooks"
+    "src/**/*"
   ]
 }

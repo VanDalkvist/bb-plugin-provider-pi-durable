@@ -113,3 +113,17 @@ export interface BBSessionStatsData {
 		contextWindow: number;
 	};
 }
+
+export type BBWireEvent =
+	| BBAgentStartEvent
+	| BBTurnStartEvent
+	| BBMessageUpdateEvent
+	| BBToolExecutionStartEvent
+	| BBToolExecutionUpdateEvent
+	| BBToolExecutionEndEvent
+	| BBMessageEndEvent
+	| BBTurnEndEvent
+	| BBAgentEndEvent
+	| BBCompactionStartEvent
+	| BBCompactionEndEvent;
+

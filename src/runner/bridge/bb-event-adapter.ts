@@ -1,85 +1,15 @@
-import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type { LiveState, ToolSlot } from "@earendil-works/pi-durable";
 import type { DurableView } from "../runtime.ts";
-import type {
-	BBAgentEndEvent,
-	BBAgentStartEvent,
-	BBAssistantMessage,
-	BBMessageEndEvent,
-	BBMessageUpdateEvent,
-	BBThinkingDeltaEvent,
-	BBToolExecutionEndEvent,
-	BBToolExecutionStartEvent,
-	BBToolExecutionUpdateEvent,
-	BBTurnEndEvent,
-	BBTurnStartEvent,
-} from "./contracts.ts";
+import type { BBWireEvent } from "./contracts.ts";
+import { resolveToolCallArgs } from "./tool-args-resolver.ts";
+import { buildFinalAssistantMessage } from "./assistant-message-builder.ts";
 
-export type BBWireEvent =
-	| BBAgentStartEvent
-	| BBTurnStartEvent
-	| BBMessageUpdateEvent
-	| BBThinkingDeltaEvent
-	| BBToolExecutionStartEvent
-	| BBToolExecutionUpdateEvent
-	| BBToolExecutionEndEvent
-	| BBMessageEndEvent
-	| BBTurnEndEvent
-	| BBAgentEndEvent;
+export { resolveToolCallArgs };
 
 interface ToolTrackingState {
 	name: string;
 	status: string;
 	outputLength: number;
-}
-
-/**
- * Resolves tool call arguments from the active generation message or transcript entries.
- * Addresses defect D-1 / A-1 (AP-012, AP-026).
- */
-export function resolveToolCallArgs(callId: string, current: DurableView): Record<string, unknown> {
-	const live = (current.conversation.docs["pi.live"] ?? {}) as LiveState;
-
-	// 1. Check current live generation message toolCalls
-	const activeCalls = ((live.generation?.message?.content ?? []) as any[]).filter(
-		(b) => b?.type === "toolCall",
-	);
-	if (activeCalls.length > 0) {
-		const matched = activeCalls.find((c) => c.id === callId || c.callId === callId);
-		if (matched?.arguments && typeof matched.arguments === "object") {
-			return matched.arguments;
-		}
-	}
-
-	// 2. Check recent assistant entries from the conversation transcript
-	const entries = current.conversation.entries ?? [];
-	for (let i = entries.length - 1; i >= 0; i--) {
-		const entry = entries[i] as any;
-		if (entry?.kind === "pi.assistant" && Array.isArray(entry?.model)) {
-			for (const msg of entry.model) {
-				if (Array.isArray(msg?.content)) {
-					for (const part of msg.content) {
-						if (part.type === "toolCall" && (part.id === callId || part.callId === callId)) {
-							if (part.arguments && typeof part.arguments === "object") {
-								return part.arguments;
-							}
-						}
-					}
-				}
-			}
-		}
-	}
-
-	// 3. Fallback to slot input / args
-	const slot = (live.tools ?? []).find((s) => (s.callId ?? String((s as any).id)) === callId) as any;
-	if (slot?.args && typeof slot.args === "object") {
-		return slot.args;
-	}
-	if (slot?.input && typeof slot.input === "object") {
-		return slot.input;
-	}
-
-	return {};
 }
 
 /**
@@ -157,25 +87,25 @@ export class BBEventAdapter {
 			}
 		}
 
+		const getResultAndError = (callId: string, slot?: ToolSlot) => {
+			const entries = current.conversation.entries ?? [];
+			const toolResultEntry = entries.find((e: any) => {
+				const msg = e.model?.[0] as any;
+				return msg?.role === "toolResult" && msg?.toolCallId === callId;
+			});
+			const toolResultMsg = (toolResultEntry as any)?.model?.[0] as any;
+			const isError = toolResultMsg?.isError ?? (slot as any)?.isError ?? false;
+			const result = toolResultMsg?.content ?? slot?.output ?? "";
+			return { result, isError };
+		};
+
 		// 3. Process tool slots with exact Pi Durable schema (Defect A-1 / D-1)
 		for (const slot of live.tools ?? []) {
 			const callId = slot.callId ?? String((slot as any).id);
 			const toolName = slot.name ?? (slot as any).toolName ?? "unknown";
-			const isDone = slot.status === "done" || (slot.status as string) === "terminal";
 			const isRunning = slot.status === "running";
+			const isDone = slot.status === "done" || (slot.status as string) === "terminal";
 			const prev = this.activeTools.get(callId);
-
-			const getResultAndError = () => {
-				const entries = current.conversation.entries ?? [];
-				const toolResultEntry = entries.find((e: any) => {
-					const msg = e.model?.[0] as any;
-					return msg?.role === "toolResult" && msg?.toolCallId === callId;
-				});
-				const toolResultMsg = (toolResultEntry as any)?.model?.[0] as any;
-				const isError = toolResultMsg?.isError ?? (slot as any).isError ?? false;
-				const result = toolResultMsg?.content ?? slot.output ?? "";
-				return { result, isError };
-			};
 
 			if (!prev) {
 				// Tool slot newly observed
@@ -202,17 +132,6 @@ export class BBEventAdapter {
 							partialResult: slot.output,
 						});
 					}
-
-					if (isDone) {
-						const { result, isError } = getResultAndError();
-						this.output({
-							type: "tool_execution_end",
-							toolCallId: callId,
-							toolName,
-							result,
-							isError,
-						});
-					}
 				}
 			} else {
 				// Existing tool slot update
@@ -226,18 +145,37 @@ export class BBEventAdapter {
 						partialResult: delta,
 					});
 				}
+			}
+		}
 
-				if (isDone && prev.status !== "done" && prev.status !== "terminal") {
-					prev.status = slot.status;
-					const { result, isError } = getResultAndError();
-					this.output({
-						type: "tool_execution_end",
-						toolCallId: callId,
-						toolName,
-						result,
-						isError,
-					});
-				}
+		// 3b. Real-time tool completion: check active tools across live slots & committed entries (Cycle 51)
+		for (const [callId, toolState] of this.activeTools.entries()) {
+			if (toolState.status === "done" || toolState.status === "terminal") {
+				continue;
+			}
+
+			const currentSlot = (live.tools ?? []).find(
+				(s) => (s.callId ?? String((s as any).id)) === callId,
+			);
+			const isSlotDone = currentSlot && (currentSlot.status === "done" || (currentSlot.status as string) === "terminal");
+			const isSlotGone = currentSlot === undefined;
+
+			const entries = current.conversation.entries ?? [];
+			const hasCommittedResult = entries.some((e: any) => {
+				const msg = e.model?.[0] as any;
+				return msg?.role === "toolResult" && msg?.toolCallId === callId;
+			});
+
+			if (isSlotDone || isSlotGone || hasCommittedResult) {
+				toolState.status = "done";
+				const { result, isError } = getResultAndError(callId, currentSlot);
+				this.output({
+					type: "tool_execution_end",
+					toolCallId: callId,
+					toolName: toolState.name,
+					result,
+					isError,
+				});
 			}
 		}
 
@@ -245,19 +183,11 @@ export class BBEventAdapter {
 		if (!isBusy && this.inTurn) {
 			this.inTurn = false;
 
-			const entries = current.conversation.entries ?? [];
-
 			// Finalize any uncompleted tools before ending turn
 			for (const [callId, toolState] of this.activeTools.entries()) {
 				if (toolState.status !== "done" && toolState.status !== "terminal") {
 					toolState.status = "done";
-					const toolResultEntry = entries.find((e: any) => {
-						const msg = e.model?.[0] as any;
-						return msg?.role === "toolResult" && msg?.toolCallId === callId;
-					});
-					const toolResultMsg = (toolResultEntry as any)?.model?.[0] as any;
-					const isError = toolResultMsg?.isError ?? false;
-					const result = toolResultMsg?.content ?? "";
+					const { result, isError } = getResultAndError(callId);
 					this.output({
 						type: "tool_execution_end",
 						toolCallId: callId,
@@ -267,43 +197,13 @@ export class BBEventAdapter {
 					});
 				}
 			}
+			this.activeTools.clear();
 
-			// Extract final assistant message from transcript or build from streamed deltas
-			const lastAssistantEntry = [...entries].reverse().find((e: any) => e.kind === "pi.assistant") as any;
-			const lastAssistantMsg = lastAssistantEntry?.model?.[0] as AssistantMessage | undefined;
-
-			let finalMsg: BBAssistantMessage;
-			if (lastAssistantMsg) {
-				finalMsg = {
-					role: "assistant",
-					content: (lastAssistantMsg.content as any) ?? [{ type: "text", text: this.lastGenerationText }],
-					stopReason: (lastAssistantMsg.stopReason as any) ?? "stop",
-					usage: lastAssistantMsg.usage as any,
-				};
-			} else {
-				const finalContent: BBAssistantMessage["content"] = [];
-				if (this.lastThinkingText) {
-					finalContent.push({ type: "thinking", thinking: this.lastThinkingText });
-				}
-				if (this.lastGenerationText) {
-					finalContent.push({ type: "text", text: this.lastGenerationText });
-				}
-
-				const usageDoc = (current.conversation.docs["pi.usage"] ?? {}) as any;
-				finalMsg = {
-					role: "assistant",
-					content: finalContent.length > 0 ? finalContent : [{ type: "text", text: "" }],
-					stopReason: "stop",
-					usage: {
-						input: usageDoc.input,
-						output: usageDoc.output,
-						cacheRead: usageDoc.cacheRead,
-						cacheWrite: usageDoc.cacheWrite,
-						totalTokens: usageDoc.totalTokens ?? (usageDoc.input ?? 0) + (usageDoc.output ?? 0),
-						cost: usageDoc.cost,
-					},
-				};
-			}
+			const finalMsg = buildFinalAssistantMessage(
+				current,
+				this.lastGenerationText,
+				this.lastThinkingText,
+			);
 
 			this.output({ type: "message_end", message: finalMsg });
 			this.output({ type: "turn_end", message: finalMsg });

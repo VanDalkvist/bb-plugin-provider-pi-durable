@@ -7,7 +7,8 @@ import type { ModelThinkingLevel } from "./harness-setup.ts";
 import { findInitialAgentModel } from "./harness-setup.ts";
 import { attachJsonlLineReader, serializeJsonLine } from "./jsonl.ts";
 import { openDurable, type OpenDurableOptions } from "./runtime.ts";
-import { BBEventAdapter, type BBWireEvent } from "./bridge/bb-event-adapter.ts";
+import { BBEventAdapter } from "./bridge/bb-event-adapter.ts";
+import type { BBWireEvent } from "./bridge/contracts.ts";
 
 export interface CliArgs {
 	mode?: string;

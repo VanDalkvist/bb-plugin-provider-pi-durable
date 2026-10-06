@@ -105,9 +105,10 @@ export class DeltaTranslator {
 						cwd: typeof args.cwd === "string" ? args.cwd : fallbackCwd,
 					};
 				} else if (toolName === "edit" || toolName === "write") {
+					const filePath = typeof args.path === "string" ? args.path : "";
 					shape = {
 						type: "fileChange",
-						changes: [],
+						changes: filePath ? [{ path: filePath, kind: toolName === "write" ? "create" : "modify" }] : [],
 					};
 				} else {
 					shape = {
@@ -169,6 +170,7 @@ export class DeltaTranslator {
 					status: event.isError ? "failed" : "completed",
 					exitCode: event.isError ? 1 : 0,
 					resultText,
+					aggregatedOutput: shape.type === "command" ? resultText : undefined,
 					item: shape,
 				});
 				break;
