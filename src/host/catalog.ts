@@ -56,8 +56,8 @@ export class ModelCatalog {
 		await this.start();
 		if (!this.runner) throw new Error("Catalog runner unavailable");
 
-		const raw = await this.runner.requestOk({ type: "get_available_models" });
-		const models: any[] = raw?.models ?? [];
+		const raw: any = await this.runner.requestOk({ type: "get_available_models" });
+		const models: any[] = raw?.models ?? raw?.data?.models ?? [];
 		const result: AvailableModelDescriptor[] = [];
 
 		for (const m of models) {
