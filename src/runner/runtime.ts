@@ -153,7 +153,18 @@ export async function openDurable(options: OpenDurableOptions = {}): Promise<Ope
 		}
 
 		configureHarnessHttp(settingsManager);
-		const settings = createHarnessSettings(settingsManager);
+		let activeModelRef: { provider: string; modelId: string } | undefined = undefined;
+		const getActiveModel = () => {
+			if (activeModelRef) return activeModelRef;
+			const p = settingsManager.getDefaultProvider();
+			const m = settingsManager.getDefaultModel();
+			return p && m ? { provider: p, modelId: m } : undefined;
+		};
+		const getModelContextWindow = (provider: string, modelId: string) => {
+			return modelRuntime.getModel(provider, modelId)?.contextWindow;
+		};
+
+		const settings = createHarnessSettings(settingsManager, getActiveModel, getModelContextWindow);
 		const registry = createCodingRegistry(settingsManager, location.cwd, options.prompt);
 		registry.install(Subagent);
 
@@ -173,6 +184,9 @@ export async function openDurable(options: OpenDurableOptions = {}): Promise<Ope
 		const initial = location.created
 			? await findInitialAgentModel(settingsManager, modelRuntime, options.cli)
 			: undefined;
+		if (initial?.model) {
+			activeModelRef = initial.model;
+		}
 		const root = await harness.root(context, {
 			agent: {
 				cwd: location.cwd,
@@ -180,9 +194,16 @@ export async function openDurable(options: OpenDurableOptions = {}): Promise<Ope
 				...(initial?.thinkingLevel === undefined ? {} : { thinkingLevel: initial.thinkingLevel }),
 			},
 		});
+		if (!location.created) {
+			const rootAgent = await root.agent(context);
+			if (rootAgent.model) {
+				activeModelRef = rootAgent.model;
+			}
+		}
 		if (!location.created && options.cli !== undefined) {
 			const cliModel = await findInitialAgentModel(settingsManager, modelRuntime, options.cli);
 			if (cliModel.model !== undefined) {
+				activeModelRef = cliModel.model;
 				await root.configure({ model: cliModel.model, thinkingLevel: cliModel.thinkingLevel }, context);
 			}
 		}
@@ -325,6 +346,7 @@ export async function openDurable(options: OpenDurableOptions = {}): Promise<Ope
 				command(async () => {
 					const model = modelRuntime.getModel(ref.provider, ref.modelId);
 					if (model === undefined) throw new Error(`Unknown model: ${ref.provider}/${ref.modelId}`);
+					activeModelRef = ref;
 					const thinking: ModelThinkingLevel = agentOf(state.conversation).thinkingLevel ?? "off";
 					await current.configure({ model: ref, thinkingLevel: clampThinkingLevel(model, thinking) }, context);
 				}),

@@ -25,7 +25,11 @@ export function configureHarnessHttp(settingsManager: SettingsManager): void {
 	}
 }
 
-export function createHarnessSettings(settingsManager: SettingsManager): HarnessSettings {
+export function createHarnessSettings(
+	settingsManager: SettingsManager,
+	getActiveModel?: () => { provider: string; modelId: string } | undefined,
+	getModelContextWindow?: (provider: string, modelId: string) => number | undefined,
+): HarnessSettings {
 	return {
 		get stream() {
 			const provider = settingsManager.getProviderRetrySettings?.() ?? {};
@@ -37,7 +41,22 @@ export function createHarnessSettings(settingsManager: SettingsManager): Harness
 			};
 		},
 		get compaction() {
-			return settingsManager.getCompactionSettings?.() ?? {};
+			const active = getActiveModel?.();
+			const model = active
+				? { provider: active.provider, id: active.modelId }
+				: (() => {
+						const p = settingsManager.getDefaultProvider();
+						const m = settingsManager.getDefaultModel();
+						return p && m ? { provider: p, id: m } : undefined;
+					})();
+			const compaction = { ...(settingsManager.getCompactionSettings?.(model) ?? {}) };
+			if (model && getModelContextWindow) {
+				const cw = getModelContextWindow(model.provider, model.id);
+				if (typeof cw === "number" && cw > 300_000 && compaction.reserveTokens === 16384) {
+					compaction.reserveTokens = cw - 300_000;
+				}
+			}
+			return compaction;
 		},
 		get retry() {
 			return settingsManager.getRetrySettings?.() ?? {};

@@ -254,7 +254,7 @@ function configureHarnessHttp(settingsManager) {
     process.env.HTTPS_PROXY ??= proxy;
   }
 }
-function createHarnessSettings(settingsManager) {
+function createHarnessSettings(settingsManager, getActiveModel, getModelContextWindow) {
   return {
     get stream() {
       const provider = settingsManager.getProviderRetrySettings?.() ?? {};
@@ -266,7 +266,20 @@ function createHarnessSettings(settingsManager) {
       };
     },
     get compaction() {
-      return settingsManager.getCompactionSettings?.() ?? {};
+      const active = getActiveModel?.();
+      const model = active ? { provider: active.provider, id: active.modelId } : (() => {
+        const p = settingsManager.getDefaultProvider();
+        const m = settingsManager.getDefaultModel();
+        return p && m ? { provider: p, id: m } : void 0;
+      })();
+      const compaction = { ...settingsManager.getCompactionSettings?.(model) ?? {} };
+      if (model && getModelContextWindow) {
+        const cw = getModelContextWindow(model.provider, model.id);
+        if (typeof cw === "number" && cw > 3e5 && compaction.reserveTokens === 16384) {
+          compaction.reserveTokens = cw - 3e5;
+        }
+      }
+      return compaction;
     },
     get retry() {
       return settingsManager.getRetrySettings?.() ?? {};
@@ -487,7 +500,17 @@ async function openDurable(options = {}) {
       }
     }
     configureHarnessHttp(settingsManager);
-    const settings = createHarnessSettings(settingsManager);
+    let activeModelRef = void 0;
+    const getActiveModel = () => {
+      if (activeModelRef) return activeModelRef;
+      const p = settingsManager.getDefaultProvider();
+      const m = settingsManager.getDefaultModel();
+      return p && m ? { provider: p, modelId: m } : void 0;
+    };
+    const getModelContextWindow = (provider, modelId) => {
+      return modelRuntime.getModel(provider, modelId)?.contextWindow;
+    };
+    const settings = createHarnessSettings(settingsManager, getActiveModel, getModelContextWindow);
     const registry = createCodingRegistry(settingsManager, location.cwd, options.prompt);
     registry.install(Subagent);
     const pendingReports = [];
@@ -504,6 +527,9 @@ async function openDurable(options = {}) {
       context
     );
     const initial = location.created ? await findInitialAgentModel(settingsManager, modelRuntime, options.cli) : void 0;
+    if (initial?.model) {
+      activeModelRef = initial.model;
+    }
     const root = await harness.root(context, {
       agent: {
         cwd: location.cwd,
@@ -511,9 +537,16 @@ async function openDurable(options = {}) {
         ...initial?.thinkingLevel === void 0 ? {} : { thinkingLevel: initial.thinkingLevel }
       }
     });
+    if (!location.created) {
+      const rootAgent = await root.agent(context);
+      if (rootAgent.model) {
+        activeModelRef = rootAgent.model;
+      }
+    }
     if (!location.created && options.cli !== void 0) {
       const cliModel = await findInitialAgentModel(settingsManager, modelRuntime, options.cli);
       if (cliModel.model !== void 0) {
+        activeModelRef = cliModel.model;
         await root.configure({ model: cliModel.model, thinkingLevel: cliModel.thinkingLevel }, context);
       }
     }
@@ -639,6 +672,7 @@ async function openDurable(options = {}) {
       setModel: (ref) => command(async () => {
         const model = modelRuntime.getModel(ref.provider, ref.modelId);
         if (model === void 0) throw new Error(`Unknown model: ${ref.provider}/${ref.modelId}`);
+        activeModelRef = ref;
         const thinking = agentOf(state.conversation).thinkingLevel ?? "off";
         await current.configure({ model: ref, thinkingLevel: clampThinkingLevel(model, thinking) }, context);
       }),
