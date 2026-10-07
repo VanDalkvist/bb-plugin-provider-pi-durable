@@ -89,8 +89,20 @@ Build new advanced capabilities on top of the hardened, defect-free foundation.
 
 ---
 
-### Cycle 56: Process Lifecycle, Lock Cleanup, Error Diagnostics & Session Path Normalization
-- **PRD Divergences Covered:** D-1, D-2, D-13 (FR-18, FR-R1, FR-R2, FR-R12, UJ-9).
+### Cycle 56: Process Lifecycle, Lock Cleanup, Error Diagnostics & Session Path Normalization [COMPLETED]
+- **Status:** ✅ COMPLETED (Commits: `f4b685e`, `969b180`; Release: `v0.2.1`)
+- **PRD Divergences & Community Defects Covered:** D-1, D-2, D-13 (FR-18, FR-R1, FR-R2, FR-R12, UJ-9) + GitHub Issues #1 (CWD Hijacking), #2 (Runner Discovery in host-cache), #3 (Premature Readiness & Swallowed Startup Errors).
+- **Architectural Implementation Summary:**
+  1. **Multi-Tier Runner Discovery (`src/host/paths.ts`):** 6-tier discovery (env overrides -> direct relative paths -> `node:sqlite` lookup of `root_dir` from `~/.bb/bb.db` -> git/npm cache recursive search -> plugin directories -> sibling directories).
+  2. **CWD Isolation & Strict Parsing (`src/runner/cli-args.ts`, `src/host/session.ts`):** Removed `--session-dir` parameter; hardened `parseCliArgs` to support `--cwd <val>` and non-greedy boolean flags without consuming positional workspace paths.
+  3. **Atomic Fail-Fast Readiness (`src/runner/index.ts`, `src/host/session.ts`, `src/host/catalog.ts`):** Runner readiness announced strictly after `openDurable()` and event stream binding in active sessions; errors/timeouts in `start()` reject immediately and trigger `this.kill()` without zombie processes; timeouts cleared in `finally`.
+  4. **Graceful Lock Release (D-1):** In `src/runner/index.ts`, `SIGTERM`/`SIGINT`/`stdin.end` await `activeDurable.close()` before exit, releasing `proper-lockfile` cleanly without 10-second delay on restart.
+  5. **Session Path Normalization (D-2):** Removed `.jsonl` suffixes from SQLite session directories in `paths.ts` and `sessions.ts`.
+  6. **Modularization (AP-019):** Decomposed `src/runner/runtime.ts` (430 lines) into `runtime-types.ts` (104), `runtime-controller.ts` (147), `runtime-loader.ts` (111), and `runtime.ts` facade (213). All files in project <= 224 lines (< 250 lines hard limit).
+- **Verification Evidence:**
+  - `npm test`: 34 / 34 passing assertions (0 failed, 0 skipped).
+  - `npm run build`: cleanly builds `dist/runner/index.js`, `dist/host.js`, `dist/server.js`.
+  - Independent architectural review: confirmed PASS.
 - **Architectural Problem:**
   1. `SIGTERM`, `SIGINT`, `stdin.on("end")` call `process.exit(0)` immediately without awaiting `durable.close()`. This leaves `proper-lockfile` unreleased, forcing thread resume or start to freeze for 10 seconds waiting for stale lock timeout (D-1).
   2. `paths.ts` appends `.jsonl` to session path (`thr_xxx.jsonl`), causing SQLite sessions to live in directories named `thr_xxx.jsonl/session.sqlite` (D-2).
