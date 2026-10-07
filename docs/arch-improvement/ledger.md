@@ -674,6 +674,50 @@ Resolve findings F-65-1, F-65-2, and F-65-3:
 - **Residual Risk:**
   - None. Full backward compatibility maintained when checkpoints are absent; seamless compatibility with BB IDE history checkpoint resolver.
 
+---
+
+## Cycle 69: Packaging Integrity & Production Dependency Quarantine (2026-10-07)
+
+**Goal:** Resolve marketplace review blocker (SawyerHood review on get-bb/marketplace#501) where clean production installs on BB0.45+ failed building the host bundle due to `@get-bb/plugin-sdk` appearing in both `dependencies` and `devDependencies`.  
+**Governing Standard:** `arch-rules.md` (AP-010 – AP-071), `arch-improvement-review`, `arch-rules-implementation-review`  
+**Plan Reference:** `docs/superpowers/plans/2026-10-07-arch-improvement-cycle-69-packaging-integrity.md`  
+**Target Release:** `v0.2.14`
+
+### 1. Triaged Findings & Dispositions
+
+| ID | Issue / Review Finding | Severity | Rule | Disposition | Root Cause & Resolution |
+|---|---|---|---|---|---|
+| **F-69-1** | Duplicate `@get-bb/plugin-sdk` in `devDependencies` breaks clean production install | **P0** | AP-010, AP-026, AP-027 | `fix-now` | `package.json` duplicated `@get-bb/plugin-sdk` in both `dependencies` and `devDependencies`. During clean marketplace installations (`npm install --omit=dev`), npm treated it as dev-only and omitted `node_modules/@get-bb/plugin-sdk`, causing subsequent `bb plugin build` to fail resolving `@get-bb/plugin-sdk/provider-bridge` and `@get-bb/plugin-sdk/host`. **Fix:** Removed `@get-bb/plugin-sdk` from `devDependencies`. Retained strictly in `dependencies`. Verified clean reproduction builds with zero errors. |
+| **F-69-2** | Missing regression test for package manifest integrity | **P2** | AP-028 | `fix-now` | Absence of automated checks asserting disjoint dependency sets allowed duplicate keys to persist. **Fix:** Created `tests/package-integrity.test.ts` with 4 deterministic assertions verifying disjoint dependency sets, presence of SDK in production dependencies, canonical manifest entry points, and runtime imports. |
+
+### 2. Implementation Changes
+
+- **Slice 1: Regression Test Suite (TDD - `tests/package-integrity.test.ts`):**
+  - Added 4 unit assertions validating dependency set disjointness, SDK presence in `dependencies`, canonical entrypoint paths, and required runtime dependencies.
+- **Slice 2: Manifest Correction (`package.json`):**
+  - Removed `"@get-bb/plugin-sdk": "0.6.15"` from `devDependencies`.
+  - Bumped version to `0.2.14`.
+- **Slice 3: Production Reproduction & Bundle Verification:**
+  - Verified clean reproduction in isolated sandbox via `npm install --omit=dev` and `bb plugin build`.
+  - Ran `npm test` (79 / 79 passing).
+  - Built bundles with `npm run build`.
+
+### 3. Verification Evidence & Architecture Verification
+
+- `npm test`: **79 / 79 passing assertions (0 failed, 0 skipped)** across all test suites.
+- Clean production sandbox repro: `npm install --omit=dev && bb plugin build` completes cleanly, generating `dist/server.js` and `dist/host.js`.
+- `wc -l src/**/*.ts server.ts tests/package-integrity.test.ts`: All source files under 215 lines (strictly < 250, AP-019).
+
+#### Architecture Verification
+- **Passed:**
+  - `AP-010`: Packaging and manifest configuration accurately represent production deployment requirements.
+  - `AP-026`: Manifest contracts and entry points point to canonical source paths.
+  - `AP-027`: Fail-fast packaging prevents deployment failures at runtime or installation time.
+  - `AP-028`: Deterministic unit tests assert dependency hygiene.
+- **Residual Risk:**
+  - None. Retaining the SDK strictly in `dependencies` is canonical for all BB provider plugins.
+
+
 
 
 
