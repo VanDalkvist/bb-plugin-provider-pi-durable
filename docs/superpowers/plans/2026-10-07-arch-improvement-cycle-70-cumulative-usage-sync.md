@@ -1,7 +1,7 @@
-# Implementation Plan: Arch Improvement Cycle 71 (Cumulative Token Usage Monotonicity & pi.usage Sync, D-7)
+# Implementation Plan: Arch Improvement Cycle 70 (Cumulative Token Usage Monotonicity & pi.usage Sync, D-7)
 
-**Cycle:** 71  
-**Target Release:** `v0.2.17`  
+**Cycle:** 70  
+**Target Release:** `v0.2.16`  
 **Governing Standards:** `arch-rules.md` (AP-010 – AP-071), `arch-improvement-review`, `arch-rules-implementation-review`  
 **Target Repository:** `/Users/vanya/Projects/bb-plugin-provider-pi-durable`  
 **Target Divergences:** D-7 (Cumulative Token Usage Reset / Falsification)  

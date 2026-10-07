@@ -1,6 +1,6 @@
 # PRD: Архитектурное выравнивание территорий и устранение чужого владения в `bb-plugin-provider-pi-durable`
 
-**Статус:** ⏳ IN PROGRESS (Cycles 61–69 Completed & Verified, Cycle 70 Added to Scope)  
+**Статус:** ⏳ IN PROGRESS (Cycles 61–69 Completed & Verified, Cycle 74 Added to Scope)  
 **Дата создания:** 2026-10-07  
 **Дата актуализации:** 2026-10-07 (после аудита интеграции MCP и Pi Extensions)  
 **Автор:** Lead Architect & Agent Systems Engineer  
@@ -244,7 +244,7 @@ src/
     2. `initializeExtensionEnvironment(...)` — запуск расширений, MCP и регистрация моделей.
     3. `mountHarness(...)` — открытие SQLite и монтирование реестра Durable.
 
-### Срез 5 (Новый скоуп): Синхронизация жизненного цикла расширений Pi и надёжность MCP-серверов (Cycle 70)
+### Срез 5 (Новый скоуп): Синхронизация жизненного цикла расширений Pi и надёжность MCP-серверов (Cycle 74)
 - **Проблема (выявлена в ходе live-аудита интеграции):**
   1. **Гонка старта MCP (D-16):** Тяжелые MCP-серверы (Bun/Postgres `gbrain`, время старта ~3.5–4.5с) не успевают зарегистрироваться к моменту отправки первого запроса в Durable, так как раннер шлет `ready: true` без ожидания direct-серверов. Быстрые серверы (Node `telegram-mcp`, ~200мс) успевают, создавая иллюзию избирательной работоспособности.
   2. **Статический системный промпт (D-17):** Системный промпт в `src/runner/prompt.ts` формируется статически (`createPiPrompt`). В него не попадают динамические секции расширений Pi (каталог серверов `mcp_servers`, Ambient Recall памяти из `gbrain.ts`), которые в Pi генерируются на хуке `before_agent_start`.
@@ -255,6 +255,22 @@ src/
   2. В `src/runner/prompt.ts` пробросить хук `extensionRunner.emit({ type: "before_agent_start", ... })` и мерджить динамические секции расширений (`event.systemPromptOptions.sections`) в Durable Registry / Agent.
   3. В `src/runner/extension-mount.ts` (`createNestedToolExecutor`) и `adaptExtensionTool` эмитить `tool_call` перед вызовом тула и `tool_result` после.
   4. Привязать `runner.setUIContext({ notify: ... })` к каналу `sendToBridge({ kind: "notice", ... })` и структурированным логам хоста.
+
+### Срез 6 (Zero-Day Hardening): Управление жизненным циклом сессий, вытеснение сирот и Teardown воркеров (Cycle 70, D-20)
+- **Проблема (выявлена в бою при активной разработке плагина):**
+  1. **Session Lock Contention (D-20):** При фоновой пересборке плагина (`npm run build`), смене артефакта (`~/.bb/plugin-host-artifacts/provider-pi-durable/`) или краше воркера дочерний runner-процесс (`RunnerProcess`) остаётся висеть в памяти (сирота с PPID 1).
+  2. **Непреодолимая блокировка:** Сиротский раннер продолжает удерживать `proper-lockfile` на каталог сессии (`session.sqlite`), обновляя mtime каждые несколько секунд. Новый воркер при `turn/start` падает с `Session is already open in another process: ...` (код 1, 502 Bad Gateway), навсегда блокируя тред пользователя до ручного `kill -9` в терминале.
+  3. **Отсутствие Teardown хоста:** `src/host/index.ts` не имел подписчиков на `process.on('disconnect')`, `SIGTERM`, `SIGINT`, бросая запущенные процессы раннеров при перезапуске воркера.
+- **Решение:**
+  1. **PID-файл владения (`session.owner.json`):** При захвате сессии в `selectSession` записывать метаданные `{ pid, startedAt, providerThreadId, cwd }` рядом с `session.sqlite`, удаляя файл при штатном `release()`.
+  2. **Orphan Eviction Protocol (AP-034):** Если `proper-lockfile` сообщает о занятом локе:
+     - Считать PID владельца из `session.owner.json`.
+     - Проверить статус процесса (`isProcessAlive`). Если процесс мёртв (`ESRCH`) — сбросить застрявший лок.
+     - Если процесс жив и принадлежит раннеру того же пользователя — отправить сигнал мягкого завершения `SIGTERM`. Раннер получает `handleExit("SIGTERM")`, корректно вызывает `activeDurable.close()`, сбрасывает SQLite WAL и удаляет лок.
+     - Ожидать до 3 секунд освобождения сессии и повторить захват лока.
+     - Если вытеснить не удалось — выбросить явную типизированную ошибку с PID и контекстом (AP-012).
+  3. **Worker Disconnect & Signal Teardown (AP-027):** В `src/host/index.ts` зарегистрировать обработчики `disconnect`, `SIGTERM`, `SIGINT`, гарантированно вызывающие `await bridge.shutdown()` (которая завершает все сессии через `registry.stopAll()`) перед выходом.
+  4. **Graceful Runner Termination:** В `RunnerProcess.kill()` сначала посылать `SIGTERM` для штатного закрытия SQLite и освобождения `proper-lockfile`, и только при отсутствии ответа форсировать `SIGKILL`.
 
 ---
 

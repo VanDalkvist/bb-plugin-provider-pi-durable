@@ -1,7 +1,7 @@
-# Implementation Plan: Arch Improvement Cycle 70 (Pi Extension Lifecycle & MCP Engine Parity)
+# Implementation Plan: Arch Improvement Cycle 74 (Pi Extension Lifecycle & MCP Engine Parity)
 
-**Cycle:** 70  
-**Target Release:** `v0.2.16`  
+**Cycle:** 74  
+**Target Release:** `v0.2.20`  
 **Governing Standards:** `arch-rules.md` (AP-010 – AP-071), `arch-improvement-review`, `arch-rules-implementation-review`  
 **Target Repository:** `/Users/vanya/Projects/bb-plugin-provider-pi-durable`  
 **Target Divergences:** D-16, D-17, D-18, D-19 (AP-010, AP-012, AP-019, AP-026, AP-029)  
@@ -100,7 +100,7 @@ All files modified or created must remain strictly under 200 lines (soft limit 1
 
 ## 4. Verification & Success Criteria
 
-1. **Test Suite:** All 85 existing tests + new Cycle 70 tests pass cleanly (`npm test`).
+1. **Test Suite:** All 85 existing tests + new Cycle 74 tests pass cleanly (`npm test`).
 2. **AP-019 Modularity:** `wc -l src/**/*.ts` confirms all files under 200 lines.
 3. **AP-029 Typing:** Zero `as any` casts in modified modules.
 4. **Live Verification:** 

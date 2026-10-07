@@ -81,7 +81,7 @@ Because `@earendil-works/pi-durable` is an execution engine rather than an agent
 | **D-4** | **Схлопывание `contentIndex`** | `message_update` содержит `change.contentIndex` для каждого блока | ✅ **FIXED** (Динамический `contentIndex` и каналы `thinking-${idx}`) | `v0.2.8` (Cycle 63), `v0.2.10` (Cycle 65) |
 | **D-5** | **Маскирование сбоев тулов** | `event.entry` отсутствует (`undefined`), если задача тула упала | ✅ **FIXED** (`isError: true` при отсутствии `entry` в `tool_execution_end`) | `v0.2.12` (Cycle 67) |
 | **D-6** | **Потеря метаданных Diff** | `CodingTools.edit` возвращает `details: { diff, patch }` | ✅ **FIXED** (Проброс патчей в BB Diff Viewer через `fileChange`) | `v0.2.12` (Cycle 67) |
-| **D-7** | **Фальсификация кумулятивного расхода** | `pi.usage` накапливает кумулятивный расход сессии | ⏳ **PLANNED** (Монотонный подсчет totalTokens из документа usage) | Stage 2 (Cycle 71) |
+| **D-7** | **Фальсификация кумулятивного расхода** | `pi.usage` накапливает кумулятивный расход сессии | ⏳ **PLANNED** (Монотонный подсчет totalTokens из документа usage) | Stage 2 (Cycle 70) |
 | **D-8** | **Краш моделей без reasoning** | `setThinkingLevel` выбрасывает ошибку при `!model.reasoning` | ✅ **FIXED** (Безопасный фоллбек и фильтрация thinkingLevel) | `v0.2.8` (Cycle 63), `v0.2.10` (Cycle 65) |
 | **D-9** | **Обрезка вывода тулов и диагностики** | `tool_execution_update` передает `trimStart` и `diagnostics` | ✅ **FIXED** (Проброс `trimStart` и диагностических предупреждений) | `v0.2.12` (Cycle 67) |
 | **D-10**| **Обработка `snapshot` при старте** | При старте `watchEvents` первым приходит снимок состояния | ✅ **FIXED** (Восстановление активных слотов и чекпоинтов из `snapshot`) | `v0.2.13` (Cycle 68) |
@@ -90,13 +90,10 @@ Because `@earendil-works/pi-durable` is an execution engine rather than an agent
 | **D-13**| **Молчаливые системные сбои** | При краше раннера или ошибке CWD эмитится `provider.error` | ✅ **FIXED** (`child.on("error")`, fail-fast start, `settlesTurn: true`) | `v0.2.1` (Cycle 56) |
 | **D-14**| **Синхронизация Context Meter** | Точный учет контекстного окна модели в реальном времени | ✅ **FIXED** (Синхронный эмит `contextWindow` на `agent_end`) | `v0.2.2` (Cycle 57), `v0.2.4` (Cycle 59) |
 | **D-15**| **Невидимость тулов `edit`/`write` и зависание steer** | `write` -> `add`, `edit` -> `update`; steer без `providerTurnId` | ✅ **FIXED** (Zod-валидные дельты, исключение 409-конфликта) | `v0.2.3` (Cycle 58) |
-| **D-16**| **Гонка старта и потеря Direct MCP серверов** | Тяжелые MCP-серверы (`gbrain`, 3.5–4.5с) не успевают к старту первого хода | ⏳ **SCOPED (NEW)** (Ожидание `waitForDirectServers` на старте сессии) | Stage 2 (Cycle 70) |
-| **D-17**| **Статический промпт без динамики расширений** | Расширения обогащают промпт (`mcp_servers`, Ambient Recall) через `before_agent_start` | ⏳ **SCOPED (NEW)** (Эмит `before_agent_start` и мердж секций промпта) | Stage 2 (Cycle 70) |
-| **D-18**| **Отсутствие хуков `tool_call`/`tool_result` в runner** | Ленивое ожидание серверов в `codemode` и guardrails (`skill-guardian`) не работают | ⏳ **SCOPED (NEW)** (Проброс `tool_call` и `tool_result` в `extensionRunner`) | Stage 2 (Cycle 70) |
-| **D-19**| **Глушение UI и диагностических notice расширений** | Ошибки и статусы MCP (`needs-auth`, сбои соединения) тонут в `noOpUIContext` | ⏳ **SCOPED (NEW)** (Привязка `runner.setUIContext` к wire notice и логам хоста) | Stage 2 (Cycle 70) |
-| **D-13**| **Молчаливые системные сбои** | При краше раннера или ошибке CWD эмитится `provider.error` | ✅ **FIXED** (`child.on("error")`, fail-fast start, `settlesTurn: true`) | `v0.2.1` (Cycle 56) |
-| **D-14**| **Синхронизация Context Meter** | Точный учет контекстного окна модели в реальном времени | ✅ **FIXED** (Синхронный эмит `contextWindow` на `agent_end`) | `v0.2.2` (Cycle 57), `v0.2.4` (Cycle 59) |
-| **D-15**| **Невидимость тулов `edit`/`write` и зависание steer** | `write` -> `add`, `edit` -> `update`; steer без `providerTurnId` | ✅ **FIXED** (Zod-валидные дельты, исключение 409-конфликта) | `v0.2.3` (Cycle 58) |
+| **D-16**| **Гонка старта и потеря Direct MCP серверов** | Тяжелые MCP-серверы (`gbrain`, 3.5–4.5с) не успевают к старту первого хода | ⏳ **SCOPED (NEW)** (Ожидание `waitForDirectServers` на старте сессии) | Stage 2 (Cycle 74) |
+| **D-17**| **Статический промпт без динамики расширений** | Расширения обогащают промпт (`mcp_servers`, Ambient Recall) через `before_agent_start` | ⏳ **SCOPED (NEW)** (Эмит `before_agent_start` и мердж секций промпта) | Stage 2 (Cycle 74) |
+| **D-18**| **Отсутствие хуков `tool_call`/`tool_result` в runner** | Ленивое ожидание серверов в `codemode` и guardrails (`skill-guardian`) не работают | ⏳ **SCOPED (NEW)** (Проброс `tool_call` и `tool_result` в `extensionRunner`) | Stage 2 (Cycle 74) |
+| **D-19**| **Глушение UI и диагностических notice расширений** | Ошибки и статусы MCP (`needs-auth`, сбои соединения) тонут в `noOpUIContext` | ⏳ **SCOPED (NEW)** (Привязка `runner.setUIContext` к wire notice и логам хоста) | Stage 2 (Cycle 74) |
 
 ---
 
@@ -122,11 +119,11 @@ STAGE 2: РАСШИРЕННЫЕ ВОЗМОЖНОСТИ ДВИЖКА И ПОЛН�
   - Cycle 68: Извлечение чекпоинтов SQLite, обработка snapshot и turn.boundary (D-3, D-10, D-11) [✅ ЗАВЕРШЕНО, v0.2.13]
   - Cycle 68.1: Защита целостности зависимостей SDK для чистого продакшен-инсталла [✅ ЗАВЕРШЕНО, v0.2.14]
   - Cycle 69: Чекпоинт-форки тредов, перемотка истории и редактирование сообщений (thread/fork) [✅ ЗАВЕРШЕНО, v0.2.15]
-  - Cycle 70: Паритет жизненного цикла расширений Pi и надёжность MCP-серверов (D-16, D-17, D-18, D-19) [⏳ В РАБОТЕ]
-  - Cycle 71: Монотонный учет кумулятивного расхода токенов через pi.usage (D-7)
-  - Cycle 72: Визуальные карточки сабагентов через протокольный deltaDelegationShape (type: "delegation")
-  - Cycle 73: Корректное прерывание хода, inbox-отмена и обработка thread/stop (submission.abort)
-  - Cycle 74: Мастер-аттестация паритета с нативным provider-pi и conformance-тесты
+  - Cycle 70: Монотонный учет кумулятивного расхода токенов через pi.usage (D-7)
+  - Cycle 71: Визуальные карточки сабагентов через протокольный deltaDelegationShape (type: "delegation")
+  - Cycle 72: Корректное прерывание хода, inbox-отмена и обработка thread/stop (submission.abort)
+  - Cycle 73: Мастер-аттестация паритета с нативным provider-pi и conformance-тесты
+  - Cycle 74: Паритет жизненного цикла расширений Pi и надёжность MCP-серверов (D-16, D-17, D-18, D-19) [⏳ В РАБОТЕ]
 ```
 
 ---
@@ -185,23 +182,7 @@ STAGE 2: РАСШИРЕННЫЕ ВОЗМОЖНОСТИ ДВИЖКА И ПОЛН�
 
 ---
 
-### Cycle 70: Pi Extension Lifecycle & MCP Engine Parity (D-16, D-17, D-18, D-19) [⏳ В РАБОТЕ]
-- **Целевые расхождения:** D-16, D-17, D-18, D-19 (AP-010, AP-012, AP-026, AP-029).
-- **Архитектурный анализ первоисточников:**
-  1. **D-16 (Startup Race):** В каноническом `@earendil-works/pi-coding-agent` (`src/extensions/mcp/index.ts`) перед запуском агента вызывается `waitForDirectServers(ctx)` (с таймаутом до 10с), блокирующий запуск до готовности серверов с `direct` тулами. Тяжелые серверы (Bun + PostgreSQL `gbrain`, 3.5–4.5с) не успевают зарегистрироваться, если раннер рапортует `ready: true` без ожидания direct-серверов.
-  2. **D-17 (Dynamic System Prompt):** Расширения Pi динамически расширяют промпт через событие `before_agent_start` (`event.systemPromptOptions.sections`), включая секцию каталога `mcp_servers` и Ambient Recall от `gbrain.ts` (`people/me` и горячая память). Сейчас `createPiPrompt` формирует промпт статически без вызова хуков расширений.
-  3. **D-18 (Tool Execution Hooks & Lazy MCP Waiting):** В каноническом Pi исполнение каждого тула (включая `codemode`) оборачивается в хуки `tool_call` и `tool_result`. В `tool_call` MCP-расширение анализирует код скрипта (`scriptNeedsServer`) и приостанавливает вызов (`waitForServers`) до завершения фонового подключения сервера. Также `tool_call` обеспечивает работу guardrails-расширений (`skill-guardian.ts`). В `pi durable` эти события сейчас не эмитируются.
-  4. **D-19 (Diagnostics & UI Notices):** Все предупреждения и статусы расширений (`MCP servers need attention`, `Sign-in required`, уведомления подключения) глушатся, так как `runner.setUIContext()` не привязан к каналу передачи notice в BB хост.
-- **Решение:**
-  1. В `src/runner/extension-mount.ts` при инициализации ожидать готовности MCP-серверов с direct-инструментами перед отправкой `ready` хосту (с настраиваемым таймаутом).
-  2. В `src/runner/prompt.ts` эмулировать `extensionRunner.emit({ type: "before_agent_start", ... })` и передавать сгенерированные расширениями динамические секции в Durable Registry / Agent.
-  3. В `src/runner/extension-mount.ts` (`createNestedToolExecutor`) и `adaptExtensionTool` эмитить `tool_call` перед запуском инструмента и `tool_result` после.
-  4. Настроить `runner.setUIContext({ notify: ... })` с трансляцией сообщений в `sendToBridge({ kind: "notice", ... })` и логи хоста.
-- **Файлы:** `src/runner/extension-mount.ts`, `src/runner/extension-bridge.ts`, `src/runner/prompt.ts`, `src/runner/index.ts`, `tests/extension-lifecycle-mcp.test.ts`.
-
----
-
-### Cycle 71: Cumulative Token Usage Monotonicity (`pi.usage` Document Sync, D-7)
+### Cycle 70: Cumulative Token Usage Monotonicity (`pi.usage` Document Sync, D-7)
 - **Целевые расхождения:** D-7 (AP-013, AP-026).
 - **Архитектурный анализ первоисточников:**
   1. В протоколе BB IDE: метод `provider/usage` предназначен исключительно для учетных окон подписок (например, ChatGPT rate-limits в Codex). Нативный `provider-pi` отвечает на `provider/usage`: `{ supported: false }`.
@@ -216,7 +197,7 @@ STAGE 2: РАСШИРЕННЫЕ ВОЗМОЖНОСТИ ДВИЖКА И ПОЛН�
 
 ---
 
-### Cycle 72: Visual Subagent Delegation Cards via Protocol Schema (`type: "delegation"`)
+### Cycle 71: Visual Subagent Delegation Cards via Protocol Schema (`type: "delegation"`)
 - **Возможности платформы:** Визуализация сабагентов через протокол BB `@bb/provider-bridge-protocol`.
 - **Архитектурный анализ первоисточников:**
   1. Протокол моста BB содержит каноническую схему `deltaDelegationShapeSchema`:
@@ -230,7 +211,7 @@ STAGE 2: РАСШИРЕННЫЕ ВОЗМОЖНОСТИ ДВИЖКА И ПОЛН�
 
 ---
 
-### Cycle 73: Clean Turn Interruption, Inbox Abort & Cancellation (`submission.abort`)
+### Cycle 72: Clean Turn Interruption, Inbox Abort & Cancellation (`submission.abort`)
 - **Возможности платформы:** Гарантированное прерывание хода по кнопке Stop / `thread/stop`.
 - **Архитектурный анализ первоисточников:**
   1. При нажатии пользователем Stop в UI BB IDE хост присылает `thread/stop` с `intent: "interrupt"`.
@@ -242,10 +223,26 @@ STAGE 2: РАСШИРЕННЫЕ ВОЗМОЖНОСТИ ДВИЖКА И ПОЛН�
 
 ---
 
-### Cycle 74: Master Parity Conformance Audit & End-to-End Verification
+### Cycle 73: Master Parity Conformance Audit & End-to-End Verification
 - **Цель:** Итоговая валидация 100% паритета с нативным `provider-pi`, аттестация по правилам AP-010 – AP-071.
 - **Решение:**
-  1. Прогон всех сквозных сценариев (многоходовые сессии, редактирование сообщений через `bb thread edit-message`, форки тредов, аварии тулов, переключение моделей, reasoning streaming, MCP-серверы и codemode).
+  1. Прогон всех сквозных сценариев (многоходовые сессии, редактирование сообщений через `bb thread edit-message`, форки тредов, аварии тулов, переключение моделей, reasoning streaming).
   2. Проверка соответствия лимитам строк (AP-019), строгой типизации (AP-029), отсутствию гонок lockfile (AP-033).
   3. Фиксация стабильного релизного тега.
 - **Файлы:** Полный сьют тестов `tests/*.test.ts`, `docs/arch-improvement/ledger.md`.
+
+---
+
+### Cycle 74: Pi Extension Lifecycle & MCP Engine Parity (D-16, D-17, D-18, D-19) [⏳ В РАБОТЕ]
+- **Целевые расхождения:** D-16, D-17, D-18, D-19 (AP-010, AP-012, AP-026, AP-029).
+- **Архитектурный анализ первоисточников:**
+  1. **D-16 (Startup Race):** В каноническом `@earendil-works/pi-coding-agent` (`src/extensions/mcp/index.ts`) перед запуском агента вызывается `waitForDirectServers(ctx)` (с таймаутом до 10с), блокирующий запуск до готовности серверов с `direct` тулами. Тяжелые серверы (Bun + PostgreSQL `gbrain`, 3.5–4.5с) не успевают зарегистрироваться, если раннер рапортует `ready: true` без ожидания direct-серверов.
+  2. **D-17 (Dynamic System Prompt):** Расширения Pi динамически расширяют промпт через событие `before_agent_start` (`event.systemPromptOptions.sections`), включая секцию каталога `mcp_servers` и Ambient Recall от `gbrain.ts` (`people/me` и горячая память). Сейчас `createPiPrompt` формирует промпт статически без вызова хуков расширений.
+  3. **D-18 (Tool Execution Hooks & Lazy MCP Waiting):** В каноническом Pi исполнение каждого тула (включая `codemode`) оборачивается в хуки `tool_call` и `tool_result`. В `tool_call` MCP-расширение анализирует код скрипта (`scriptNeedsServer`) и приостанавливает вызов (`waitForServers`) до завершения фонового подключения сервера. Также `tool_call` обеспечивает работу guardrails-расширений (`skill-guardian.ts`). В `pi durable` эти события сейчас не эмитируются.
+  4. **D-19 (Diagnostics & UI Notices):** Все предупреждения и статусы расширений (`MCP servers need attention`, `Sign-in required`, уведомления подключения) глушатся, так как `runner.setUIContext()` не привязан к каналу передачи notice в BB хост.
+- **Решение:**
+  1. В `src/runner/extension-mount.ts` при инициализации ожидать готовности MCP-серверов с direct-инструментами перед отправкой `ready` хосту (с настраиваемым таймаутом).
+  2. В `src/runner/prompt.ts` эмулировать `extensionRunner.emit({ type: "before_agent_start", ... })` и передавать сгенерированные расширениями динамические секции в Durable Registry / Agent.
+  3. В `src/runner/extension-mount.ts` (`createNestedToolExecutor`) и `adaptExtensionTool` эмитить `tool_call` перед запуском инструмента и `tool_result` после.
+  4. Настроить `runner.setUIContext({ notify: ... })` с трансляцией сообщений в `sendToBridge({ kind: "notice", ... })` и логи хоста.
+- **Файлы:** `src/runner/extension-mount.ts`, `src/runner/extension-bridge.ts`, `src/runner/prompt.ts`, `src/runner/index.ts`, `tests/extension-lifecycle-mcp.test.ts`.
