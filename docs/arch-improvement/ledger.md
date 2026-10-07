@@ -207,3 +207,37 @@
 - `bb plugin reload provider-pi-durable`: Plugin reloaded cleanly (`provider-pi-durable@0.2.4 running`).
 - Verified against real durable session `/Users/vanya/.bb/pi-bridge-sessions/pi_durable_1791314935082`: 436 messages, 161,243 tokens accurately evaluated without errors.
 
+---
+
+## Cycle 60: Transparent Extension Loader & User Policy Invariant (2026-10-07)
+
+**Goal:** Establish the "Thin Bridge & User Policy Invariant" by wiring Pi's standard built-in extension factories (`createCodemodeExtension`, `createMcpExtension`, `createToolSearchExtension`) and user extensions into `DefaultResourceLoader`, seamlessly exposing user-configured tools and MCP servers to the Pi Durable `Registry` while keeping the provider plugin thin, decoupled, and unopinionated.
+
+**Governing Standard:** `arch-rules.md` (AP-010 – AP-071) & `arch-improvement-loop`  
+**Plan Reference:** `docs/superpowers/plans/2026-10-07-arch-improvement-cycle-60-transparent-extension-foundation.md`  
+
+### 1. Triaged Findings & Dispositions
+
+| ID | Issue | Severity | Rule | Disposition | Root Cause & Resolution |
+|---|---|---|---|---|---|
+| **F-60-1** | #9 | **P1** | AP-010, AP-013, AP-026 | `fix-now` | `src/runner/runtime-loader.ts` created `DefaultResourceLoader` without `extensionFactories`, and never initialized or lifecycle-bound `ExtensionRunner` (`session_start` was omitted). As a result, users running `provider-pi-durable` could not use `codemode` or any external MCP servers configured in `~/.pi/agent/mcp.json` / project `.pi/mcp.json`. The runner artificially restricted tools to the 4 base tools (`read`, `bash`, `edit`, `write`). **Fix:** Created decoupled `src/runner/extension-bridge.ts`, supplied standard Pi extension factories (`createCodemodeExtension`, `createToolSearchExtension`, `createMcpExtension`) to `DefaultResourceLoader`, initialized `ExtensionRunner` with a nested `executeTool` router, and mounted all user-configured/extension tools as `ToolRegistration` into the Durable `Registry`. |
+
+### 2. Architecture Rule Verifications
+
+- **AP-010 (Modular Monolith & Ports/Adapters):** Extension loading and tool adaptation logic isolated cleanly in `src/runner/extension-bridge.ts`.
+- **AP-012 (Fail-Fast & Explicit Error Contracts):** Extension tools propagate `isError` flags and diagnostics through `ToolExecutionResult`.
+- **AP-013 (Data Integrity without Fakes):** Tools executed directly through genuine Pi `ExtensionRunner` and actual MCP client processes, not mocks.
+- **AP-019 (File Size Limits & Modularity):**
+  - `src/runner/extension-bridge.ts`: 143 lines (< 250)
+  - `src/runner/runtime-loader.ts`: 175 lines (< 250)
+- **AP-026 (DTO Boundaries & Strict Schema Validation):** Tool parameters preserve TypeBox schemas and validation from `ToolDefinition`.
+- **AP-028 (Testing Strategy & Determinism):** Deterministic unit tests in `tests/extension-bridge.test.ts`.
+
+### 3. Verification Evidence
+
+- `npm run build`: Success (`dist/runner/index.js`, `dist/host.js`, `dist/server.js`).
+- `npm test`: **47 / 47 passing assertions (0 failed, 0 skipped)** across 5 suites.
+- `bb plugin reload provider-pi-durable`: Plugin reloaded cleanly (`provider-pi-durable@0.2.5 running`).
+- Verified README architectural invariant section detailing the Thin Bridge contract and user configuration primacy.
+
+

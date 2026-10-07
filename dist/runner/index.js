@@ -592,23 +592,117 @@ import {
   SettingsManager as SettingsManager2
 } from "@earendil-works/pi-coding-agent";
 
+// src/runner/extension-bridge.ts
+import {
+  createCodemodeExtension,
+  createMcpExtension,
+  createToolSearchExtension,
+  ExtensionRunner,
+  ModelRegistry,
+  SessionManager
+} from "@earendil-works/pi-coding-agent";
+import {
+  defineExtension as defineExtension2,
+  defineTool
+} from "@earendil-works/pi-durable";
+function createStandardExtensionFactories() {
+  return [
+    createCodemodeExtension({ mode: "auto" }),
+    createToolSearchExtension(),
+    createMcpExtension()
+  ];
+}
+function adaptExtensionTool(toolDef, executeToolFn) {
+  return defineTool({
+    name: toolDef.name,
+    description: toolDef.description,
+    parameters: toolDef.parameters,
+    async execute(args2, api) {
+      const ctx = {
+        executeTool: async (name, nestedArgs, options) => {
+          return executeToolFn(api.callId, name, nestedArgs, options);
+        }
+      };
+      const result = await toolDef.execute(
+        api.callId,
+        args2,
+        void 0,
+        (update) => {
+          if (update?.content && typeof api.output === "function") {
+            const textChunks = update.content.filter((c) => c.type === "text").map((c) => c.text).join("");
+            if (textChunks.length > 0) {
+              api.output(textChunks);
+            }
+          }
+        },
+        ctx
+      );
+      return {
+        content: result.content,
+        isError: result.isError,
+        details: result.details
+      };
+    }
+  });
+}
+function installExtensionTools(registry, tools) {
+  if (tools.length === 0) return;
+  registry.install(
+    defineExtension2({
+      name: "extension-tools",
+      tools
+    })
+  );
+}
+async function setupExtensionRunner(options) {
+  const sessionManager = SessionManager.create(options.cwd);
+  const modelRegistry = new ModelRegistry(options.modelRuntime);
+  const runner = new ExtensionRunner(
+    options.extensions,
+    options.runtime,
+    options.cwd,
+    sessionManager,
+    modelRegistry
+  );
+  runner.bindCore(
+    {
+      getActiveTools: () => [],
+      getAllTools: () => [],
+      getSettings: () => ({})
+    },
+    {
+      executeTool: (callerId, name, args2, opts) => options.executeToolFn(callerId, name, args2, opts),
+      getCallableTools: () => {
+        return runner.getAllRegisteredTools().map((t) => ({
+          name: t.definition.name,
+          description: t.definition.description,
+          parameters: t.definition.parameters
+        }));
+      },
+      getSystemPrompt: () => ""
+    }
+  );
+  await runner.emit({ type: "session_start" });
+  return runner;
+}
+
 // src/runner/subagent.ts
 import { Type } from "@earendil-works/pi-ai";
 import {
   AssistantEntry,
   configure,
-  defineExtension as defineExtension2,
-  defineTool
+  defineExtension as defineExtension3,
+  defineTool as defineTool2
 } from "@earendil-works/pi-durable";
 async function answerText(api, answer, context) {
   const entry = await api.commit((tx) => tx.entry(AssistantEntry, answer), context);
   const message = entry?.model?.[0];
   return message?.content.flatMap((content) => content.type === "text" ? [content.text] : []).join("") ?? "";
 }
-var Subagent = defineExtension2({
+var Subagent = defineExtension3({
   name: "subagent",
   tools: [
-    defineTool({
+    defineTool2({
       name: "subagent",
       description: "Delegate a self-contained task to a subagent with the same tools and get its answer back. Give it everything it needs to know; it does not see this conversation.",
       parameters: Type.Object({ task: Type.String({ description: "What the subagent should do" }) }),
@@ -642,7 +736,12 @@ async function loadHarnessEnvironment(location, options, envs) {
   const modelRuntime = await ModelRuntime2.create();
   const settingsManager = SettingsManager2.create(location.cwd);
   const agentDir = getAgentDir();
-  const resourceLoader = new DefaultResourceLoader2({ cwd: location.cwd, agentDir, settingsManager });
+  const resourceLoader = new DefaultResourceLoader2({
+    cwd: location.cwd,
+    agentDir,
+    settingsManager,
+    extensionFactories: createStandardExtensionFactories()
+  });
   await resourceLoader.reload();
   const extensionsResult = resourceLoader.getExtensions();
   for (const { name, config } of extensionsResult.runtime.pendingProviderRegistrations) {
@@ -676,6 +775,55 @@ async function loadHarnessEnvironment(location, options, envs) {
   registry.install(Subagent);
   const pendingReports = [];
   const report = (error) => pendingReports.push(error);
+  const executeToolFn = async (callerId, name, args2) => {
+    const target = registry.snapshot().tools().find((t) => t.tool.name === name);
+    if (!target) {
+      return {
+        toolCall: { type: "toolCall", id: `${callerId}/nested`, name, arguments: args2 },
+        result: { content: [{ type: "text", text: `Tool ${name} not found` }], details: {} },
+        isError: true
+      };
+    }
+    try {
+      const res = await target.tool.execute(
+        args2,
+        {
+          callId: `${callerId}/nested`,
+          output: () => {
+          }
+        },
+        runtimeContext
+      );
+      const rawContent = res.content;
+      const content = Array.isArray(rawContent) ? rawContent : [{ type: "text", text: String(rawContent ?? "") }];
+      return {
+        toolCall: { type: "toolCall", id: `${callerId}/nested`, name, arguments: args2 },
+        result: { content, details: res.details },
+        isError: !!res.isError
+      };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return {
+        toolCall: { type: "toolCall", id: `${callerId}/nested`, name, arguments: args2 },
+        result: { content: [{ type: "text", text: message }], details: {} },
+        isError: true
+      };
+    }
+  };
+  try {
+    const extensionRunner = await setupExtensionRunner({
+      extensions: extensionsResult.extensions,
+      runtime: extensionsResult.runtime,
+      cwd: location.cwd,
+      modelRuntime,
+      executeToolFn
+    });
+    const registeredTools = extensionRunner.getAllRegisteredTools();
+    const adaptedTools = registeredTools.map((t) => adaptExtensionTool(t.definition, executeToolFn));
+    installExtensionTools(registry, adaptedTools);
+  } catch (error) {
+    report(error);
+  }
   const harness = await Harness.open(
     await openNodeSqliteStorage(location.database),
     {

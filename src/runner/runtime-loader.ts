@@ -10,6 +10,13 @@ import {
 	findInitialAgentModel,
 	type ExecutionEnvs,
 } from "./harness-setup.ts";
+import {
+	createStandardExtensionFactories,
+	setupExtensionRunner,
+	adaptExtensionTool,
+	installExtensionTools,
+	type NestedToolExecutor,
+} from "./extension-bridge.ts";
 import { getAgentDir, type SessionLocation } from "./sessions.ts";
 import { Subagent } from "./subagent.ts";
 import { Harness, type ModelRef } from "@earendil-works/pi-durable";
@@ -35,7 +42,12 @@ export async function loadHarnessEnvironment(
 	const modelRuntime = await ModelRuntime.create();
 	const settingsManager = SettingsManager.create(location.cwd);
 	const agentDir = getAgentDir();
-	const resourceLoader = new DefaultResourceLoader({ cwd: location.cwd, agentDir, settingsManager });
+	const resourceLoader = new DefaultResourceLoader({
+		cwd: location.cwd,
+		agentDir,
+		settingsManager,
+		extensionFactories: createStandardExtensionFactories(),
+	});
 	await resourceLoader.reload();
 	const extensionsResult = resourceLoader.getExtensions();
 
@@ -76,6 +88,58 @@ export async function loadHarnessEnvironment(
 
 	const pendingReports: unknown[] = [];
 	const report = (error: unknown) => pendingReports.push(error);
+
+	const executeToolFn: NestedToolExecutor = async (callerId, name, args) => {
+		const target = registry.snapshot().tools().find((t) => t.tool.name === name);
+		if (!target) {
+			return {
+				toolCall: { type: "toolCall", id: `${callerId}/nested`, name, arguments: args },
+				result: { content: [{ type: "text", text: `Tool ${name} not found` }], details: {} },
+				isError: true,
+			};
+		}
+		try {
+			const res = await target.tool.execute(
+				args as any,
+				{
+					callId: `${callerId}/nested`,
+					output: () => {},
+				} as any,
+				runtimeContext as any,
+			);
+			const rawContent = res.content;
+			const content = Array.isArray(rawContent)
+				? (rawContent as Array<{ type: "text"; text: string }>)
+				: [{ type: "text" as const, text: String(rawContent ?? "") }];
+			return {
+				toolCall: { type: "toolCall", id: `${callerId}/nested`, name, arguments: args },
+				result: { content, details: res.details },
+				isError: !!res.isError,
+			};
+		} catch (err: unknown) {
+			const message = err instanceof Error ? err.message : String(err);
+			return {
+				toolCall: { type: "toolCall", id: `${callerId}/nested`, name, arguments: args },
+				result: { content: [{ type: "text", text: message }], details: {} },
+				isError: true,
+			};
+		}
+	};
+
+	try {
+		const extensionRunner = await setupExtensionRunner({
+			extensions: extensionsResult.extensions,
+			runtime: extensionsResult.runtime,
+			cwd: location.cwd,
+			modelRuntime,
+			executeToolFn,
+		});
+		const registeredTools = extensionRunner.getAllRegisteredTools();
+		const adaptedTools = registeredTools.map((t) => adaptExtensionTool(t.definition, executeToolFn));
+		installExtensionTools(registry, adaptedTools);
+	} catch (error) {
+		report(error);
+	}
 
 	const harness = await Harness.open(
 		await openNodeSqliteStorage(location.database),

@@ -12,6 +12,22 @@ The plugin includes an internal, pre-bundled RPC bridge runner (`dist/runner/ind
 
 ---
 
+## Architecture & Philosophy: Thin Bridge & User Policy Invariant
+
+A core architectural invariant of this plugin is that **it remains a thin, transparent protocol bridge** rather than an opinionated "god-plugin" that dictates which tools or MCP servers you must use:
+
+1. **Decoupled Roles:**
+   - **Pi Durable Core Engine:** Responsible exclusively for execution reliability, ACID SQLite transactions, deterministic recovery across process crashes, instant branch forks on checkpoints (`EntryId`), and FSM-driven background compaction.
+   - **Provider Bridge (`bb-plugin-provider-pi-durable`):** Translates events, tool cards, file diffs, reasoning streams, and token telemetry between the BB IDE host daemon and the Pi Durable runner.
+   - **User Policy & Tool Configuration:** **The user retains 100% control.** The plugin does not hardcode third-party tools or force MCP connections.
+2. **Transparent Standard Configuration:**
+   - Tools, MCP servers, and Codemode are configured strictly through standard Pi configuration files:
+     - `~/.pi/agent/settings.json` (e.g. `"defaultTools": ["+codemode"]`)
+     - `~/.pi/agent/mcp.json` and project-level `.pi/mcp.json` (declaring external MCP servers)
+   - If no MCP servers are configured in your environment, none are spawned, keeping your runtime lightweight and zero-overhead. If configured, they are resolved transparently through Pi's native discovery without plugin bloat.
+
+---
+
 ## Features
 
 - **Self-Contained & Atomic:** Ships with its own built-in runner; no external `pi-durable-rpc` binary or mono-repo clones required.
