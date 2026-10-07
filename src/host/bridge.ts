@@ -154,7 +154,6 @@ export class ProviderBridge {
 							deltas: [{
 								kind: "input.accepted",
 								clientRequestId: params.clientRequestId,
-								providerTurnId: params.expectedTurnId,
 							}],
 						});
 					}

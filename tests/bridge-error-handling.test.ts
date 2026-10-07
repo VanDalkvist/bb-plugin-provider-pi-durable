@@ -84,7 +84,7 @@ test("ProviderBridge thread/stop with intent 'interrupt' emits turn.boundary and
 	assert.equal(response.result.ok, true);
 });
 
-test("ProviderBridge turn/steer emits input.accepted with providerTurnId", async () => {
+test("ProviderBridge turn/steer emits input.accepted without providerTurnId", async () => {
 	const sent: string[] = [];
 	const bridge = new ProviderBridge((json) => {
 		sent.push(json);
@@ -121,7 +121,6 @@ test("ProviderBridge turn/steer emits input.accepted with providerTurnId", async
 	assert.deepEqual(notif.params.deltas, [{
 		kind: "input.accepted",
 		clientRequestId: "creq_23456789ab",
-		providerTurnId: "turn_target_456",
 	}]);
 
 	const response = JSON.parse(sent[1]);

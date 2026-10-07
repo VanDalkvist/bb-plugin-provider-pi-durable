@@ -130,3 +130,46 @@
   - `tests/startup-readiness.test.ts`: 6 passed
 - `npx tsc --noEmit`: 0 errors.
 
+
+---
+
+## Cycle 58: Tool Execution Telemetry & Steer Protocol Integrity (2026-10-07)
+
+**Goal:** Eliminate tool invisibility and steer freezing in `bb-plugin-provider-pi-durable`:
+1. Ensure all `edit` and `write` tool executions emit schema-compliant `fileChange` deltas (`kind: "add" | "update"` instead of `"create" | "modify"`) with diff payloads so tool cards appear in BB chat.
+2. Fix `turn/steer` input acceptance by omitting invalid `providerTurnId` so BB host daemon attaches acceptance to the active turn without 409 conflict, eliminating permanent "Steer pending".
+
+**Governing Standard:** `arch-rules.md` (AP-010 – AP-071) & `arch-improvement-loop`  
+**Issues:** #5, #6  
+**Plan Reference:** `docs/superpowers/plans/2026-10-07-arch-improvement-cycle-58-tool-telemetry-and-steer.md`  
+
+### 1. Triaged Findings & Dispositions
+
+| ID | Issue | Severity | Rule | Disposition | Root Cause & Resolution |
+|---|---|---|---|---|---|
+| **F-58-1** | #6 | **P1** | AP-026 | `fix-now` | `buildToolItemShape` in `src/host/tool-delta-translator.ts` emitted `{ path, kind: "create" }` for `write` and `{ path, kind: "modify" }` for `edit`. BB Host Daemon validates `fileChange.changes` items against `z.enum(["add", "update", "delete"])`. Because `"create"` and `"modify"` failed Zod validation, `translateEvent` silently dropped the entire delta batch (`[]`), making all `edit` and `write` tool executions completely invisible in the chat UI. **Fix:** Mapped `write` to `kind: "add"` and `edit` to `kind: "update"`. Mapped `args.content` to `newText` and `args.edits` array to granular update items with `oldText` and `newText`. |
+| **F-58-2** | #5 | **P1** | AP-012, AP-026 | `fix-now` | In `src/host/bridge.ts`, `turn/steer` emitted `input.accepted` with `providerTurnId: params.expectedTurnId`. Because `expectedTurnId` is a BB turn ID, host-daemon's assembler generated a new BB turn ID and emitted `turn/input/accepted` without `turn/started`, which BB server rejected with 409 `MissingStoredTurnStartedError`, causing steer messages to stay indefinitely in `unresolvedSteerRequestIds` ("Steer pending"). **Fix:** Omitted `providerTurnId` from `input.accepted` delta in `turn/steer`, allowing the assembler to associate acceptance with the active turn without 409 conflict. |
+
+### 2. Architecture Rule Verifications
+
+- **AP-010 (Modular Monolith & Ports/Adapters):** Tool translation logic remains cleanly decoupled in `tool-delta-translator.ts`.
+- **AP-012 (Fail-Fast & Explicit Error Contracts):** Validated schemas prevent silent drop of event deltas by the host daemon.
+- **AP-013 (Data Integrity without Fakes):** Tool diffs and granular edits reflect real arguments from agent execution.
+- **AP-019 (File Size Limits & Modularity):**
+  - `src/host/tool-delta-translator.ts`: 123 lines (< 250)
+  - `src/host/bridge.ts`: 212 lines (< 250)
+- **AP-026 (DTO Boundaries & Strict Schema Validation):** Output deltas strictly match `@bb/provider-bridge-protocol` Zod schemas (`jCe`).
+- **AP-028 (Testing Strategy & Determinism):** Deterministic unit tests in `tests/tool-delta-translator.test.ts` and `tests/bridge-error-handling.test.ts`.
+
+### 3. Verification Evidence
+
+- `npm run build`: Success (`dist/runner/index.js`, `dist/host.js`, `dist/server.js`).
+- `npm test`: **43 / 43 passing assertions (0 failed, 0 skipped)** across 5 suites.
+  - `tests/bb-event-adapter.test.ts`: 2 passed
+  - `tests/bridge-error-handling.test.ts`: 6 passed
+  - `tests/compaction-settings.test.ts`: 3 passed
+  - `tests/context-window-usage.test.ts`: 6 passed
+  - `tests/cwd-isolation.test.ts`: 9 passed
+  - `tests/runner-discovery.test.ts`: 8 passed
+  - `tests/startup-readiness.test.ts`: 6 passed
+  - `tests/tool-delta-translator.test.ts`: 3 passed

@@ -16,11 +16,35 @@ export function buildToolItemShape(
 		};
 	}
 
-	if (toolName === "edit" || toolName === "write") {
+	if (toolName === "write") {
 		const filePath = typeof args.path === "string" ? args.path : "";
+		const newText = typeof args.content === "string" ? args.content : undefined;
 		return {
 			type: "fileChange",
-			changes: filePath ? [{ path: filePath, kind: toolName === "write" ? "create" : "modify" }] : [],
+			changes: filePath
+				? [{ path: filePath, kind: "add", ...(newText !== undefined ? { newText } : {}) }]
+				: [],
+		};
+	}
+
+	if (toolName === "edit") {
+		const filePath = typeof args.path === "string" ? args.path : "";
+		if (!filePath) {
+			return { type: "fileChange", changes: [] };
+		}
+		const edits = Array.isArray(args.edits) ? args.edits : [];
+		if (edits.length > 0) {
+			const changes = edits.map((edit: any) => ({
+				path: filePath,
+				kind: "update",
+				...(typeof edit?.oldText === "string" ? { oldText: edit.oldText } : {}),
+				...(typeof edit?.newText === "string" ? { newText: edit.newText } : {}),
+			}));
+			return { type: "fileChange", changes };
+		}
+		return {
+			type: "fileChange",
+			changes: [{ path: filePath, kind: "update" }],
 		};
 	}
 
