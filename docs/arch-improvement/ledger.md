@@ -405,6 +405,48 @@ Bring reasoning/thinking timeline presentation to full parity with native BB pro
 - `wc -l src/host/*.ts src/runner/*.ts src/runner/**/*.ts server.ts`: All files strictly under 200 lines.
 - `bb plugin reload provider-pi-durable`: Plugin reloaded cleanly to v0.2.8.
 
+---
+
+## Cycle 64: Server Manifest Entry Point & Live Settings Activation (2026-10-07)
+
+**Release:** `v0.2.9`  
+**Governing Standard:** `arch-rules.md` (AP-010 – AP-071)  
+**Prior Cycle:** Cycle 63 (`v0.2.8`, commit `0129bf5`)  
+**Plan Reference:** `docs/superpowers/plans/2026-10-07-arch-improvement-cycle-64-server-manifest-entrypoint-and-settings.md`
+
+### 1. Scope and Objective
+
+Resolve finding F-64-1 (AP-010, AP-032):
+- Correct `"server": "./dist/server.js"` to `"server": "./server.ts"` in `package.json`.
+- `bb plugin build` bundles from `bb.server`, causing a self-referential build when set to `./dist/server.js` that left declarative plugin settings (`openThinkingByDefault`, `hideThinking`) uncompiled and ignored by the BB CLI.
+- Rebuild bundles and verify live CLI registration via `bb plugin config provider-pi-durable`.
+
+### 2. Changes Made
+
+- **Slice 1: Manifest Entry Point Correction (AP-010, AP-032):**
+  - Updated `package.json` `bb.server` entrypoint to point to canonical source `./server.ts`.
+- **Slice 2: Bundle Rebuild & Verification:**
+  - Ran `node scripts/build-runner.mjs && bb plugin build`.
+  - Verified `dist/server.js` contains `settings.define`, `openThinkingByDefault`, `hideThinking`, and `deriveProviderOptions`.
+  - Reloaded plugin via `bb plugin reload provider-pi-durable`.
+  - Verified live settings via `bb plugin config provider-pi-durable`, confirming both `openThinkingByDefault` and `hideThinking` are recognized and displayed.
+- **Slice 3: Release & Tests:**
+  - Verified all 59 tests passing in `npm test`.
+  - Bumped version to `0.2.9` in `package.json`.
+
+### 3. Verification Evidence
+
+- `npm test`: **59 / 59 passing assertions (0 failed, 0 skipped)** across all test suites.
+- `bb plugin config provider-pi-durable`:
+  ```
+  openThinkingByDefault = true  (boolean)
+    Open thoughts by default — Keep reasoning thoughts expanded by default in the chat timeline. Toggle off to collapse thoughts by default.
+  hideThinking = false  (boolean)
+    Hide thoughts — Hide reasoning thought blocks from the timeline entirely.
+  ```
+- `bb plugin reload provider-pi-durable`: Plugin reloaded cleanly to v0.2.9.
+
+
 
 
 
