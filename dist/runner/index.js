@@ -59,7 +59,22 @@ async function selectSession(cwdInput, continueSession, targetSession) {
     try {
       await mkdir(directory, { recursive: true });
       const entries = await readdir(directory);
-      created = !entries.includes("session.sqlite");
+      if (!entries.includes("session.sqlite")) {
+        const legacyDir = `${directory}.jsonl`;
+        try {
+          const legacyEntries = await readdir(legacyDir);
+          if (legacyEntries.includes("session.sqlite")) {
+            directory = legacyDir;
+            created = false;
+          } else {
+            created = true;
+          }
+        } catch {
+          created = true;
+        }
+      } else {
+        created = false;
+      }
     } catch {
       created = false;
     }
@@ -907,11 +922,13 @@ function buildFinalAssistantMessage(current, lastGenerationText, lastThinkingTex
 // src/runner/bridge/bb-event-adapter.ts
 var BBEventAdapter = class {
   output;
+  resolveContextWindow;
   lastAssistantMessage;
   currentText = "";
   currentThinking = "";
-  constructor(output2) {
+  constructor(output2, resolveContextWindow) {
     this.output = output2;
+    this.resolveContextWindow = resolveContextWindow;
   }
   handleEvent(event, current) {
     switch (event.type) {
@@ -1035,9 +1052,12 @@ var BBEventAdapter = class {
           this.currentText,
           this.currentThinking
         );
+        const agentDoc = current?.conversation?.docs?.["pi.agent"] ?? {};
+        const cw = this.resolveContextWindow?.(agentDoc.model?.provider, agentDoc.model?.modelId);
         this.output({
           type: "turn_end",
-          message: finalMsg
+          message: finalMsg,
+          contextWindow: cw
         });
         break;
       }
@@ -1047,9 +1067,12 @@ var BBEventAdapter = class {
           this.currentText,
           this.currentThinking
         );
+        const agentDoc = current?.conversation?.docs?.["pi.agent"] ?? {};
+        const cw = this.resolveContextWindow?.(agentDoc.model?.provider, agentDoc.model?.modelId);
         this.output({
           type: "agent_end",
-          messages: [finalMsg]
+          messages: [finalMsg],
+          contextWindow: cw
         });
         break;
       }
@@ -1159,8 +1182,10 @@ async function handleActiveSessionCommand(cmd, durable, modelRuntime, args2, res
       const current = durable.view.current();
       const agentDoc = current.conversation.docs["pi.agent"] ?? {};
       let contextWindow = 128e3;
-      if (agentDoc.model?.provider && agentDoc.model?.modelId) {
-        const m = modelRuntime.getModel(agentDoc.model.provider, agentDoc.model.modelId);
+      const provider = agentDoc.model?.provider ?? args2.provider;
+      const modelId = agentDoc.model?.modelId ?? args2.model;
+      if (provider && modelId) {
+        const m = modelRuntime.getModel(provider, modelId);
         if (m?.contextWindow) contextWindow = m.contextWindow;
       }
       let tokens = null;
@@ -1342,7 +1367,14 @@ async function main() {
   };
   const durable = await openDurable(durableOptions);
   activeDurable = durable;
-  const adapter = new BBEventAdapter((evt) => output(evt));
+  const adapter = new BBEventAdapter(
+    (evt) => output(evt),
+    (provider, modelId) => {
+      const p = provider ?? args.provider;
+      const m = modelId ?? args.model;
+      return p && m ? modelRuntime.getModel(p, m)?.contextWindow : void 0;
+    }
+  );
   const stream = await watchEvents(durable.harness, ROOT_CONVERSATION_ID3, BACKGROUND_CONTEXT3);
   stream.start(async (batch) => {
     try {

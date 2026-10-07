@@ -88,8 +88,10 @@ export async function handleActiveSessionCommand(
 			const current = durable.view.current();
 			const agentDoc = (current.conversation.docs["pi.agent"] ?? {}) as any;
 			let contextWindow = 128000;
-			if (agentDoc.model?.provider && agentDoc.model?.modelId) {
-				const m = modelRuntime.getModel(agentDoc.model.provider, agentDoc.model.modelId);
+			const provider = agentDoc.model?.provider ?? args.provider;
+			const modelId = agentDoc.model?.modelId ?? args.model;
+			if (provider && modelId) {
+				const m = modelRuntime.getModel(provider, modelId);
 				if (m?.contextWindow) contextWindow = m.contextWindow;
 			}
 			let tokens: number | null = null;

@@ -78,4 +78,55 @@
 - AP-022 check: Zero uncommented empty catch blocks across entire codebase.
 
 ### 5. Residual Risk & Follow-Up
-- Full Stage 1 roadmap continues in Cycle 57 (Tool fault integrity & diff forwarding) and Cycle 58 (Thinking accordion streaming & turn checkpoints).
+- Full Stage 1 roadmap continues in Cycle 57 (Context window telemetry & token synchronization) and Cycle 58 (Tool fault integrity, diff forwarding & thinking accordion streaming).
+
+---
+
+## Cycle 57: Context Window Telemetry & Usage Synchronization (2026-10-07)
+
+**Goal:** Repair context window usage estimation (`usedTokens`), token telemetry synchronization, and model context window propagation so BB IDE's ring indicator and context fullness bar display accurate live values.  
+**Governing Standard:** `arch-rules.md` (AP-010 – AP-071) & `arch-improvement-loop`  
+**PRD Reference:** `prd/pi-durable-runtime-boot-integrity`  
+**Plan Reference:** `docs/superpowers/plans/2026-10-07-arch-improvement-cycle-57-context-telemetry.md`  
+
+### 1. Triaged Findings & Dispositions
+
+| ID | Issue | Severity | Rule | Disposition | Root Cause & Resolution |
+|---|---|---|---|---|---|
+| **F-57-1** | Missing Context Window Updates (`usedTokens: 0`) | **P1** | AP-013, AP-026 | `fix-now` | In `src/host/session.ts`, `getSessionStats()` attempted to read `res?.contextUsage`. Because the runner emits responses wrapped as `{ id, type: "response", command, success: true, data: { contextUsage } }`, `res.contextUsage` was `undefined`. In `refreshContextUsage()`, `stats.contextWindow > 0` failed (`0 > 0`), dropping all `contextWindow` deltas. **Fix:** `RunnerProcess.requestOk` unwraps `res.data ?? res.result ?? res` and rejects on `success: false`; `getSessionStats()` defensively extracts `res?.contextUsage ?? res?.data?.contextUsage ?? res`. |
+| **F-57-2** | Turn Boundary Race on `agent_end` | **P1** | AP-023, AP-047 | `fix-now` | `handleRunnerEvent` emitted `agent_end` deltas (`turn.boundary: completed`) *before* awaiting `refreshContextUsage()`. Context updates arrived after the turn was closed. **Fix:** Await `refreshContextUsage()` before emitting `agent_end` deltas so context usage attaches to the active turn. |
+| **F-57-3** | Initial Model Context Window Fallback | **P2** | AP-012, AP-022 | `fix-now` | `get_session_stats` in `src/runner/session-commands.ts` only inspected `agentDoc.model`. On thread creation prior to first turn, `agentDoc.model` is unpopulated, defaulting to 128,000. **Fix:** Added fallback to `args.provider` and `args.model`. |
+| **F-57-4** | `BBEventAdapter` Context Window Drop on `run_end` | **P2** | AP-026 | `fix-now` | `BBEventAdapter` omitted `contextWindow` from `turn_end` and `agent_end` wire events, causing `DeltaTranslator` to emit `128000` for `usage` deltas. **Fix:** Added optional `resolveContextWindow` callback to `BBEventAdapter` and included `contextWindow` on wire events; updated `src/runner/bridge/contracts.ts`. |
+| **F-57-5** | Legacy Directory Adoption Fallback | **P2** | AP-010, AP-049 | `fix-now` | When a session directory without `.jsonl` did not yet contain `session.sqlite`, legacy sessions created by earlier versions (`${directory}.jsonl/session.sqlite`) could be orphaned. **Fix:** In `src/runner/sessions.ts`, added fallback check for `${directory}.jsonl/session.sqlite`. |
+
+### 2. Architecture Rule Verifications
+
+- **AP-010 (Modular Monolith & Ports/Adapters):** Clean abstraction between host RPC protocol, delta translator, and runner SQLite storage.
+- **AP-012 (Fail-Fast & Explicit Error Contracts):** `requestOk` now rejects when `res.success === false` with the explicit runner error message.
+- **AP-013 (Data Integrity without Fakes):** Context token counts reflect genuine SQLite message estimates via `estimateContextTokens` from `@earendil-works/pi-ai`.
+- **AP-019 (File Size Limits & Modularity):**
+  - `src/host/runner-process.ts`: 211 lines (< 250)
+  - `src/host/session.ts`: 202 lines (< 250)
+  - `src/runner/session-commands.ts`: 121 lines (< 150)
+  - `src/runner/bridge/bb-event-adapter.ts`: 190 lines (< 250)
+  - `src/runner/index.ts`: 231 lines (< 250)
+  - `src/runner/sessions.ts`: 103 lines (< 150)
+  - `src/host/delta-translator.ts`: 217 lines (< 250)
+- **AP-022 (Typed Errors & Explicit Exception Handling):** Polymorphic wire unwrapping handles both wrapped and raw response shapes; zero empty catch blocks.
+- **AP-023 (Async Discipline):** Async context refresh awaited prior to turn boundary settlement.
+- **AP-026 (DTO Boundaries & Strict Schema Validation):** `BBTurnEndEvent` and `BBAgentEndEvent` interfaces strictly typed in `contracts.ts` with optional `contextWindow`.
+- **AP-028 (Testing Strategy & Determinism):** Comprehensive deterministic test suite in `tests/context-window-usage.test.ts` covering unwrapping, stats extraction, delta translation, and event ordering without network I/O.
+
+### 3. Verification Evidence
+
+- `npm run build`: Success (`dist/runner/index.js`, `dist/host.js`, `dist/server.js`).
+- `npm test`: **40 / 40 passing assertions (0 failed, 0 skipped)** across 4 suites.
+  - `tests/bb-event-adapter.test.ts`: 2 passed
+  - `tests/bridge-error-handling.test.ts`: 6 passed
+  - `tests/compaction-settings.test.ts`: 3 passed
+  - `tests/context-window-usage.test.ts`: 6 passed
+  - `tests/cwd-isolation.test.ts`: 9 passed
+  - `tests/runner-discovery.test.ts`: 8 passed
+  - `tests/startup-readiness.test.ts`: 6 passed
+- `npx tsc --noEmit`: 0 errors.
+

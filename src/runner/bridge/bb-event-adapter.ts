@@ -11,12 +11,17 @@ export { resolveToolCallArgs } from "./tool-args-resolver.ts";
  */
 export class BBEventAdapter {
 	private readonly output: (event: BBWireEvent) => void;
+	private readonly resolveContextWindow?: (provider?: string, modelId?: string) => number | undefined;
 	private lastAssistantMessage?: BBAssistantMessage;
 	private currentText = "";
 	private currentThinking = "";
 
-	constructor(output: (event: BBWireEvent) => void) {
+	constructor(
+		output: (event: BBWireEvent) => void,
+		resolveContextWindow?: (provider?: string, modelId?: string) => number | undefined,
+	) {
 		this.output = output;
+		this.resolveContextWindow = resolveContextWindow;
 	}
 
 	public handleEvent(event: AgentEvent, current: DurableView): void {
@@ -155,9 +160,12 @@ export class BBEventAdapter {
 					this.currentText,
 					this.currentThinking,
 				);
+				const agentDoc = (current?.conversation?.docs?.["pi.agent"] ?? {}) as any;
+				const cw = this.resolveContextWindow?.(agentDoc.model?.provider, agentDoc.model?.modelId);
 				this.output({
 					type: "turn_end",
 					message: finalMsg,
+					contextWindow: cw,
 				});
 				break;
 			}
@@ -168,9 +176,12 @@ export class BBEventAdapter {
 					this.currentText,
 					this.currentThinking,
 				);
+				const agentDoc = (current?.conversation?.docs?.["pi.agent"] ?? {}) as any;
+				const cw = this.resolveContextWindow?.(agentDoc.model?.provider, agentDoc.model?.modelId);
 				this.output({
 					type: "agent_end",
 					messages: [finalMsg],
+					contextWindow: cw,
 				});
 				break;
 			}

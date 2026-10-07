@@ -125,7 +125,7 @@ export class RunnerProcess {
 					const errObj = msg.error as { message?: string };
 					pending.reject(new Error(errObj?.message || String(msg.error)));
 				} else {
-					pending.resolve(msg.result ?? msg);
+					pending.resolve(msg.data !== undefined ? msg.data : (msg.result ?? msg));
 				}
 				return;
 			}
@@ -160,7 +160,14 @@ export class RunnerProcess {
 	}
 
 	public async requestOk(cmd: Record<string, unknown>, timeoutMs = 30000): Promise<any> {
-		return this.request(cmd, timeoutMs);
+		const res: any = await this.request(cmd, timeoutMs);
+		if (res && typeof res === "object") {
+			if (res.success === false) {
+				throw new Error(res.error || `Runner rejected ${String(cmd.type)}`);
+			}
+			return res.data !== undefined ? res.data : (res.result ?? res);
+		}
+		return res;
 	}
 
 	public sendChannel(msg: unknown): void {

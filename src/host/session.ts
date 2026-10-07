@@ -97,6 +97,14 @@ export class PiThreadSession {
 	}
 
 	private async handleRunnerEvent(event: RunnerEvent) {
+		if (event.type === "agent_end") {
+			try {
+				await this.refreshContextUsage();
+			} catch (err) {
+				console.warn(`[PiThreadSession] Context refresh failed before agent_end: ${err}`);
+			}
+		}
+
 		const deltas = this.translator.translate(event, {
 			threadId: this.options.threadId,
 			cwd: this.options.cwd,
@@ -108,7 +116,7 @@ export class PiThreadSession {
 			});
 		}
 
-		if (event.type === "turn_end" || event.type === "compaction_end" || event.type === "agent_end") {
+		if (event.type === "turn_end" || event.type === "compaction_end") {
 			try {
 				await this.refreshContextUsage();
 			} catch (err) {
@@ -176,8 +184,12 @@ export class PiThreadSession {
 	}
 
 	public async getSessionStats(): Promise<{ tokens: number | null; contextWindow: number }> {
-		const res = await this.runner.requestOk({ type: "get_session_stats" });
-		return res?.contextUsage ?? { tokens: null, contextWindow: 0 };
+		const res = (await this.runner.requestOk({ type: "get_session_stats" })) as any;
+		const usage = res?.contextUsage ?? res?.data?.contextUsage ?? res;
+		return {
+			tokens: typeof usage?.tokens === "number" ? usage.tokens : null,
+			contextWindow: typeof usage?.contextWindow === "number" ? usage.contextWindow : 0,
+		};
 	}
 
 	public async closeGracefully(): Promise<void> {

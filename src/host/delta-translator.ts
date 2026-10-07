@@ -174,7 +174,7 @@ export class DeltaTranslator {
 					const totTok = Number(usage.totalTokens ?? (inTok + outTok));
 					deltas.push({
 						kind: "usage",
-						modelContextWindow: (event.contextWindow as number) ?? 128000,
+						modelContextWindow: typeof event.contextWindow === "number" && event.contextWindow > 0 ? event.contextWindow : 128000,
 						last: {
 							totalTokens: totTok,
 							inputTokens: inTok,

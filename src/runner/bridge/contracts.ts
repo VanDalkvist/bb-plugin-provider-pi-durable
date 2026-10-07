@@ -83,6 +83,7 @@ export interface BBTurnStartEvent {
 export interface BBTurnEndEvent {
 	type: "turn_end";
 	message?: BBAssistantMessage;
+	contextWindow?: number;
 }
 
 export interface BBMessageEndEvent {
@@ -94,6 +95,7 @@ export interface BBAgentEndEvent {
 	type: "agent_end";
 	messages: BBAssistantMessage[];
 	providerCheckpointId?: string;
+	contextWindow?: number;
 }
 
 export interface BBCompactionStartEvent {

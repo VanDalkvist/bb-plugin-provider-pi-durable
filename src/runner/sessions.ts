@@ -54,7 +54,22 @@ export async function selectSession(
 		try {
 			await mkdir(directory, { recursive: true });
 			const entries = await readdir(directory);
-			created = !entries.includes("session.sqlite");
+			if (!entries.includes("session.sqlite")) {
+				const legacyDir = `${directory}.jsonl`;
+				try {
+					const legacyEntries = await readdir(legacyDir);
+					if (legacyEntries.includes("session.sqlite")) {
+						directory = legacyDir;
+						created = false;
+					} else {
+						created = true;
+					}
+				} catch {
+					created = true;
+				}
+			} else {
+				created = false;
+			}
 		} catch {
 			// intentionally ignored: directory inspection error falls back to existing session
 			created = false;

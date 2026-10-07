@@ -185,7 +185,14 @@ async function main() {
 	activeDurable = durable;
 
 	// Setup native Pi Durable event stream adapter
-	const adapter = new BBEventAdapter((evt: BBWireEvent) => output(evt));
+	const adapter = new BBEventAdapter(
+		(evt: BBWireEvent) => output(evt),
+		(provider, modelId) => {
+			const p = provider ?? args.provider;
+			const m = modelId ?? args.model;
+			return p && m ? modelRuntime.getModel(p, m)?.contextWindow : undefined;
+		},
+	);
 	const stream = await watchEvents(durable.harness, ROOT_CONVERSATION_ID, BACKGROUND_CONTEXT);
 	stream.start(async (batch) => {
 		try {
