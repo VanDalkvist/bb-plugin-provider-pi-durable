@@ -1,6 +1,7 @@
 import { getSharedCatalog } from "./catalog.ts";
 import { SessionRegistry } from "./session-registry.ts";
 import { handleDiscoveryRequest } from "./discovery-handler.ts";
+import { forkSessionDatabase } from "./thread-fork.ts";
 import {
 	sendJsonRpcResult,
 	sendJsonRpcError,
@@ -17,9 +18,9 @@ export class ProviderBridge {
 	private sendRaw: (json: string) => void;
 	private registry: SessionRegistry;
 
-	constructor(sendRaw: (json: string) => void) {
+	constructor(sendRaw: (json: string) => void, registry?: SessionRegistry) {
 		this.sendRaw = sendRaw;
-		this.registry = new SessionRegistry((method, params) => {
+		this.registry = registry ?? new SessionRegistry((method, params) => {
 			this.sendNotification(method, params);
 		});
 	}
@@ -49,7 +50,7 @@ export class ProviderBridge {
 		const trimmed = line.trim();
 		if (!trimmed) return;
 
-		let req: { id?: string | number; method?: string; params?: any };
+		let req: { id?: string | number; method?: string; params?: Record<string, unknown> };
 		try {
 			req = JSON.parse(trimmed);
 		} catch (err) {
@@ -59,11 +60,11 @@ export class ProviderBridge {
 		}
 
 		if (req && typeof req.method === "string") {
-			await this.handleRequest(req as { id: string | number; method: string; params?: any });
+			await this.handleRequest({ id: req.id ?? 0, method: req.method, params: req.params });
 		}
 	}
 
-	private async handleRequest(req: { id: string | number; method: string; params?: any }): Promise<void> {
+	private async handleRequest(req: { id: string | number; method: string; params?: Record<string, unknown> }): Promise<void> {
 		const { id, method, params = {} } = req;
 
 		try {
@@ -85,9 +86,23 @@ export class ProviderBridge {
 
 				case "thread/fork": {
 					const threadId = params.threadId;
-					const providerThreadId = `pi_durable_${Date.now()}`;
-					await this.registry.createOrGet(threadId, providerThreadId, params);
-					this.sendResult(id, { providerThreadId, sessionRestorable: true });
+					const sourceProviderThreadId = params.sourceProviderThreadId;
+					const checkpointId = params.sourceProviderCheckpointId;
+					const targetProviderThreadId = `pi_durable_${Date.now()}`;
+
+					try {
+						if (sourceProviderThreadId) {
+							forkSessionDatabase({
+								sourceProviderThreadId: String(sourceProviderThreadId),
+								targetProviderThreadId,
+								checkpointId: checkpointId !== undefined ? String(checkpointId) : undefined,
+							});
+						}
+						await this.registry.createOrGet(threadId, targetProviderThreadId, params);
+						this.sendResult(id, { providerThreadId: targetProviderThreadId, sessionRestorable: true });
+					} catch (err) {
+						this.sendError(id, -32000, err instanceof Error ? err.message : String(err));
+					}
 					break;
 				}
 
@@ -121,8 +136,9 @@ export class ProviderBridge {
 					this.sendError(id, -32601, `Method not found: ${method}`);
 					break;
 			}
-		} catch (err: any) {
-			this.sendError(id, -32000, err.message || String(err));
+		} catch (err: unknown) {
+			const message = err instanceof Error ? err.message : String(err);
+			this.sendError(id, -32000, message);
 		}
 	}
 

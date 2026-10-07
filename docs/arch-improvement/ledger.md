@@ -717,6 +717,68 @@ Resolve findings F-65-1, F-65-2, and F-65-3:
 - **Residual Risk:**
   - None. Retaining the SDK strictly in `dependencies` is canonical for all BB provider plugins.
 
+---
+
+## Cycle 69: Thread Fork via Checkpoint ID & ACID State Copy (2026-10-07)
+
+**Goal:** Implement full `thread/fork` RPC parity with ACID SQLite database copy and checkpoint pruning, eliminating the blank slate bug when forking threads or branching from earlier messages.  
+**Governing Standard:** `arch-rules.md` (AP-010 – AP-071), `arch-improvement-review`, `arch-rules-implementation-review`  
+**Plan Reference:** `docs/superpowers/plans/2026-10-07-arch-improvement-cycle-69-thread-fork-via-checkpoint.md`  
+**Target Release:** `v0.2.15`
+
+### 1. Triaged Findings & Dispositions
+
+| ID | Issue / Review Finding | Severity | Rule | Disposition | Root Cause & Resolution |
+|---|---|---|---|---|---|
+| **F-69-1** | Blank slate bug on `thread/fork` RPC | **P1** | AP-013, AP-026, AP-033 | `fix-now` | `thread/fork` RPC handler in `bridge.ts` previously ignored `params.sourceProviderThreadId` and `params.sourceProviderCheckpointId`, generating an empty new database. Forked threads and message branches lost all context and conversation history. **Fix:** Created `src/host/thread-fork.ts` with `forkSessionDatabase` performing ACID copy of parent SQLite database, merging WAL via `PRAGMA wal_checkpoint(TRUNCATE)`, and pruning entries beyond `checkpointId` via `DELETE FROM entries WHERE id > ?`. Cleaned stale `.lock` files. Wired into `bridge.ts` `thread/fork`. |
+| **F-69-2** | Untyped `params` and loose error typing in `bridge.ts` | **P2** | AP-029 | `fix-now` | `bridge.ts` used `any` for request parameters and error catches. **Fix:** Removed all `as any` and `: any` from `bridge.ts`, using `Record<string, unknown>` and `err: unknown` with strict narrowing. Added support for dependency-injected `SessionRegistry` for deterministic testing without background process spawn. |
+| **F-69-3** | Missing automated regression tests for thread forking | **P2** | AP-028 | `fix-now` | No tests verified database cloning, checkpoint truncation, or RPC fork error handling. **Fix:** Created `tests/thread-fork.test.ts` with 6 deterministic tests covering full-database fork, checkpoint-bounded fork, missing parent fail-fast, legacy `.jsonl` directory resolution, and Bridge RPC execution and error reporting. |
+
+### 2. Implementation Changes
+
+- **Slice 1: Database Fork Service (`src/host/thread-fork.ts`):**
+  - Implemented `forkSessionDatabase(options: ForkSessionOptions): void`.
+  - Added existence verification for source session directory and database with legacy `.jsonl` directory fallback.
+  - Performed copy of `session.sqlite`, `session.sqlite-wal`, and `session.sqlite-shm`.
+  - Executed WAL checkpoint truncation and checkpoint boundary truncation on target database.
+  - Cleared stale lock directories (`.lock`).
+  - Total length: 91 lines (AP-019 < 150 soft limit).
+- **Slice 2: Bridge RPC Integration (`src/host/bridge.ts`):**
+  - Updated `case "thread/fork"` to parse `sourceProviderThreadId` and `checkpointId`.
+  - Invoked `forkSessionDatabase` prior to session registration.
+  - Added typed error handling mapping failures to JSON-RPC `-32000` errors.
+  - Eliminated `as any` and added optional constructor injection for testability.
+- **Slice 3: Deterministic Test Suite (`tests/thread-fork.test.ts`):**
+  - Added 6 unit/integration assertions covering tip forks, checkpoint forks, non-existent parent errors, legacy directory adoption, and bridge RPC roundtrips.
+- **Slice 4: Verification, Version Bump & Tag:**
+  - Bumped version to `0.2.15` in `package.json`.
+  - Built bundles with `npm run build`.
+  - Verified all 85 tests passing with `npm test`.
+
+### 3. Verification Evidence & Architecture Verification
+
+- `npm test`: **85 / 85 passing assertions (0 failed, 0 skipped)** across 7 test suites.
+- File size audit (`wc -l`):
+  - `src/host/thread-fork.ts`: 91 lines (< 150 soft limit, < 250 hard limit, AP-019).
+  - `src/host/bridge.ts`: 149 lines (< 150 soft limit, < 250 hard limit, AP-019).
+  - `tests/thread-fork.test.ts`: 180 lines (< 250 hard limit, AP-019).
+  - All source files remain under 215 lines.
+- TypeScript strictness (AP-029): Zero `as any` in newly added/modified code.
+
+#### Architecture Verification
+- **Passed:**
+  - `AP-010`: Ports & Adapters separation maintained; host database manipulation encapsulated in `thread-fork.ts`.
+  - `AP-012`: Fail-fast error handling when source thread does not exist.
+  - `AP-013`: User data integrity preserved by cloning full ACID state without heuristics or missing entries.
+  - `AP-019`: All source files strictly < 250 lines.
+  - `AP-026`: DTO contracts respected across JSON-RPC `thread/fork`.
+  - `AP-028`: Deterministic testing with isolated temporary sqlite databases and stub registries.
+  - `AP-029`: Strict typing with zero `as any` casts.
+  - `AP-033`: ACID transaction boundaries and WAL truncation ensure database consistency.
+- **Residual Risk:**
+  - None. Source sessions remain untouched during fork; child sessions are fully independent ACID databases.
+
+
 
 
 
