@@ -1,8 +1,8 @@
-# Master Architectural Implementation Plan: Remediation, Full Parity & Platform Highlighting of Pi Durable in BB IDE
+# Master Architectural Implementation Plan: Remediation & Full Parity of Pi Durable in BB IDE
 
 **Document ID:** `plans/pi-durable-bb-provider-arch-master-plan`  
-**Version:** 4.2.0 (Master Unified Roadmap: Full Audit Reconciliation, 4 Territories, Protocol Truth & BB Highlighting)  
-**Current Release:** `v0.2.11` (Commit: `24f0b08`)  
+**Version:** 4.3.0 (Master Unified Roadmap: Full Audit Reconciliation, 4 Territories & Engine Parity)  
+**Current Release:** `v0.2.11` (Commit: `88806cd`)  
 **Target Repository:** `/Users/vanya/Projects/bb-plugin-provider-pi-durable`  
 **Governing Standards:** `arch-rules.md` (AP-010 – AP-071), `arch-improvement-review`, `arch-rules-implementation-review`  
 **Upstream Engine:** `@earendil-works/pi-durable` v1.0.4 & `@earendil-works/pi-coding-agent` v1.0.4  
@@ -30,7 +30,6 @@ A foundational invariant of `bb-plugin-provider-pi-durable` is that **it functio
 │   - provider/usage is a subscription quota endpoint (returns !supported│
 │     for standard LLM providers; in-thread usage delta handles tokens)   │
 │   - Delegations: deltaDelegationShapeSchema { type: "delegation" }      │
-│   - Plan mode: composerActions [{ kind: "plan" }]                       │
 └──────────────────────────────────┬─────────────────────────────────────┘
                                    │ (JSON-RPC stdio)
 ┌──────────────────────────────────▼─────────────────────────────────────┐
@@ -72,26 +71,7 @@ Because `@earendil-works/pi-durable` is an execution engine rather than an agent
 
 ---
 
-## 2. Карта подсвечивания преимуществ Pi Durable в интерфейсе BB IDE
-
-Чтобы все уникальные архитектурные преимущества ядра Pi Durable были видны пользователю и органично интегрированы в BB IDE, используется следующая матрица проекции возможностей движка на протокольные поверхности BB:
-
-| Возможность Pi Durable | Что даёт движок | Как это подсвечивается в интерфейсе BB IDE | Протокольный механизм BB |
-|---|---|---|---|
-| **ACID SQLite WAL персистентность** | 100% гарантия отсутствия потери токенов и контекста при падениях (`kill -9`), ребутах и сбоях. | Бейдж **«Session Restorable»** в сайдбаре и свойствах треда. Иконка изумрудного цвета (`#10B981`). | `thread/identity` -> `sessionRestorable: true`; `iconTint: { light: "#10B981", dark: "#10B981" }`. |
-| **Атомарные коммиты и чекпоинты** | Каждый ход фиксируется уникальным идентификатором `EntryId` в транзакции SQLite. | **Кнопка «Edit message»** на предыдущих ходах пользователя. Возможность переписать старый промпт без потери файлов на диске. | `turn.boundary` -> `providerCheckpointId: entryId`; `capabilities.fork = "checkpoint"`. |
-| **CoW-ветвление сессий (`conversation.fork`)** | Мгновенное создание изолированного дочернего треда из любой исторической точки. | Нативное действие **«Fork Thread»** в меню треда BB IDE и CLI `bb thread fork`. | Метод `thread/fork` -> клонирование SQLite сессии и вызов `conversation.fork(checkpointEntryId)`. |
-| **Ручная и пороговая компакция** | Встроенный `CompactionTask` и сжатие контекста по алгоритмам Durable. | Кнопка **«Compact Context»** в панели действий треда. Визуальные строки компакции в чате. | `capabilities.supportsManualCompaction: true`; дельты `compaction_start` и `compaction_end`. |
-| **Точный синхронный учёт токенов** | Прямой подсчёт расхода моделей и тулов в `docs["pi.usage"]`. | **Живой кольцевой индикатор** в статус-баре BB IDE (`used / size`), обновляющийся мгновенно без зависания. | Синхронная дельта `contextWindow` (`used`, `size`, `estimated: false`) на событии `agent_end`. |
-| **Разделение рассуждений и ответа** | Потоковая передача `thinking_delta` отдельно от текста ответа. | **Brain-аккордеон «Thought»** со стримингом токенов, таймингом и автоматическим аккуратным сворачиванием. | `item.open` с каналом `reasoningText`, иконкой `glyph: "Brain"` и метками `Thinking` / `Thought`. |
-| **Гранулярные диффы файлов** | `CodingTools.edit` формирует точные unified diffs и patches. | **Интерактивный Diff Viewer** в чате BB с подсветкой синтаксиса и возможностью ревью изменений. | Дельта `fileChange` со схемой `kind: "update"` и массивом правок `edits: [{ oldText, newText }]`. |
-| **Потоковый терминал bash** | Построчный вывод stdout/stderr команд. | **Виджет интерактивного терминала** с таймингом, кодами возврата и пилюлей рабочей директории. | Дельта `command` (`cmd`, `output`, `exitCode`, `status`). |
-| **Вложенные сабагенты** | Выполнение автономных под-сессий через `upstream/subagent.ts`. | **Карточка делегирования** с иконкой `UserRound`, вложенными мыслями и итоговым резюме сабагента. | Дельта `item.open` со схемой `deltaDelegationShapeSchema` (`{ type: "delegation", childRef, label }`). |
-| **Режим планирования (Plan Mode)** | Инструкции планирования без запуска деструктивных тулов. | **Индикатор Plan Mode** в композере BB и интерактивные чек-листы шагов плана. | `composerActions: [{ kind: "plan" }]`; дельта `planSteps` (`deltaPlanStepsShapeSchema`). |
-
----
-
-## 3. Реестр 15 расхождений аудита и статус устранения
+## 2. The 15 Divergences & Community Defects Status Matrix
 
 | ID | Область | Нативное ядро `@earendil-works/pi-durable` / BB Protocol | Текущий статус в провайдере | Релиз / Цикл |
 |---|---|---|---|---|
@@ -113,7 +93,7 @@ Because `@earendil-works/pi-durable` is an execution engine rather than an agent
 
 ---
 
-## 4. Обзор дорожной карты: Stage 1 и Stage 2
+## 3. Обзор дорожной карты: Stage 1 и Stage 2
 
 ```
 STAGE 1: ФУНДАМЕНТАЛЬНОЕ УКРЕПЛЕНИЕ, ВЫРАВНИВАНИЕ ТЕРРИТОРИЙ И ПАРИТЕТ ХОСТА (Cycles 56–66) [✅ ЗАВЕРШЕНО]
@@ -142,13 +122,13 @@ STAGE 2: РАСШИРЕННЫЕ ВОЗМОЖНОСТИ ДВИЖКА И ПОЛН�
 
 ---
 
-## 5. Спецификации завершённых циклов (Stage 1: Cycles 56–66)
+## 4. Спецификации завершённых циклов (Stage 1: Cycles 56–66)
 
 *(Зафиксировано в истории релизов v0.2.1 – v0.2.11; 63 теста проходят успешно, все изменения запушены в GitHub).*
 
 ---
 
-## 6. Детальные спецификации предстоящих циклов (Stage 2: Cycles 67–73)
+## 5. Детальные спецификации предстоящих циклов (Stage 2: Cycles 67–73)
 
 ---
 
@@ -237,11 +217,10 @@ STAGE 2: РАСШИРЕННЫЕ ВОЗМОЖНОСТИ ДВИЖКА И ПОЛН�
 
 ---
 
-### Cycle 73: Master Parity Conformance Audit & Plan Mode Integration
-- **Цель:** Итоговая валидация 100% паритета с нативным `provider-pi`, аттестация по правилам AP-010 – AP-071 и подключение Plan Mode.
+### Cycle 73: Master Parity Conformance Audit & End-to-End Verification
+- **Цель:** Итоговая валидация 100% паритета с нативным `provider-pi`, аттестация по правилам AP-010 – AP-071.
 - **Решение:**
-  1. Включение Plan Mode в `server.ts` через `composerActions: [{ kind: "plan", command: { trigger: "/", name: "plan", trailingText: "" } }]`.
-  2. Прогон всех сквозных сценариев (многоходовые сессии, редактирование сообщений через `bb thread edit-message`, форки тредов, аварии тулов, переключение моделей, reasoning streaming).
-  3. Проверка соответствия лимитам строк (AP-019), строгой типизации (AP-029), отсутствию гонок lockfile (AP-033).
-  4. Фиксация стабильного релизного тега.
-- **Файлы:** `server.ts`, полный сьют тестов `tests/*.test.ts`, `docs/arch-improvement/ledger.md`.
+  1. Прогон всех сквозных сценариев (многоходовые сессии, редактирование сообщений через `bb thread edit-message`, форки тредов, аварии тулов, переключение моделей, reasoning streaming).
+  2. Проверка соответствия лимитам строк (AP-019), строгой типизации (AP-029), отсутствию гонок lockfile (AP-033).
+  3. Фиксация стабильного релизного тега.
+- **Файлы:** Полный сьют тестов `tests/*.test.ts`, `docs/arch-improvement/ledger.md`.
