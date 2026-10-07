@@ -1,15 +1,15 @@
 # Master Architectural Implementation Plan: Remediation & Full Parity of Pi Durable in BB IDE
 
 **Document ID:** `plans/pi-durable-bb-provider-arch-master-plan`  
-**Version:** 4.3.0 (Master Unified Roadmap: Full Audit Reconciliation, 4 Territories & Engine Parity)  
-**Current Release:** `v0.2.11` (Commit: `88806cd`)  
+**Version:** 4.4.0 (Master Unified Roadmap: Full Audit Reconciliation, Extension Lifecycle & MCP Parity)  
+**Current Release:** `v0.2.15` (Commit: `af346c8`)  
 **Target Repository:** `/Users/vanya/Projects/bb-plugin-provider-pi-durable`  
 **Governing Standards:** `arch-rules.md` (AP-010 – AP-071), `arch-improvement-review`, `arch-rules-implementation-review`  
 **Upstream Engine:** `@earendil-works/pi-durable` v1.0.4 & `@earendil-works/pi-coding-agent` v1.0.4  
 **Host Target:** Beyond Boundaries (BB IDE) `>= 0.45`  
 **Status:**
 - **Stage 1 (Foundation Hardening, Territory Decoupling & Host Parity):** ✅ 100% COMPLETED (Cycles 56–66, Releases `v0.2.1` – `v0.2.11`)
-- **Stage 2 (Advanced Engine Capabilities & Extended Parity):** ⏳ IN PROGRESS / PLANNED (Cycles 67–73)
+- **Stage 2 (Advanced Engine Capabilities & Extended Parity):** ⏳ IN PROGRESS (Cycles 67–69 ✅ COMPLETED, Cycles 70–74 PLANNED)
 
 ---
 
@@ -77,16 +77,23 @@ Because `@earendil-works/pi-durable` is an execution engine rather than an agent
 |---|---|---|---|---|
 | **D-1** | **Очистка блокировки при выходе** | `durable.close()` освобождает `proper-lockfile` без 10-сек задержки | ✅ **FIXED** (Awaits `durable.close()` на SIGTERM/SIGINT) | `v0.2.1` (Cycle 56) |
 | **D-2** | **Пути к сессиям SQLite** | Сессии хранятся как папки `${sanitizedThreadId}/session.sqlite` | ✅ **FIXED** (Устранен суффикс `.jsonl` из путей) | `v0.2.1` (Cycle 56) |
-| **D-3** | **Пропуск событий `AgentEvent`** | `watchEvents` эмитит `snapshot`, `auto_retry`, `deferred_poll` | ⏳ **PARTIAL / PLANNED** (Обработка `snapshot` и `auto_retry`) | Stage 2 (Cycle 68) |
+| **D-3** | **Пропуск событий `AgentEvent`** | `watchEvents` эмитит `snapshot`, `auto_retry`, `deferred_poll` | ✅ **FIXED** (Обработка `snapshot`, `auto_retry` wire-события) | `v0.2.13` (Cycle 68) |
 | **D-4** | **Схлопывание `contentIndex`** | `message_update` содержит `change.contentIndex` для каждого блока | ✅ **FIXED** (Динамический `contentIndex` и каналы `thinking-${idx}`) | `v0.2.8` (Cycle 63), `v0.2.10` (Cycle 65) |
-| **D-5** | **Маскирование сбоев тулов** | `event.entry` отсутствует (`undefined`), если задача тула упала | ⏳ **PLANNED** (`isError: true` при отсутствии `entry` в `tool_execution_end`) | Stage 2 (Cycle 67) |
-| **D-6** | **Потеря метаданных Diff** | `CodingTools.edit` возвращает `details: { diff, patch }` | ⏳ **PLANNED** (Проброс патчей в BB Diff Viewer) | Stage 2 (Cycle 67) |
-| **D-7** | **Фальсификация кумулятивного расхода** | `pi.usage` накапливает кумулятивный расход сессии | ⏳ **PLANNED** (Монотонный подсчет totalTokens из документа usage) | Stage 2 (Cycle 70) |
+| **D-5** | **Маскирование сбоев тулов** | `event.entry` отсутствует (`undefined`), если задача тула упала | ✅ **FIXED** (`isError: true` при отсутствии `entry` в `tool_execution_end`) | `v0.2.12` (Cycle 67) |
+| **D-6** | **Потеря метаданных Diff** | `CodingTools.edit` возвращает `details: { diff, patch }` | ✅ **FIXED** (Проброс патчей в BB Diff Viewer через `fileChange`) | `v0.2.12` (Cycle 67) |
+| **D-7** | **Фальсификация кумулятивного расхода** | `pi.usage` накапливает кумулятивный расход сессии | ⏳ **PLANNED** (Монотонный подсчет totalTokens из документа usage) | Stage 2 (Cycle 71) |
 | **D-8** | **Краш моделей без reasoning** | `setThinkingLevel` выбрасывает ошибку при `!model.reasoning` | ✅ **FIXED** (Безопасный фоллбек и фильтрация thinkingLevel) | `v0.2.8` (Cycle 63), `v0.2.10` (Cycle 65) |
-| **D-9** | **Обрезка вывода тулов и диагностики** | `tool_execution_update` передает `trimStart` и `diagnostics` | ⏳ **PLANNED** (Проброс `trimStart` и диагностических предупреждений) | Stage 2 (Cycle 67) |
-| **D-10**| **Обработка `snapshot` при старте** | При старте `watchEvents` первым приходит снимок состояния | ⏳ **PLANNED** (Восстановление активных слотов из `snapshot`) | Stage 2 (Cycle 68) |
-| **D-11**| **Чекпоинты в `turn.boundary`** | Каждый ход завершается атомарным `EntryId` для rewind/fork | ⏳ **PLANNED** (Передача `providerCheckpointId` в `turn.boundary`) | Stage 2 (Cycle 68) |
+| **D-9** | **Обрезка вывода тулов и диагностики** | `tool_execution_update` передает `trimStart` и `diagnostics` | ✅ **FIXED** (Проброс `trimStart` и диагностических предупреждений) | `v0.2.12` (Cycle 67) |
+| **D-10**| **Обработка `snapshot` при старте** | При старте `watchEvents` первым приходит снимок состояния | ✅ **FIXED** (Восстановление активных слотов и чекпоинтов из `snapshot`) | `v0.2.13` (Cycle 68) |
+| **D-11**| **Чекпоинты в `turn.boundary`** | Каждый ход завершается атомарным `EntryId` для rewind/fork | ✅ **FIXED** (Передача `providerCheckpointId` в `turn.boundary`, fork session) | `v0.2.13` (Cycle 68), `v0.2.15` (Cycle 69) |
 | **D-12**| **Отображение цепочки мыслей** | Потоковая передача `thinking_delta`, аккордеон с Brain-иконкой | ✅ **FIXED** (Brain icon, streaming `reasoningText`, lifecycle closure) | `v0.2.8`–`v0.2.11` (Cycles 63–66) |
+| **D-13**| **Молчаливые системные сбои** | При краше раннера или ошибке CWD эмитится `provider.error` | ✅ **FIXED** (`child.on("error")`, fail-fast start, `settlesTurn: true`) | `v0.2.1` (Cycle 56) |
+| **D-14**| **Синхронизация Context Meter** | Точный учет контекстного окна модели в реальном времени | ✅ **FIXED** (Синхронный эмит `contextWindow` на `agent_end`) | `v0.2.2` (Cycle 57), `v0.2.4` (Cycle 59) |
+| **D-15**| **Невидимость тулов `edit`/`write` и зависание steer** | `write` -> `add`, `edit` -> `update`; steer без `providerTurnId` | ✅ **FIXED** (Zod-валидные дельты, исключение 409-конфликта) | `v0.2.3` (Cycle 58) |
+| **D-16**| **Гонка старта и потеря Direct MCP серверов** | Тяжелые MCP-серверы (`gbrain`, 3.5–4.5с) не успевают к старту первого хода | ⏳ **SCOPED (NEW)** (Ожидание `waitForDirectServers` на старте сессии) | Stage 2 (Cycle 70) |
+| **D-17**| **Статический промпт без динамики расширений** | Расширения обогащают промпт (`mcp_servers`, Ambient Recall) через `before_agent_start` | ⏳ **SCOPED (NEW)** (Эмит `before_agent_start` и мердж секций промпта) | Stage 2 (Cycle 70) |
+| **D-18**| **Отсутствие хуков `tool_call`/`tool_result` в runner** | Ленивое ожидание серверов в `codemode` и guardrails (`skill-guardian`) не работают | ⏳ **SCOPED (NEW)** (Проброс `tool_call` и `tool_result` в `extensionRunner`) | Stage 2 (Cycle 70) |
+| **D-19**| **Глушение UI и диагностических notice расширений** | Ошибки и статусы MCP (`needs-auth`, сбои соединения) тонут в `noOpUIContext` | ⏳ **SCOPED (NEW)** (Привязка `runner.setUIContext` к wire notice и логам хоста) | Stage 2 (Cycle 70) |
 | **D-13**| **Молчаливые системные сбои** | При краше раннера или ошибке CWD эмитится `provider.error` | ✅ **FIXED** (`child.on("error")`, fail-fast start, `settlesTurn: true`) | `v0.2.1` (Cycle 56) |
 | **D-14**| **Синхронизация Context Meter** | Точный учет контекстного окна модели в реальном времени | ✅ **FIXED** (Синхронный эмит `contextWindow` на `agent_end`) | `v0.2.2` (Cycle 57), `v0.2.4` (Cycle 59) |
 | **D-15**| **Невидимость тулов `edit`/`write` и зависание steer** | `write` -> `add`, `edit` -> `update`; steer без `providerTurnId` | ✅ **FIXED** (Zod-валидные дельты, исключение 409-конфликта) | `v0.2.3` (Cycle 58) |
@@ -110,14 +117,16 @@ STAGE 1: ФУНДАМЕНТАЛЬНОЕ УКРЕПЛЕНИЕ, ВЫРАВНИВА
   - Cycle 65: Инициализация уровня размышлений в Durable FSM и закрытие каналов (v0.2.10)
   - Cycle 66: Ревизия протокола BB и выпиливание холостой настройки openThinkingByDefault (v0.2.11)
 
-STAGE 2: РАСШИРЕННЫЕ ВОЗМОЖНОСТИ ДВИЖКА И ПОЛНЫЙ ПАРИТЕТ С ПЛАТФОРМОЙ (Cycles 67–73) [⏳ В РАБОТЕ]
-  - Cycle 67: Отказоустойчивость тулов, diff-метаданные и диагностики вывода (D-5, D-6, D-9)
-  - Cycle 68: Извлечение чекпоинтов SQLite, обработка snapshot и turn.boundary (D-3, D-10, D-11)
-  - Cycle 69: Чекпоинт-форки тредов, перемотка истории и редактирование сообщений (thread/fork, bb thread edit-message)
-  - Cycle 70: Монотонный учет кумулятивного расхода токенов через pi.usage (D-7)
-  - Cycle 71: Визуальные карточки сабагентов через протокольный deltaDelegationShape (type: "delegation")
-  - Cycle 72: Корректное прерывание хода, inbox-отмена и обработка thread/stop (submission.abort)
-  - Cycle 73: Мастер-аттестация паритета с нативным provider-pi и conformance-тесты
+STAGE 2: РАСШИРЕННЫЕ ВОЗМОЖНОСТИ ДВИЖКА И ПОЛНЫЙ ПАРИТЕТ С ПЛАТФОРМОЙ (Cycles 67–74) [⏳ В РАБОТЕ]
+  - Cycle 67: Отказоустойчивость тулов, diff-метаданные и диагностики вывода (D-5, D-6, D-9) [✅ ЗАВЕРШЕНО, v0.2.12]
+  - Cycle 68: Извлечение чекпоинтов SQLite, обработка snapshot и turn.boundary (D-3, D-10, D-11) [✅ ЗАВЕРШЕНО, v0.2.13]
+  - Cycle 68.1: Защита целостности зависимостей SDK для чистого продакшен-инсталла [✅ ЗАВЕРШЕНО, v0.2.14]
+  - Cycle 69: Чекпоинт-форки тредов, перемотка истории и редактирование сообщений (thread/fork) [✅ ЗАВЕРШЕНО, v0.2.15]
+  - Cycle 70: Паритет жизненного цикла расширений Pi и надёжность MCP-серверов (D-16, D-17, D-18, D-19) [⏳ В РАБОТЕ]
+  - Cycle 71: Монотонный учет кумулятивного расхода токенов через pi.usage (D-7)
+  - Cycle 72: Визуальные карточки сабагентов через протокольный deltaDelegationShape (type: "delegation")
+  - Cycle 73: Корректное прерывание хода, inbox-отмена и обработка thread/stop (submission.abort)
+  - Cycle 74: Мастер-аттестация паритета с нативным provider-pi и conformance-тесты
 ```
 
 ---
@@ -162,21 +171,37 @@ STAGE 2: РАСШИРЕННЫЕ ВОЗМОЖНОСТИ ДВИЖКА И ПОЛН�
 
 ---
 
-### Cycle 69: Checkpoint Thread Forking, Session Rewind & Message Editing (`thread/fork`)
+### Cycle 69: Checkpoint Thread Forking, Session Rewind & Message Editing (`thread/fork`) [✅ COMPLETED, v0.2.15]
 - **Возможности платформы:** `thread/fork`, `bb thread edit-message`, CoW-ветвление SQLite сессий.
 - **Архитектурный анализ первоисточников:**
   1. В `start-server.js`: редактирование сообщений на хостах с `capabilities.fork === "checkpoint"` вызывает `thread.rewind.prepare` с `retainThroughProviderCheckpoint` и `sourceProviderThreadId`.
   2. В нативном `provider-pi`: метод `thread/fork` вызывает `forkSessionFile({ sourceFile, targetFile, cwd, checkpointId })`.
   3. В ядре `@earendil-works/pi-durable`: метод `conversation.fork(checkpointEntryId)` выполняет ACID CoW-ветвление сессии на указанном коммите.
 - **Решение:**
-  1. Добавить команду IPC `fork` в раннер, принимающую `{ sourceProviderThreadId, checkpointId, targetThreadId, cwd }`.
-  2. Вызывать `conversation.fork(checkpointEntryId)` ядра `@earendil-works/pi-durable`, сохраняя состояние документов на момент чекпоинта и создавая новый файл `session.sqlite` для дочернего треда.
-  3. В `src/host/bridge-router.ts` и `bridge.ts` реализовать честную обработку RPC вызова `thread/fork` (сейчас там заглушка с пустым тредом).
-- **Файлы:** `src/runner/fork.ts`, `src/host/bridge-router.ts`, `src/host/bridge.ts`, `src/host/session.ts`, `tests/thread-fork.test.ts`.
+  1. Добавлен сервис `src/host/thread-fork.ts` с клонированием `session.sqlite`, транкейтом WAL и очисткой записей с `id > checkpointId`.
+  2. В `src/host/bridge.ts` реализован честный обработчик RPC вызова `thread/fork` с созданием изолированного дочернего треда.
+  3. Написаны 6 детерминированных тестов в `tests/thread-fork.test.ts`.
+- **Файлы:** `src/host/thread-fork.ts`, `src/host/bridge.ts`, `tests/thread-fork.test.ts`.
 
 ---
 
-### Cycle 70: Cumulative Token Usage Monotonicity (`pi.usage` Document Sync, D-7)
+### Cycle 70: Pi Extension Lifecycle & MCP Engine Parity (D-16, D-17, D-18, D-19) [⏳ В РАБОТЕ]
+- **Целевые расхождения:** D-16, D-17, D-18, D-19 (AP-010, AP-012, AP-026, AP-029).
+- **Архитектурный анализ первоисточников:**
+  1. **D-16 (Startup Race):** В каноническом `@earendil-works/pi-coding-agent` (`src/extensions/mcp/index.ts`) перед запуском агента вызывается `waitForDirectServers(ctx)` (с таймаутом до 10с), блокирующий запуск до готовности серверов с `direct` тулами. Тяжелые серверы (Bun + PostgreSQL `gbrain`, 3.5–4.5с) не успевают зарегистрироваться, если раннер рапортует `ready: true` без ожидания direct-серверов.
+  2. **D-17 (Dynamic System Prompt):** Расширения Pi динамически расширяют промпт через событие `before_agent_start` (`event.systemPromptOptions.sections`), включая секцию каталога `mcp_servers` и Ambient Recall от `gbrain.ts` (`people/me` и горячая память). Сейчас `createPiPrompt` формирует промпт статически без вызова хуков расширений.
+  3. **D-18 (Tool Execution Hooks & Lazy MCP Waiting):** В каноническом Pi исполнение каждого тула (включая `codemode`) оборачивается в хуки `tool_call` и `tool_result`. В `tool_call` MCP-расширение анализирует код скрипта (`scriptNeedsServer`) и приостанавливает вызов (`waitForServers`) до завершения фонового подключения сервера. Также `tool_call` обеспечивает работу guardrails-расширений (`skill-guardian.ts`). В `pi durable` эти события сейчас не эмитируются.
+  4. **D-19 (Diagnostics & UI Notices):** Все предупреждения и статусы расширений (`MCP servers need attention`, `Sign-in required`, уведомления подключения) глушатся, так как `runner.setUIContext()` не привязан к каналу передачи notice в BB хост.
+- **Решение:**
+  1. В `src/runner/extension-mount.ts` при инициализации ожидать готовности MCP-серверов с direct-инструментами перед отправкой `ready` хосту (с настраиваемым таймаутом).
+  2. В `src/runner/prompt.ts` эмулировать `extensionRunner.emit({ type: "before_agent_start", ... })` и передавать сгенерированные расширениями динамические секции в Durable Registry / Agent.
+  3. В `src/runner/extension-mount.ts` (`createNestedToolExecutor`) и `adaptExtensionTool` эмитить `tool_call` перед запуском инструмента и `tool_result` после.
+  4. Настроить `runner.setUIContext({ notify: ... })` с трансляцией сообщений в `sendToBridge({ kind: "notice", ... })` и логи хоста.
+- **Файлы:** `src/runner/extension-mount.ts`, `src/runner/extension-bridge.ts`, `src/runner/prompt.ts`, `src/runner/index.ts`, `tests/extension-lifecycle-mcp.test.ts`.
+
+---
+
+### Cycle 71: Cumulative Token Usage Monotonicity (`pi.usage` Document Sync, D-7)
 - **Целевые расхождения:** D-7 (AP-013, AP-026).
 - **Архитектурный анализ первоисточников:**
   1. В протоколе BB IDE: метод `provider/usage` предназначен исключительно для учетных окон подписок (например, ChatGPT rate-limits в Codex). Нативный `provider-pi` отвечает на `provider/usage`: `{ supported: false }`.
@@ -191,7 +216,7 @@ STAGE 2: РАСШИРЕННЫЕ ВОЗМОЖНОСТИ ДВИЖКА И ПОЛН�
 
 ---
 
-### Cycle 71: Visual Subagent Delegation Cards via Protocol Schema (`type: "delegation"`)
+### Cycle 72: Visual Subagent Delegation Cards via Protocol Schema (`type: "delegation"`)
 - **Возможности платформы:** Визуализация сабагентов через протокол BB `@bb/provider-bridge-protocol`.
 - **Архитектурный анализ первоисточников:**
   1. Протокол моста BB содержит каноническую схему `deltaDelegationShapeSchema`:
@@ -205,7 +230,7 @@ STAGE 2: РАСШИРЕННЫЕ ВОЗМОЖНОСТИ ДВИЖКА И ПОЛН�
 
 ---
 
-### Cycle 72: Clean Turn Interruption, Inbox Abort & Cancellation (`submission.abort`)
+### Cycle 73: Clean Turn Interruption, Inbox Abort & Cancellation (`submission.abort`)
 - **Возможности платформы:** Гарантированное прерывание хода по кнопке Stop / `thread/stop`.
 - **Архитектурный анализ первоисточников:**
   1. При нажатии пользователем Stop в UI BB IDE хост присылает `thread/stop` с `intent: "interrupt"`.
@@ -217,10 +242,10 @@ STAGE 2: РАСШИРЕННЫЕ ВОЗМОЖНОСТИ ДВИЖКА И ПОЛН�
 
 ---
 
-### Cycle 73: Master Parity Conformance Audit & End-to-End Verification
+### Cycle 74: Master Parity Conformance Audit & End-to-End Verification
 - **Цель:** Итоговая валидация 100% паритета с нативным `provider-pi`, аттестация по правилам AP-010 – AP-071.
 - **Решение:**
-  1. Прогон всех сквозных сценариев (многоходовые сессии, редактирование сообщений через `bb thread edit-message`, форки тредов, аварии тулов, переключение моделей, reasoning streaming).
+  1. Прогон всех сквозных сценариев (многоходовые сессии, редактирование сообщений через `bb thread edit-message`, форки тредов, аварии тулов, переключение моделей, reasoning streaming, MCP-серверы и codemode).
   2. Проверка соответствия лимитам строк (AP-019), строгой типизации (AP-029), отсутствию гонок lockfile (AP-033).
   3. Фиксация стабильного релизного тега.
 - **Файлы:** Полный сьют тестов `tests/*.test.ts`, `docs/arch-improvement/ledger.md`.

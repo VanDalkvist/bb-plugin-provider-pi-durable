@@ -1,10 +1,10 @@
 # PRD: Архитектурное выравнивание территорий и устранение чужого владения в `bb-plugin-provider-pi-durable`
 
-**Статус:** ✅ Completed & Verified (Cycles 61–66, релизы `v0.2.7` – `v0.2.11`)  
+**Статус:** ⏳ IN PROGRESS (Cycles 61–69 Completed & Verified, Cycle 70 Added to Scope)  
 **Дата создания:** 2026-10-07  
-**Дата актуализации:** 2026-10-07 (после завершения Cycles 61–66)  
+**Дата актуализации:** 2026-10-07 (после аудита интеграции MCP и Pi Extensions)  
 **Автор:** Lead Architect & Agent Systems Engineer  
-**Реализовано в релизах:** `v0.2.7` (Cycles 61–62), `v0.2.8` (Cycle 63), `v0.2.9` (Cycle 64), `v0.2.10` (Cycle 65), `v0.2.11` (Cycle 66)  
+**Реализовано в релизах:** `v0.2.7` (Cycles 61–62), `v0.2.8` (Cycle 63), `v0.2.9` (Cycle 64), `v0.2.10` (Cycle 65), `v0.2.11` (Cycle 66), `v0.2.12` (Cycle 67), `v0.2.13` (Cycle 68), `v0.2.14` (Cycle 68.1), `v0.2.15` (Cycle 69)  
 
 ---
 
@@ -243,6 +243,18 @@ src/
     1. `resolveRuntimeSettings(location)` — чтение конфигов и прокси.
     2. `initializeExtensionEnvironment(...)` — запуск расширений, MCP и регистрация моделей.
     3. `mountHarness(...)` — открытие SQLite и монтирование реестра Durable.
+
+### Срез 5 (Новый скоуп): Синхронизация жизненного цикла расширений Pi и надёжность MCP-серверов (Cycle 70)
+- **Проблема (выявлена в ходе live-аудита интеграции):**
+  1. **Гонка старта MCP (D-16):** Тяжелые MCP-серверы (Bun/Postgres `gbrain`, время старта ~3.5–4.5с) не успевают зарегистрироваться к моменту отправки первого запроса в Durable, так как раннер шлет `ready: true` без ожидания direct-серверов. Быстрые серверы (Node `telegram-mcp`, ~200мс) успевают, создавая иллюзию избирательной работоспособности.
+  2. **Статический системный промпт (D-17):** Системный промпт в `src/runner/prompt.ts` формируется статически (`createPiPrompt`). В него не попадают динамические секции расширений Pi (каталог серверов `mcp_servers`, Ambient Recall памяти из `gbrain.ts`), которые в Pi генерируются на хуке `before_agent_start`.
+  3. **Отсутствие хуков `tool_call` / `tool_result` (D-18):** В каноническом Pi `codemode` использует хук `tool_call` для ленивого ожидания фоновых серверов (`scriptNeedsServer` / `waitForServers`). Из-за отсутствия проброса `tool_call` в `ExtensionRunner`, скрипты в песочнице не ждут сервер и падают с пустым списком тулов; также отключаются guardrail-расширения (`skill-guardian.ts`).
+  4. **Глушение UI и диагностических notice (D-19):** Ошибки и предупреждения MCP-серверов (`MCP servers need attention`, `Sign-in required`) тонут в `noOpUIContext`, так как `runner.setUIContext` не сконфигурирован.
+- **Решение:**
+  1. В `src/runner/extension-mount.ts` реализовать ожидание `waitForDirectServers` перед готовностью раннера и запуском первого хода (с таймаутом до 5–10с).
+  2. В `src/runner/prompt.ts` пробросить хук `extensionRunner.emit({ type: "before_agent_start", ... })` и мерджить динамические секции расширений (`event.systemPromptOptions.sections`) в Durable Registry / Agent.
+  3. В `src/runner/extension-mount.ts` (`createNestedToolExecutor`) и `adaptExtensionTool` эмитить `tool_call` перед вызовом тула и `tool_result` после.
+  4. Привязать `runner.setUIContext({ notify: ... })` к каналу `sendToBridge({ kind: "notice", ... })` и структурированным логам хоста.
 
 ---
 
