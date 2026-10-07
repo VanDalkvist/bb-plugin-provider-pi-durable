@@ -810,8 +810,9 @@ async function loadHarnessEnvironment(location, options, envs) {
       };
     }
   };
+  let extensionRunner;
   try {
-    const extensionRunner = await setupExtensionRunner({
+    extensionRunner = await setupExtensionRunner({
       extensions: extensionsResult.extensions,
       runtime: extensionsResult.runtime,
       cwd: location.cwd,
@@ -824,6 +825,15 @@ async function loadHarnessEnvironment(location, options, envs) {
   } catch (error) {
     report(error);
   }
+  const cleanup = async () => {
+    if (extensionRunner) {
+      try {
+        await extensionRunner.emit({ type: "session_shutdown", reason: "shutdown" });
+      } catch (err) {
+        console.warn("[ExtensionBridge] Cleanup session_shutdown failed:", err);
+      }
+    }
+  };
   const harness = await Harness.open(
     await openNodeSqliteStorage(location.database),
     {
@@ -849,7 +859,8 @@ async function loadHarnessEnvironment(location, options, envs) {
     getActiveModel,
     setActiveModelRef: (ref) => {
       activeModelRef = ref;
-    }
+    },
+    cleanup
   };
 }
 
@@ -859,25 +870,25 @@ async function openDurable(options = {}) {
   const envs = new ExecutionEnvs(location.cwd);
   let harness;
   try {
-    const envState = await loadHarnessEnvironment(location, options, envs);
-    const { modelRuntime, settingsManager } = envState;
-    harness = envState.harness;
+    const envState2 = await loadHarnessEnvironment(location, options, envs);
+    const { modelRuntime, settingsManager } = envState2;
+    harness = envState2.harness;
     const root = await harness.root(runtimeContext, {
       agent: {
         cwd: location.cwd,
-        ...envState.initialModelRef === void 0 ? {} : { model: envState.initialModelRef }
+        ...envState2.initialModelRef === void 0 ? {} : { model: envState2.initialModelRef }
       }
     });
     if (!location.created) {
       const rootAgent = await root.agent(runtimeContext);
       if (rootAgent.model) {
-        envState.setActiveModelRef(rootAgent.model);
+        envState2.setActiveModelRef(rootAgent.model);
       }
     }
     if (!location.created && options.cli !== void 0) {
       const cliModel = await findInitialAgentModel(settingsManager, modelRuntime, options.cli);
       if (cliModel.model !== void 0) {
-        envState.setActiveModelRef(cliModel.model);
+        envState2.setActiveModelRef(cliModel.model);
         await root.configure({ model: cliModel.model, thinkingLevel: cliModel.thinkingLevel }, runtimeContext);
       }
     }
@@ -924,7 +935,7 @@ async function openDurable(options = {}) {
       update({ notices: [...state.notices, { id: nextNotice++, level, message }].slice(-20) });
     };
     const fail = (error) => notice("error", error instanceof Error ? error.message : String(error));
-    for (const error of envState.pendingReports) {
+    for (const error of envState2.pendingReports) {
       notice("warning", error instanceof Error ? error.message : String(error));
     }
     let unsubscribeConversation = conversation.subscribe((value) => update({ conversation: value }));
@@ -977,14 +988,14 @@ async function openDurable(options = {}) {
         unsubscribeTasks = fn;
       },
       closeTasks,
-      setActiveModelRef: (ref) => envState.setActiveModelRef(ref)
+      setActiveModelRef: (ref) => envState2.setActiveModelRef(ref)
     });
     const saved = agentOf(state.conversation).model;
     if (saved === void 0) notice("warning", "No model configured; select one with /model.");
     else if (modelRuntime.getModel(saved.provider, saved.modelId) === void 0) {
       notice("warning", `Saved model is unavailable: ${saved.provider}/${saved.modelId}`);
     }
-    if (envState.fallbackMessage !== void 0) notice("info", envState.fallbackMessage);
+    if (envState2.fallbackMessage !== void 0) notice("info", envState2.fallbackMessage);
     await controller.toggleTasks();
     harness.resume();
     let closing;
@@ -1009,6 +1020,7 @@ async function openDurable(options = {}) {
           try {
             await opened.close(runtimeContext);
             await envs.cleanup(runtimeContext);
+            await envState2.cleanup?.();
           } finally {
             await location.release();
           }
@@ -1017,6 +1029,9 @@ async function openDurable(options = {}) {
       }
     };
   } catch (error) {
+    await envState?.cleanup?.().catch((err) => {
+      console.warn("[DurableRuntime] Cleanup extension runner failed:", err);
+    });
     await harness?.close(runtimeContext).catch((err) => {
       console.warn("[DurableRuntime] Cleanup harness close failed:", err);
     });

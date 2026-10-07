@@ -32,6 +32,7 @@ export interface LoadedHarnessEnvironment {
 	pendingReports: unknown[];
 	getActiveModel: () => ModelRef | undefined;
 	setActiveModelRef: (ref: ModelRef | undefined) => void;
+	cleanup?: () => Promise<void>;
 }
 
 export async function loadHarnessEnvironment(
@@ -126,8 +127,9 @@ export async function loadHarnessEnvironment(
 		}
 	};
 
+	let extensionRunner: import("@earendil-works/pi-coding-agent").ExtensionRunner | undefined;
 	try {
-		const extensionRunner = await setupExtensionRunner({
+		extensionRunner = await setupExtensionRunner({
 			extensions: extensionsResult.extensions,
 			runtime: extensionsResult.runtime,
 			cwd: location.cwd,
@@ -140,6 +142,16 @@ export async function loadHarnessEnvironment(
 	} catch (error) {
 		report(error);
 	}
+
+	const cleanup = async () => {
+		if (extensionRunner) {
+			try {
+				await extensionRunner.emit({ type: "session_shutdown", reason: "shutdown" });
+			} catch (err) {
+				console.warn("[ExtensionBridge] Cleanup session_shutdown failed:", err);
+			}
+		}
+	};
 
 	const harness = await Harness.open(
 		await openNodeSqliteStorage(location.database),
@@ -171,5 +183,6 @@ export async function loadHarnessEnvironment(
 		setActiveModelRef: (ref) => {
 			activeModelRef = ref;
 		},
+		cleanup,
 	};
 }

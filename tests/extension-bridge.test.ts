@@ -90,26 +90,36 @@ describe("Extension Bridge (Cycle 60)", () => {
 		assert.deepEqual(result.details, { code: "ECONNREFUSED" });
 	});
 
-	it("installExtensionTools registers tools into Durable Registry", () => {
-		const registry = createRegistry();
-		const mockToolDef: ToolDefinition = {
-			name: "custom_mcp_tool",
-			label: "Custom MCP",
-			description: "Tool from MCP server",
-			parameters: Type.Object({ cmd: Type.String() }),
-			execute: async () => ({ content: [{ type: "text", text: "ok" }] }),
+	it("setupExtensionRunner supports lifecycle startup and shutdown", async () => {
+		const { DefaultResourceLoader, getAgentDir, SettingsManager, ModelRuntime } =
+			await import("@earendil-works/pi-coding-agent");
+		const loader = new DefaultResourceLoader({
+			cwd: process.cwd(),
+			agentDir: getAgentDir(),
+			settingsManager: SettingsManager.create(process.cwd()),
+		});
+		await loader.reload();
+		const { extensions, runtime } = loader.getExtensions();
+
+		let shutdownEmitted = false;
+		const mockExtension: any = {
+			name: "mock-ext",
+			handlers: new Map([
+				["session_shutdown", [() => { shutdownEmitted = true; }]],
+			]),
 		};
 
-		const durableTool = adaptExtensionTool(mockToolDef, () => {
-			throw new Error("No nested executeTool");
+		const { setupExtensionRunner } = await import("../src/runner/extension-bridge.ts");
+		const runner = await setupExtensionRunner({
+			extensions: [...extensions, mockExtension],
+			runtime,
+			cwd: process.cwd(),
+			modelRuntime: await ModelRuntime.create(),
+			executeToolFn: async () => ({ toolCall: {} as any, result: { content: [], details: {} }, isError: false }),
 		});
 
-		installExtensionTools(registry, [durableTool]);
-
-		const installedTools = registry.snapshot().tools();
-		const found = installedTools.find((t) => t.tool.name === "custom_mcp_tool");
-		assert.ok(found, "custom_mcp_tool must be present in registry snapshot");
-		assert.equal(found?.tool.name, "custom_mcp_tool");
-		assert.equal(found?.extension.name, "extension-tools");
+		assert.ok(runner);
+		await runner.emit({ type: "session_shutdown", reason: "shutdown" });
+		assert.equal(shutdownEmitted, true, "session_shutdown event must trigger extension handlers");
 	});
 });

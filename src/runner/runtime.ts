@@ -194,6 +194,7 @@ export async function openDurable(options: OpenDurableOptions = {}): Promise<Ope
 					try {
 						await opened.close(runtimeContext);
 						await envs.cleanup(runtimeContext);
+						await envState.cleanup?.();
 					} finally {
 						await location.release();
 					}
@@ -202,6 +203,9 @@ export async function openDurable(options: OpenDurableOptions = {}): Promise<Ope
 			},
 		};
 	} catch (error) {
+		await envState?.cleanup?.().catch((err) => {
+			console.warn("[DurableRuntime] Cleanup extension runner failed:", err);
+		});
 		await harness?.close(runtimeContext).catch((err) => {
 			console.warn("[DurableRuntime] Cleanup harness close failed:", err);
 		});
