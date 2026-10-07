@@ -1,15 +1,15 @@
 # Master Architectural Implementation Plan: Remediation & Full Parity of Pi Durable in BB IDE
 
 **Document ID:** `plans/pi-durable-bb-provider-arch-master-plan`  
-**Version:** 4.4.0 (Master Unified Roadmap: Full Audit Reconciliation, Extension Lifecycle & MCP Parity)  
-**Current Release:** `v0.2.15` (Commit: `af346c8`)  
+**Version:** 4.5.0 (Master Unified Roadmap: Full Audit Reconciliation, Extension Lifecycle & MCP Parity)  
+**Current Release:** `v0.2.16` (Commit: `7ae7ba4`)  
 **Target Repository:** `/Users/vanya/Projects/bb-plugin-provider-pi-durable`  
 **Governing Standards:** `arch-rules.md` (AP-010 – AP-071), `arch-improvement-review`, `arch-rules-implementation-review`  
 **Upstream Engine:** `@earendil-works/pi-durable` v1.0.4 & `@earendil-works/pi-coding-agent` v1.0.4  
 **Host Target:** Beyond Boundaries (BB IDE) `>= 0.45`  
 **Status:**
 - **Stage 1 (Foundation Hardening, Territory Decoupling & Host Parity):** ✅ 100% COMPLETED (Cycles 56–66, Releases `v0.2.1` – `v0.2.11`)
-- **Stage 2 (Advanced Engine Capabilities & Extended Parity):** ⏳ IN PROGRESS (Cycles 67–69 ✅ COMPLETED, Cycles 70–74 PLANNED)
+- **Stage 2 (Advanced Engine Capabilities & Extended Parity):** ⏳ IN PROGRESS (Cycles 67–70 ✅ COMPLETED, Cycles 71–75 PLANNED)
 
 ---
 
@@ -81,7 +81,7 @@ Because `@earendil-works/pi-durable` is an execution engine rather than an agent
 | **D-4** | **Схлопывание `contentIndex`** | `message_update` содержит `change.contentIndex` для каждого блока | ✅ **FIXED** (Динамический `contentIndex` и каналы `thinking-${idx}`) | `v0.2.8` (Cycle 63), `v0.2.10` (Cycle 65) |
 | **D-5** | **Маскирование сбоев тулов** | `event.entry` отсутствует (`undefined`), если задача тула упала | ✅ **FIXED** (`isError: true` при отсутствии `entry` в `tool_execution_end`) | `v0.2.12` (Cycle 67) |
 | **D-6** | **Потеря метаданных Diff** | `CodingTools.edit` возвращает `details: { diff, patch }` | ✅ **FIXED** (Проброс патчей в BB Diff Viewer через `fileChange`) | `v0.2.12` (Cycle 67) |
-| **D-7** | **Фальсификация кумулятивного расхода** | `pi.usage` накапливает кумулятивный расход сессии | ⏳ **PLANNED** (Монотонный подсчет totalTokens из документа usage) | Stage 2 (Cycle 71) |
+| **D-7** | **Фальсификация кумулятивного расхода** | `pi.usage` накапливает кумулятивный расход сессии | ✅ **FIXED** (Монотонный подсчет totalTokens из документа usage) | `v0.2.16` (Cycle 70) |
 | **D-8** | **Краш моделей без reasoning** | `setThinkingLevel` выбрасывает ошибку при `!model.reasoning` | ✅ **FIXED** (Безопасный фоллбек и фильтрация thinkingLevel) | `v0.2.8` (Cycle 63), `v0.2.10` (Cycle 65) |
 | **D-9** | **Обрезка вывода тулов и диагностики** | `tool_execution_update` передает `trimStart` и `diagnostics` | ✅ **FIXED** (Проброс `trimStart` и диагностических предупреждений) | `v0.2.12` (Cycle 67) |
 | **D-10**| **Обработка `snapshot` при старте** | При старте `watchEvents` первым приходит снимок состояния | ✅ **FIXED** (Восстановление активных слотов и чекпоинтов из `snapshot`) | `v0.2.13` (Cycle 68) |
@@ -94,7 +94,7 @@ Because `@earendil-works/pi-durable` is an execution engine rather than an agent
 | **D-17**| **Статический промпт без динамики расширений** | Расширения обогащают промпт (`mcp_servers`, Ambient Recall) через `before_agent_start` | ⏳ **SCOPED (NEW)** (Эмит `before_agent_start` и мердж секций промпта) | Stage 2 (Cycle 74) |
 | **D-18**| **Отсутствие хуков `tool_call`/`tool_result` в runner** | Ленивое ожидание серверов в `codemode` и guardrails (`skill-guardian`) не работают | ⏳ **SCOPED (NEW)** (Проброс `tool_call` и `tool_result` в `extensionRunner`) | Stage 2 (Cycle 74) |
 | **D-19**| **Глушение UI и диагностических notice расширений** | Ошибки и статусы MCP (`needs-auth`, сбои соединения) тонут в `noOpUIContext` | ⏳ **SCOPED (NEW)** (Привязка `runner.setUIContext` к wire notice и логам хоста) | Stage 2 (Cycle 74) |
-| **D-20**| **Блокировка сессий сиротскими раннерами и утечка процессов при релоаде воркера** | При релоаде воркера раннер не закрывается, лок session.sqlite зависает, новый ход падает с 502 | ⏳ **SCOPED (HOTFIX)** (session.owner.json, graceful SIGTERM eviction, worker teardown на disconnect) | Stage 2 (Cycle 70) |
+| **D-20**| **Блокировка сессий сиротами и жесткая привязка к ~/.bb** | Сиротские раннеры вешают `session.sqlite`; `BB_DATA_DIR` не учитывается при поиске раннера | ⏳ **SCOPED (HOTFIX)** (session.owner.json, graceful eviction, teardown, Issue #7) | Stage 2 (Cycle 71, v0.2.17) |
 
 ---
 
@@ -120,11 +120,11 @@ STAGE 2: РАСШИРЕННЫЕ ВОЗМОЖНОСТИ ДВИЖКА И ПОЛН�
   - Cycle 68: Извлечение чекпоинтов SQLite, обработка snapshot и turn.boundary (D-3, D-10, D-11) [✅ ЗАВЕРШЕНО, v0.2.13]
   - Cycle 68.1: Защита целостности зависимостей SDK для чистого продакшен-инсталла [✅ ЗАВЕРШЕНО, v0.2.14]
   - Cycle 69: Чекпоинт-форки тредов, перемотка истории и редактирование сообщений (thread/fork) [✅ ЗАВЕРШЕНО, v0.2.15]
-  - Cycle 70: Устранение блокировок сиротами, вытеснение PID и Teardown воркеров (D-20) [⏳ В РАБОТЕ, v0.2.16]
-  - Cycle 71: Монотонный учет кумулятивного расхода токенов через pi.usage (D-7) [⏳ В РАБОТЕ, v0.2.17]
+  - Cycle 70: Монотонный учет кумулятивного расхода токенов через pi.usage (D-7) [✅ ЗАВЕРШЕНО, v0.2.16]
+  - Cycle 71: Устранение блокировок сиротами, Teardown воркеров и BB_DATA_DIR (D-20, Issue #7) [⏳ В РАБОТЕ, v0.2.17]
   - Cycle 72: Визуальные карточки сабагентов через протокольный deltaDelegationShape (type: "delegation") [PLANNED, v0.2.18]
   - Cycle 73: Корректное прерывание хода, inbox-отмена и обработка thread/stop (submission.abort) [PLANNED, v0.2.19]
-  - Cycle 74: Паритет жизненного цикла расширений Pi и надёжность MCP-серверов (D-16, D-17, D-18, D-19) [⏳ В РАБОТЕ, v0.2.20]
+  - Cycle 74: Паритет жизненного цикла расширений Pi и надёжность MCP-серверов (D-16, D-17, D-18, D-19) [PLANNED, v0.2.20]
   - Cycle 75: Мастер-аттестация паритета с нативным provider-pi и conformance-тесты [PLANNED, v0.2.21]
 ```
 
@@ -184,33 +184,35 @@ STAGE 2: РАСШИРЕННЫЕ ВОЗМОЖНОСТИ ДВИЖКА И ПОЛН�
 
 ---
 
-### Cycle 70: Session Lock Contention, Orphan Eviction & Clean Worker Teardown (D-20) [⏳ В РАБОТЕ]
-- **Целевые расхождения:** D-20 (AP-012, AP-022, AP-027, AP-034).
-- **Архитектурный анализ первоисточников:**
-  1. В `session-storage.ts` upstream-раннера: `proper-lockfile` захватывает директорию сессии и обновляет mtime каждые несколько секунд. Если процесс раннера остался жив после краша/рестарта воркера (сиротский процесс), mtime продолжает обновляться, и новый раннер после 12 секунд ожидания падает с `Session is already open in another process`.
-  2. В `src/host/index.ts`: отсутствуют обработчики завершения `process.on('disconnect')`, `SIGTERM`, `SIGINT`, из-за чего при релоаде воркера хост-демоном BB дочерние раннеры теряют родителя и не закрывают `activeDurable.close()`.
-  3. В `src/host/runner-process.ts`: метод `kill()` сразу шлёт `SIGKILL`, лишая раннер возможности выполнить `activeDurable.close()` и снять блокировку.
-- **Решение:**
-  1. **Запись владения сессией (`session.owner.json`):** При успешном локе сессии записывать `{ pid, startedAt, providerThreadId, cwd }` рядом с `session.sqlite`, удалять при `release()`.
-  2. **Протокол вытеснения сирот (Graceful Takeover):** Если лок занят, читать `session.owner.json`. Если PID мёртв (`ESRCH`), сбрасывать лок. Если жив и принадлежит раннеру того же пользователя — слать `SIGTERM` на graceful exit (`activeDurable.close()`), ожидать до 3 секунд и повторно захватывать лок. При неудаче выбрасывать явную ошибку с PID.
-  3. **Teardown хост-воркера:** В `src/host/index.ts` подписаться на `disconnect`, `SIGTERM`, `SIGINT` и вызывать `await bridge.shutdown()`.
-  4. **Двухфазное завершение раннера:** В `RunnerProcess.kill()` сначала отправлять `SIGTERM`, и только при таймауте — `SIGKILL`.
-- **Файлы:** `src/runner/upstream/session-storage.ts`, `src/host/index.ts`, `src/host/runner-process.ts`, `tests/session-lock-eviction.test.ts`.
-
----
-
-### Cycle 71: Cumulative Token Usage Monotonicity (`pi.usage` Document Sync, D-7)
+### Cycle 70: Cumulative Token Usage Monotonicity (`pi.usage` Document Sync, D-7) [✅ COMPLETED, v0.2.16]
 - **Целевые расхождения:** D-7 (AP-013, AP-026).
 - **Архитектурный анализ первоисточников:**
   1. В протоколе BB IDE: метод `provider/usage` предназначен исключительно для учетных окон подписок (например, ChatGPT rate-limits в Codex). Нативный `provider-pi` отвечает на `provider/usage`: `{ supported: false }`.
   2. Учет токенов модели в BB ведется внутри треда через дельту `usage` (`{ totalTokens, inputTokens, outputTokens }`).
   3. В ядре `@earendil-works/pi-durable`: документ `docs["pi.usage"]` и метод `harness.usage(context)` ведут строгий монотонный накопительный итог токенов по моделям и тулам (`totals only grow`).
-  4. Сейчас в `delta-translator.ts`: расход последнего хода `last` дублируется в `total`, сбрасывая историю при каждом новом ходе.
+  4. Ранее в `delta-translator.ts`: расход последнего хода `last` дублировался в `total`, сбрасывая историю при каждом новом ходе.
 - **Решение:**
-  1. Считывать кумулятивный расход сессии напрямую из документа `pi.usage` в состоянии хранилища Durable.
-  2. Передавать истинные монотонно возрастающие значения `totalTokens`, `cachedInputTokens`, `outputTokens` в дельте `usage`.
-  3. Гарантировать, что `provider/usage` возвращает `{ supported: false }` согласно спецификации BB.
-- **Файлы:** `src/runner/bridge/bb-event-adapter.ts`, `src/host/message-delta-translator.ts`, `src/host/bridge-router.ts`, `tests/cumulative-usage.test.ts`.
+  1. Реализована функция `extractCumulativeUsage` в `assistant-message-builder.ts`, считывающая кумулятивный расход сессии напрямую из документа `pi.usage`.
+  2. В wire-событиях `turn_end` и `run_end` передается `cumulativeUsage`.
+  3. В `message-delta-translator.ts` дельта `usage` формируется с сохранением `delta.last` (расход за текущий ход) и обновлением `delta.total` из `cumulativeUsage`, гарантируя строгую монотонность totalTokens.
+- **Файлы:** `src/runner/upstream/assistant-message-builder.ts`, `src/runner/bridge/bb-event-adapter.ts`, `src/host/message-delta-translator.ts`, `tests/cumulative-usage.test.ts`.
+
+---
+
+### Cycle 71: Session Lock Contention, Orphan Eviction, Worker Teardown & Multi-DataDir Runner Discovery (D-20, Issue #7) [⏳ СЛЕДУЮЩИЙ, v0.2.17]
+- **Целевые расхождения:** D-20 (AP-012, AP-022, AP-027, AP-034), GitHub Issue #7 (Install Portability on Custom `--data-dir`).
+- **Архитектурный анализ первоисточников:**
+  1. В `session-storage.ts` upstream-раннера: `proper-lockfile` захватывает директорию сессии и обновляет mtime каждые несколько секунд. Если процесс раннера остался жив после краша/рестарта воркера (сиротский процесс), mtime продолжает обновляться, и новый раннер после 12 секунд ожидания падает с `Session is already open in another process`.
+  2. В `src/host/index.ts`: отсутствуют обработчики завершения `process.on('disconnect')`, `SIGTERM`, `SIGINT`, из-за чего при релоаде воркера хост-демоном BB дочерние раннеры теряют родителя и не закрывают `activeDurable.close()`.
+  3. В `src/host/runner-process.ts`: метод `kill()` сразу шлёт `SIGKILL`, лишая раннер возможности выполнить `activeDurable.close()` и снять блокировку.
+  4. В `src/host/paths.ts` (Issue #7): `resolveRunnerPath()` ищет `bb.db` и кэш плагинов только по жесткому пути `join(homedir(), ".bb", ...)`. При запуске BB с кастомным `--data-dir /path` (переменная окружения `BB_DATA_DIR`) раннер не обнаруживается, каталог пуст, а старый `~/.bb/bb.db` создает риск чтения устаревших записей.
+- **Решение:**
+  1. **Запись владения сессией (`session.owner.json`):** При успешном локе сессии записывать `{ pid, startedAt, providerThreadId, cwd }` рядом с `session.sqlite`, удалять при `release()`.
+  2. **Протокол вытеснения сирот (Graceful Takeover):** Если лок занят, читать `session.owner.json`. Если PID мёртв (`ESRCH`), сбрасывать лок. Если жив и принадлежит раннеру того же пользователя — слать `SIGTERM` на graceful exit (`activeDurable.close()`), ожидать до 3 секунд и повторно захватывать лок. При неудаче выбрасывать явную ошибку с PID.
+  3. **Teardown хост-воркера:** В `src/host/index.ts` подписаться на `disconnect`, `SIGTERM`, `SIGINT` и вызывать `await bridge.shutdown()`.
+  4. **Двухфазное завершение раннера:** В `RunnerProcess.kill()` сначала отправлять `SIGTERM`, и только при таймауте — `SIGKILL`.
+  5. **Поддержка `BB_DATA_DIR` (Issue #7):** В `src/host/paths.ts` определять базовую директорию данных: `process.env.BB_DATA_DIR?.trim() || join(homedir(), ".bb")`. Использовать её для разрешения `bbDbPath` и `cacheDir`.
+- **Файлы:** `src/runner/upstream/session-storage.ts`, `src/host/index.ts`, `src/host/runner-process.ts`, `src/host/paths.ts`, `tests/session-lock-eviction.test.ts`, `tests/worker-teardown.test.ts`, `tests/runner-discovery.test.ts`.
 
 ---
 

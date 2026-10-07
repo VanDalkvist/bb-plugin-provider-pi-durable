@@ -1,10 +1,10 @@
 # PRD: Архитектурное выравнивание территорий и устранение чужого владения в `bb-plugin-provider-pi-durable`
 
-**Статус:** ⏳ IN PROGRESS (Cycles 61–69 Completed & Verified, Cycle 74 Added to Scope)  
+**Статус:** ⏳ IN PROGRESS (Cycles 61–70 Completed & Verified, Cycles 71–75 Scheduled)  
 **Дата создания:** 2026-10-07  
-**Дата актуализации:** 2026-10-07 (после аудита интеграции MCP и Pi Extensions)  
+**Дата актуализации:** 2026-10-08 (полная синхронизация нумерации, D-7, D-20, Issue #7)  
 **Автор:** Lead Architect & Agent Systems Engineer  
-**Реализовано в релизах:** `v0.2.7` (Cycles 61–62), `v0.2.8` (Cycle 63), `v0.2.9` (Cycle 64), `v0.2.10` (Cycle 65), `v0.2.11` (Cycle 66), `v0.2.12` (Cycle 67), `v0.2.13` (Cycle 68), `v0.2.14` (Cycle 68.1), `v0.2.15` (Cycle 69)  
+**Реализовано в релизах:** `v0.2.7` (Cycles 61–62), `v0.2.8` (Cycle 63), `v0.2.9` (Cycle 64), `v0.2.10` (Cycle 65), `v0.2.11` (Cycle 66), `v0.2.12` (Cycle 67), `v0.2.13` (Cycle 68), `v0.2.14` (Cycle 68.1), `v0.2.15` (Cycle 69), `v0.2.16` (Cycle 70)  
 
 ---
 
@@ -107,6 +107,39 @@ src/
   - Внедрен Brain-аккордеон рассуждений (`glyph: "Brain"`, каналы `reasoningText` и `thinking-${idx}`).
   - В `BBEventAdapter` внедрено гарантированное закрытие стрима мыслей `closeThinkingIfNeeded()` при переходах на текст, тулы или завершение хода.
   - Проведён аудит ядра BB IDE (`start-server.js` и `workspace-checkout-display`), доказавший, что строки `operationKind: "reasoning"` захардкожены на состояние «свернуто по умолчанию». Холостая настройка `openThinkingByDefault` выпилена; сохранена реально работающая настройка `hideThinking` (`suppress: true`).
+
+### Срез 6: Отказоустойчивость тулов, diff-метаданные и диагностики (D-5, D-6, D-9) [✅ Выполнено в Cycle 67, v0.2.12]
+- **Результат:** Ликвидировано маскирование сбоев при `event.entry === undefined` (эмитится `isError: true`), проброшены diff/patch в `fileChange`, проброшен `trimStart`.
+
+### Срез 7: Чекпоинты истории, snapshot и форки тредов (D-3, D-10, D-11) [✅ Выполнено в Cycles 68–69, v0.2.13–v0.2.15]
+- **Результат:**
+  - В `turn.boundary` проброшен `providerCheckpointId` из tail `EntryId` SQLite.
+  - Обработан `snapshot` на реконнекте и `auto_retry` события.
+  - В Cycle 68.1 (`v0.2.14`) устранена дубликация SDK в `devDependencies`, блокировавшая marketplace-инсталляцию.
+  - В Cycle 69 (`v0.2.15`) реализован нативный `thread/fork` RPC через atomic SQLite copy, `PRAGMA wal_checkpoint(TRUNCATE)` и параметризованную обрезку записей.
+
+### Срез 8: Монотонный учет кумулятивного расхода токенов через pi.usage (D-7) [✅ Выполнено в Cycle 70, v0.2.16]
+- **Результат:** Суммирование `models` и `tools` из документа `docs["pi.usage"]` и проброс строго монотонного `total` в дельтах `usage`.
+
+### Срез 9: Вытеснение сирот, Teardown воркеров и переносимость BB_DATA_DIR (D-20, Issue #7) [⏳ Cycle 71, v0.2.17]
+- **Проблема:**
+  1. **Session Lock Contention (D-20, thr_ugw2px7ntq):** При фоновой пересборке плагина или релоаде старый runner-процесс держит lockfile на каталог сессии (`session.sqlite`), новый раннер падает с кодом 1 / 502.
+  2. **Отсутствие Teardown хоста:** Воркер `src/host/index.ts` не имел подписчиков на `disconnect`, `SIGTERM`, `SIGINT`.
+  3. **Data-Dir Lock-in (Issue #7, Diffuzmetall):** `resolveRunnerPath()` предполагает путь `~/.bb`, из-за чего на инстансах с `--data-dir /path` раннер не обнаруживается.
+- **Решение:**
+  1. **PID-файл владения (`session.owner.json`):** При захвате сессии записывать `{ pid, startedAt, providerThreadId, cwd }`, удалять при `release()`.
+  2. **Orphan Eviction Protocol (AP-034):** Если лок занят, читать `session.owner.json`. Если PID мёртв — сброс лока. Если жив и принадлежит нашему раннеру — посылать `SIGTERM` на graceful exit (`activeDurable.close()`), ожидать до 3 сек и забирать лок.
+  3. **Worker Teardown (AP-027):** Обработчики `disconnect`, `SIGTERM`, `SIGINT` в `src/host/index.ts` с вызовом `bridge.shutdown()`.
+  4. **BB_DATA_DIR Portability (Issue #7):** Поддержка `process.env.BB_DATA_DIR` с фоллбеком на `~/.bb` для поиска `bb.db` и кэша плагинов.
+
+### Срез 10: Визуальные карточки сабагентов (Cycle 72, v0.2.18)
+- Трансляция `subagent` в карточки `deltaDelegationShapeSchema` (`type: "delegation"`).
+
+### Срез 11: Прерывание хода и отмена очереди (Cycle 73, v0.2.19)
+- Прерывание по `thread/stop` (`intent: "interrupt"`) через `submission.abort` в `docs["pi.inbox"]`.
+
+### Срез 12: Паритет жизненного цикла расширений Pi и надёжность MCP (D-16..D-19) [Cycle 74, v0.2.20]
+- Ожидание `waitForDirectServers`, динамический промпт на `before_agent_start`, хуки `tool_call`/`tool_result`.
 
 ---
 
