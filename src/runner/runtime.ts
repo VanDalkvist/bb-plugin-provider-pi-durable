@@ -1,221 +1,78 @@
 import type { AttachedReplicatedState } from "@earendil-works/chord";
-import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import { clampThinkingLevel, getSupportedThinkingLevels, type ModelThinkingLevel } from "@earendil-works/pi-ai";
-import {
-	type AgentState,
-	type Conversation,
-	type ConversationId,
-	type ConversationView,
-	type Cursor,
-	type EntryRecord,
+import type {
+	Conversation,
+	ConversationId,
+	ConversationView,
+	Cursor,
 	Harness,
-	type ModelRef,
-	ROOT_CONVERSATION_ID,
-	type Submission,
-	type TaskGraph,
+	TaskGraph,
 } from "@earendil-works/pi-durable";
-import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
+import { resolveModelScopeWithDiagnostics } from "@earendil-works/pi-coding-agent";
+import { ExecutionEnvs, findInitialAgentModel } from "./harness-setup.ts";
+import { selectSession } from "./sessions.ts";
 import {
-	DefaultResourceLoader,
-	ModelRuntime,
-	SettingsManager,
-	resolveModelScopeWithDiagnostics,
-} from "@earendil-works/pi-coding-agent";
-import {
-	configureHarnessHttp,
-	createCodingRegistry,
-	createHarnessSettings,
-	ExecutionEnvs,
-	findInitialAgentModel,
-} from "./harness-setup.ts";
-import { getAgentDir, selectSession } from "./sessions.ts";
-import { Subagent } from "./subagent.ts";
-import type { PromptOptions } from "./prompt.ts";
+	agentOf,
+	firstInput,
+	titleOf,
+	type ConversationSummary,
+	type DurableView,
+	type ModelSummary,
+	type Notice,
+	type OpenDurableOptions,
+	type OpenDurableResult,
+	runtimeContext,
+} from "./runtime-types.ts";
+import { createDurableController } from "./runtime-controller.ts";
+import { loadHarnessEnvironment } from "./runtime-loader.ts";
 
-const context = BACKGROUND_CONTEXT;
-
-export interface ModelSummary extends ModelRef {
-	readonly name: string;
-	readonly contextWindow: number;
-}
-
-export interface Notice {
-	readonly id: number;
-	readonly level: "info" | "warning" | "error";
-	readonly message: string;
-}
-
-export interface ConversationSummary {
-	readonly id: ConversationId;
-	readonly label: string;
-	readonly title?: string;
-}
-
-export interface DurableView {
-	readonly session: { readonly id: string; readonly directory: string; readonly cwd: string };
-	readonly conversation: ConversationView;
-	readonly conversations: readonly ConversationSummary[];
-	readonly models: readonly ModelSummary[];
-	readonly notices: readonly Notice[];
-	readonly tasks?: TaskGraph;
-}
-
-export interface DurableViewSource {
-	current(): DurableView;
-	subscribe(listener: () => void): () => void;
-}
-
-export interface DurableController {
-	submit(text: string, whenBusy: "steer" | "followUp"): Promise<void>;
-	compact(instructions: string | undefined): Promise<void>;
-	abort(): Promise<void>;
-	cycleThinking(): Promise<void>;
-	setThinkingLevel(level: ModelThinkingLevel): Promise<void>;
-	setModel(model: ModelRef): Promise<void>;
-	toggleTasks(): Promise<void>;
-	switchConversation(id: ConversationId): Promise<void>;
-}
-
-export interface OpenDurableOptions {
-	readonly cwd?: string;
-	readonly continueSession?: boolean;
-	readonly session?: string;
-	readonly cli?: { readonly provider?: string; readonly model: string; readonly thinking?: ModelThinkingLevel };
-	readonly prompt?: PromptOptions;
-}
-
-export interface OpenDurableResult {
-	readonly view: DurableViewSource;
-	readonly controller: DurableController;
-	readonly settings: SettingsManager;
-	readonly modelRuntime: ModelRuntime;
-	readonly harness: Harness;
-	close(): Promise<void>;
-}
-
-export function agentOf(view: ConversationView): AgentState {
-	return (view.docs["pi.agent"] ?? {}) as AgentState;
-}
-
-async function firstInput(harness: Harness, id: ConversationId): Promise<{ title?: string }> {
-	if (id === ROOT_CONVERSATION_ID) return {};
-	const conversation = (await harness.conversation(id, context))!;
-	let first: EntryRecord | undefined;
-	let cursor: Cursor | undefined;
-	do {
-		const page = await conversation.entries({}, 256, cursor, context);
-		first = [...page.items].reverse().find((entry: any) => entry.kind === "pi.user") ?? first;
-		cursor = page.next;
-	} while (cursor !== undefined);
-	return titleOf(first);
-}
-
-function titleOf(entry: EntryRecord | undefined): { title?: string } {
-	const message = entry?.model?.[0];
-	if (message?.role !== "user") return {};
-	const text =
-		typeof message.content === "string"
-			? message.content
-			: message.content.flatMap((block) => (block.type === "text" ? [block.text] : [])).join(" ");
-	return { title: text.replace(/\s+/g, " ").trim() };
-}
+export * from "./runtime-types.ts";
+export * from "./runtime-controller.ts";
 
 export async function openDurable(options: OpenDurableOptions = {}): Promise<OpenDurableResult> {
 	const location = await selectSession(options.cwd ?? process.cwd(), options.continueSession ?? false, options.session);
 	const envs = new ExecutionEnvs(location.cwd);
 	let harness: Harness | undefined;
+
 	try {
-		const modelRuntime = await ModelRuntime.create();
-		const settingsManager = SettingsManager.create(location.cwd);
-		const agentDir = getAgentDir();
-		const resourceLoader = new DefaultResourceLoader({ cwd: location.cwd, agentDir, settingsManager });
-		await resourceLoader.reload();
-		const extensionsResult = resourceLoader.getExtensions();
-		for (const { name, config } of extensionsResult.runtime.pendingProviderRegistrations) {
-			try {
-				modelRuntime.registerProvider(name, config);
-			} catch {
-				// intentionally ignored: provider registration may already exist or be non-critical
-			}
-		}
-		for (const { provider } of extensionsResult.runtime.pendingNativeProviderRegistrations) {
-			try {
-				modelRuntime.registerNativeProvider(provider);
-			} catch {
-				// intentionally ignored: native provider may already be registered
-			}
-		}
-		for (const { definition } of extensionsResult.runtime.pendingVirtualModelRegistrations) {
-			try {
-				modelRuntime.registerVirtualModel(definition);
-			} catch {
-				// intentionally ignored: virtual model may already be registered
-			}
-		}
+		const envState = await loadHarnessEnvironment(location, options, envs);
+		const { modelRuntime, settingsManager } = envState;
+		harness = envState.harness;
 
-		configureHarnessHttp(settingsManager);
-		let activeModelRef: { provider: string; modelId: string } | undefined = undefined;
-		const getActiveModel = () => {
-			if (activeModelRef) return activeModelRef;
-			const p = settingsManager.getDefaultProvider();
-			const m = settingsManager.getDefaultModel();
-			return p && m ? { provider: p, modelId: m } : undefined;
-		};
-
-		const settings = createHarnessSettings(settingsManager, getActiveModel);
-		const registry = createCodingRegistry(settingsManager, location.cwd, options.prompt);
-		registry.install(Subagent);
-
-		const pendingReports: unknown[] = [];
-		let report: (error: unknown) => void = (error) => pendingReports.push(error);
-		harness = await Harness.open(
-			await openNodeSqliteStorage(location.database),
-			{
-				models: modelRuntime,
-				registry,
-				settings,
-				env: envs.env,
-				onReport: (error) => report(error),
-			},
-			context,
-		);
-		const initial = location.created
-			? await findInitialAgentModel(settingsManager, modelRuntime, options.cli)
-			: undefined;
-		if (initial?.model) {
-			activeModelRef = initial.model;
-		}
-		const root = await harness.root(context, {
+		const root = await harness.root(runtimeContext, {
 			agent: {
 				cwd: location.cwd,
-				...(initial?.model === undefined ? {} : { model: initial.model }),
-				...(initial?.thinkingLevel === undefined ? {} : { thinkingLevel: initial.thinkingLevel }),
+				...(envState.initialModelRef === undefined ? {} : { model: envState.initialModelRef }),
 			},
 		});
+
 		if (!location.created) {
-			const rootAgent = await root.agent(context);
+			const rootAgent = await root.agent(runtimeContext);
 			if (rootAgent.model) {
-				activeModelRef = rootAgent.model;
+				envState.setActiveModelRef(rootAgent.model);
 			}
 		}
+
 		if (!location.created && options.cli !== undefined) {
 			const cliModel = await findInitialAgentModel(settingsManager, modelRuntime, options.cli);
 			if (cliModel.model !== undefined) {
-				activeModelRef = cliModel.model;
-				await root.configure({ model: cliModel.model, thinkingLevel: cliModel.thinkingLevel }, context);
+				envState.setActiveModelRef(cliModel.model);
+				await root.configure({ model: cliModel.model, thinkingLevel: cliModel.thinkingLevel }, runtimeContext);
 			}
 		}
+
 		const label = (id: ConversationId): string => (id === root.id ? "main" : `subagent ${id}`);
 		const opened = harness;
 		const summaries: ConversationSummary[] = [];
 		let cursor: Cursor | undefined;
 		do {
-			const page = await opened.commit((tx) => tx.scanConversations({}, 256, cursor), context);
+			const page = await opened.commit((tx) => tx.scanConversations({}, 256, cursor), runtimeContext);
 			for (const { id } of page.items) summaries.push({ id, label: label(id), ...(await firstInput(opened, id)) });
 			cursor = page.next;
 		} while (cursor !== undefined);
+
 		let current: Conversation = root;
-		let conversation: AttachedReplicatedState<ConversationView> = await root.viewState(context);
+		let conversation: AttachedReplicatedState<ConversationView> = await root.viewState(runtimeContext);
+
 		const enabledPatterns = settingsManager.getEnabledModels();
 		const scopedScope = enabledPatterns && enabledPatterns.length > 0
 			? await resolveModelScopeWithDiagnostics(enabledPatterns, modelRuntime)
@@ -239,6 +96,7 @@ export async function openDurable(options: OpenDurableOptions = {}): Promise<Ope
 			models: models(),
 			notices: [],
 		};
+
 		const listeners = new Set<() => void>();
 		let notifying = false;
 		const update = (patch: Partial<DurableView>): void => {
@@ -250,14 +108,17 @@ export async function openDurable(options: OpenDurableOptions = {}): Promise<Ope
 				for (const listener of listeners) listener();
 			});
 		};
+
 		let nextNotice = 1;
 		const notice = (level: Notice["level"], message: string): void => {
 			update({ notices: [...state.notices, { id: nextNotice++, level, message }].slice(-20) });
 		};
 		const fail = (error: unknown): void => notice("error", error instanceof Error ? error.message : String(error));
-		report = (error) => notice("warning", error instanceof Error ? error.message : String(error));
-		for (const error of pendingReports) report(error);
-		let unsubscribe = conversation.subscribe((value) => update({ conversation: value }));
+		for (const error of envState.pendingReports) {
+			notice("warning", error instanceof Error ? error.message : String(error));
+		}
+
+		let unsubscribeConversation = conversation.subscribe((value) => update({ conversation: value }));
 		const unsubscribeCommits = harness.subscribeCommits((publication) => {
 			let conversations = state.conversations;
 			for (const change of publication.changes) {
@@ -281,111 +142,33 @@ export async function openDurable(options: OpenDurableOptions = {}): Promise<Ope
 			tasks = undefined;
 		};
 
-		let queue = Promise.resolve();
-		const command = (operation: () => Promise<void>): Promise<void> => {
-			queue = queue.then(operation).catch(fail);
-			return queue;
-		};
-		const watchAnswer = (submission: Submission): void => {
-			void submission.wait(context).then((settled) => {
-				if (settled.status === "unanswered" && settled.reason !== "aborted") {
-					notice(
-						"error",
-						`No answer: ${settled.reason}${settled.detail === undefined ? "" : ` ${JSON.stringify(settled.detail)}`}`,
-					);
-				}
-			}, fail);
-		};
-		const agentModel = () => {
-			const ref = agentOf(state.conversation).model;
-			const model = ref === undefined ? undefined : modelRuntime.getModel(ref.provider, ref.modelId);
-			if (model === undefined)
-				throw new Error(ref === undefined ? "No model selected" : "Current model is unavailable");
-			return model;
-		};
-		const controller: DurableController = {
-			submit: (text, whenBusy) =>
-				command(async () => watchAnswer(await current.submit({ type: "input", content: text, whenBusy }, context))),
-			compact: (instructions) =>
-				command(async () => {
-					const id = await current.compact(instructions, context);
-					void opened.waitForTask(id, context).then(async (receipt) => {
-						const outcome = receipt.state.outcome;
-						if (outcome.status === "completed") {
-							const { entryId, submissionId } = outcome.result;
-							const status =
-								submissionId === undefined
-									? undefined
-									: (await (await opened.submission(submissionId, context))?.status(context))?.status;
-							notice(
-								"info",
-								entryId !== undefined || status === "done"
-									? "Compacted."
-									: status === "queued"
-										? "Compaction summary queued; it is placed at the next turn boundary."
-										: status === "unanswered"
-											? "Compaction summary dropped: the context changed under it."
-											: "Nothing to compact: the context fits in the recent window that is kept verbatim.",
-							);
-						} else if (outcome.status === "aborted") notice("info", "Compaction aborted.");
-						else
-							notice("error", `Compaction ${outcome.status}: ${outcome.error?.message ?? outcome.reason ?? ""}`);
-					}, fail);
-				}),
-			abort: () => current.abort(context).catch(fail),
-			cycleThinking: () =>
-				command(async () => {
-					const model = agentModel();
-					if (!model.reasoning) throw new Error("Current model does not support thinking");
-					const levels = getSupportedThinkingLevels(model);
-					const level = agentOf(state.conversation).thinkingLevel ?? "off";
-					const next = levels[(levels.indexOf(level) + 1) % levels.length] ?? "off";
-					await current.configure({ thinkingLevel: next }, context);
-				}),
-			setThinkingLevel: (targetLevel: ModelThinkingLevel) =>
-				command(async () => {
-					const model = agentModel();
-					if (!model.reasoning) throw new Error("Current model does not support thinking");
-					await current.configure({ thinkingLevel: clampThinkingLevel(model, targetLevel) }, context);
-				}),
-			setModel: (ref) =>
-				command(async () => {
-					const model = modelRuntime.getModel(ref.provider, ref.modelId);
-					if (model === undefined) throw new Error(`Unknown model: ${ref.provider}/${ref.modelId}`);
-					activeModelRef = ref;
-					const thinking: ModelThinkingLevel = agentOf(state.conversation).thinkingLevel ?? "off";
-					await current.configure({ model: ref, thinkingLevel: clampThinkingLevel(model, thinking) }, context);
-				}),
-			toggleTasks: () =>
-				command(async () => {
-					if (tasks !== undefined) {
-						closeTasks();
-						update({ tasks: undefined });
-						return;
-					}
-					const graph = await opened.taskGraph(context);
-					tasks = graph;
-					unsubscribeTasks = graph.subscribe((value) => update({ tasks: value }));
-				}),
-			switchConversation: (id) =>
-				command(async () => {
-					const next = await opened.conversation(id, context);
-					if (next === undefined) throw new Error(`Conversation ${id} does not exist`);
-					const nextState = await next.viewState(context);
-					unsubscribe();
-					conversation.dispose();
-					current = next;
-					conversation = nextState;
-					unsubscribe = nextState.subscribe((value) => update({ conversation: value }));
-				}),
-		};
+		const controller = createDurableController({
+			getCurrent: () => current,
+			setCurrent: (c) => { current = c; },
+			getConversationState: () => conversation,
+			setConversationState: (cs) => { conversation = cs; },
+			getUnsubscribeConversation: () => unsubscribeConversation,
+			setUnsubscribeConversation: (fn) => { unsubscribeConversation = fn; },
+			opened,
+			modelRuntime,
+			getState: () => state,
+			update,
+			notice,
+			fail,
+			getTasks: () => tasks,
+			setTasks: (t) => { tasks = t; },
+			setUnsubscribeTasks: (fn) => { unsubscribeTasks = fn; },
+			closeTasks,
+			setActiveModelRef: (ref) => envState.setActiveModelRef(ref),
+		});
 
 		const saved = agentOf(state.conversation).model;
 		if (saved === undefined) notice("warning", "No model configured; select one with /model.");
 		else if (modelRuntime.getModel(saved.provider, saved.modelId) === undefined) {
 			notice("warning", `Saved model is unavailable: ${saved.provider}/${saved.modelId}`);
 		}
-		if (initial?.fallbackMessage !== undefined) notice("info", initial.fallbackMessage);
+		if (envState.fallbackMessage !== undefined) notice("info", envState.fallbackMessage);
+
 		await controller.toggleTasks();
 		harness.resume();
 
@@ -404,13 +187,13 @@ export async function openDurable(options: OpenDurableOptions = {}): Promise<Ope
 			harness,
 			close() {
 				closing ??= (async () => {
-					unsubscribe();
+					unsubscribeConversation();
 					unsubscribeCommits();
 					conversation.dispose();
 					closeTasks();
 					try {
-						await opened.close(context);
-						await envs.cleanup(context);
+						await opened.close(runtimeContext);
+						await envs.cleanup(runtimeContext);
 					} finally {
 						await location.release();
 					}
@@ -419,7 +202,7 @@ export async function openDurable(options: OpenDurableOptions = {}): Promise<Ope
 			},
 		};
 	} catch (error) {
-		await harness?.close(context).catch((err) => {
+		await harness?.close(runtimeContext).catch((err) => {
 			console.warn("[DurableRuntime] Cleanup harness close failed:", err);
 		});
 		await location.release().catch((err) => {

@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { Socket } from "node:net";
 import { setupRunnerModels } from "./model-setup.ts";
 import { attachJsonlLineReader, serializeJsonLine } from "./jsonl.ts";
-import { openDurable, type OpenDurableOptions } from "./runtime.ts";
+import { openDurable, type OpenDurableOptions, type OpenDurableResult } from "./runtime.ts";
 import { ROOT_CONVERSATION_ID, watchEvents } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { BBEventAdapter } from "./bridge/bb-event-adapter.ts";
@@ -19,7 +19,7 @@ function getPiDurableVersion(): string {
 			if (parsed.version) return parsed.version;
 		}
 	} catch {
-		// fallback
+		// intentionally ignored: package resolution fallback
 	}
 	try {
 		const pluginPkg = join(__dirname, "..", "..", "package.json");
@@ -29,7 +29,7 @@ function getPiDurableVersion(): string {
 			if (dep) return dep;
 		}
 	} catch {
-		// fallback
+		// intentionally ignored: package resolution fallback
 	}
 	return "1.0.0";
 }
@@ -59,15 +59,33 @@ try {
 		try {
 			writeSync(CHILD_TO_BRIDGE_FD, Buffer.from(str, "utf8"));
 		} catch {
-			// Ignore write error if FD 3 is not open
+			// intentionally ignored: FD 3 is not open or not writable
 		}
 	};
-} catch {}
+} catch {
+	// intentionally ignored: bridge channel descriptor setup is optional
+}
 
 async function main() {
-	process.on("SIGTERM", () => process.exit(0));
-	process.on("SIGINT", () => process.exit(0));
-	process.stdin.on("end", () => process.exit(0));
+	let activeDurable: OpenDurableResult | null = null;
+	let isTerminating = false;
+
+	const handleExit = async (signalOrReason: string) => {
+		if (isTerminating) return;
+		isTerminating = true;
+		if (activeDurable) {
+			try {
+				await activeDurable.close();
+			} catch (err) {
+				console.error(`[Runner] Error releasing durable lock on ${signalOrReason}:`, err);
+			}
+		}
+		process.exit(0);
+	};
+
+	process.on("SIGTERM", () => { void handleExit("SIGTERM"); });
+	process.on("SIGINT", () => { void handleExit("SIGINT"); });
+	process.stdin.on("end", () => { void handleExit("stdin.end"); });
 
 	const cwd = args.cwd ?? process.cwd();
 	const {
@@ -164,6 +182,7 @@ async function main() {
 	};
 
 	const durable = await openDurable(durableOptions);
+	activeDurable = durable;
 
 	// Setup native Pi Durable event stream adapter
 	const adapter = new BBEventAdapter((evt: BBWireEvent) => output(evt));

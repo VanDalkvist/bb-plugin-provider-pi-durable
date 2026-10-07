@@ -48,5 +48,34 @@
 - Issue #2 repro: Verified `resolveRunnerPath` in isolated `cacheRoot` finds sibling `packageRoot/dist/runner/index.js`.
 - Issue #3 repro: Verified runner exits reject `start()` promptly without timeout hang; no premature ready emitted.
 
-### 4. Residual Risk & Follow-Up
+### 4. Remediation & Hardening (Cycle 56 Remediation - 2026-10-07)
+
+**Plan Reference:** `docs/superpowers/plans/2026-10-07-arch-improvement-cycle-56-boot-integrity-remediation.md`
+
+#### Additional Triaged Findings & Dispositions
+
+| ID | Issue / Review Finding | Severity | Rule | Disposition | Root Cause & Resolution |
+|---|---|---|---|---|---|
+| **F-56-4** | Real BB IDE Runner Discovery | **P0** | AP-010, AP-027 | `fix-now` | `resolveRunnerPath` failed when running from BB host-artifacts directory (`~/.bb/plugin-host-artifacts/provider-pi-durable/<hash>/host.mjs`). **Fix:** Added multi-tier resolution: (1) env overrides, (2) direct relative from `fromDir`, (3) reading `root_dir` from `~/.bb/bb.db` via `node:sqlite`, (4) scanning `~/.bb/plugins/cache/git` and `~/.bb/plugins/cache/npm`, (5) standard BB plugin directory. Verified on real BB artifact path. |
+| **F-56-5** | Zombie Process Leak on Session Startup Failure | **P1** | AP-012, AP-022 | `fix-now` | If `start()` timed out or `refreshContextUsage()` failed, `this.kill()` was not called. **Fix:** Added guaranteed `this.kill()` in `catch` block of `PiThreadSession.start()` before rethrowing. |
+| **F-56-6** | Model Catalog Startup Error Swallowing & Process Leak | **P1** | AP-012, AP-022 | `fix-now` | `ModelCatalog.start()` swallowed startup errors with `console.warn`, lacked `onError`/`onExit` hooks on `RunnerProcess`, leaked timeout timer, and left dead processes in OS. **Fix:** Added `readyReject`, wired `onError`/`onExit`, cleared timer in `finally`, and guaranteed `this.kill()` + error rethrow on startup failure. |
+| **F-56-7** | AP-019 File Size Violation in `src/runner/runtime.ts` | **P2** | AP-019 | `fix-now` | `src/runner/runtime.ts` was 430 lines (exceeded 250-line hard limit). **Fix:** Modularized into `runtime-types.ts` (104 lines), `runtime-controller.ts` (147 lines), `runtime-loader.ts` (111 lines), and facade `runtime.ts` (213 lines). Every file strictly < 250 lines. |
+| **F-56-8** | CLI Argument Parser Greediness & `--cwd` Support | **P2** | AP-013, AP-026 | `fix-now` | `parseCliArgs` lacked explicit `--cwd <val>` handling and could let flags consume positional arguments. **Fix:** Added `--cwd` support, protected boolean flags (`--no-session`) from consuming positional arguments. |
+| **F-56-9** | D-1 & D-2 Parity (Lockfile Cleanup & Session Path Suffix) | **P2** | AP-013, AP-047 | `fix-now` | (D-1) Runner terminated on SIGTERM/SIGINT without releasing `proper-lockfile`. **Fix:** Added `await activeDurable.close()` before `process.exit(0)`. (D-2) SQLite database sessions used `.jsonl` suffix. **Fix:** Updated `resolveSessionFilePath` and `selectSession` to strip `.jsonl` / `.sqlite` from directory names. |
+
+#### Remediation Verification Evidence
+
+- `npm run build`: Success (`dist/runner/index.js`, `dist/host.js`, `dist/server.js`).
+- `npm test`: **34 / 34 passing assertions (0 failed, 0 skipped)** across all test suites.
+  - `tests/bb-event-adapter.test.ts`: 2 passed
+  - `tests/bridge-error-handling.test.ts`: 6 passed
+  - `tests/compaction-settings.test.ts`: 3 passed
+  - `tests/cwd-isolation.test.ts`: 9 passed
+  - `tests/runner-discovery.test.ts`: 8 passed
+  - `tests/startup-readiness.test.ts`: 6 passed
+- Real BB artifact path test: `resolveRunnerPath({ fromDir: "/Users/vanya/.bb/plugin-host-artifacts/provider-pi-durable/6e4db84ddf8cab895f7af2c6878d61d479ea2f6934bf804cc008797ce29b757c" })` successfully returns `/Users/vanya/Projects/bb-plugin-provider-pi-durable/dist/runner/index.js`.
+- AP-019 line check: All modified and new files under 250 lines (hard limit) and most under 150 lines (soft limit).
+- AP-022 check: Zero uncommented empty catch blocks across entire codebase.
+
+### 5. Residual Risk & Follow-Up
 - Full Stage 1 roadmap continues in Cycle 57 (Tool fault integrity & diff forwarding) and Cycle 58 (Thinking accordion streaming & turn checkpoints).

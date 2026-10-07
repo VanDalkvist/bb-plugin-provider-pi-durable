@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
+import { DatabaseSync } from "node:sqlite";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -8,6 +9,60 @@ const __dirname = dirname(__filename);
 
 export interface ResolveRunnerOptions {
 	fromDir?: string;
+	bbDbPath?: string;
+	cacheDir?: string;
+}
+
+function findRunnerFromDb(dbPath: string): string | null {
+	if (!existsSync(dbPath)) return null;
+	try {
+		const db = new DatabaseSync(dbPath, { readOnly: true });
+		try {
+			const query = `
+				SELECT root_dir FROM plugins
+				WHERE (id = 'provider-pi-durable' OR id = 'bb-plugin-provider-pi-durable')
+				ORDER BY enabled DESC, updated_at DESC
+				LIMIT 1
+			`;
+			const row = db.prepare(query).get() as { root_dir?: string } | undefined;
+			if (row?.root_dir) {
+				const candidate = resolve(row.root_dir, "dist", "runner", "index.js");
+				if (existsSync(candidate)) return candidate;
+				const srcCandidate = resolve(row.root_dir, "runner", "index.js");
+				if (existsSync(srcCandidate)) return srcCandidate;
+			}
+		} finally {
+			db.close();
+		}
+	} catch {
+		// intentionally ignored: sqlite database locked, unreadable, or schema absent
+	}
+	return null;
+}
+
+function findRunnerInCache(cacheRoot: string, maxDepth = 5): string | null {
+	if (!existsSync(cacheRoot)) return null;
+	const queue: { dir: string; depth: number }[] = [{ dir: cacheRoot, depth: 0 }];
+	while (queue.length > 0) {
+		const { dir, depth } = queue.shift()!;
+		if (depth > maxDepth) continue;
+		try {
+			const entries = readdirSync(dir, { withFileTypes: true });
+			for (const entry of entries) {
+				if (!entry.isDirectory()) continue;
+				if (entry.name === ".git" || entry.name === "node_modules") continue;
+				const full = join(dir, entry.name);
+				const candidate = join(full, "dist", "runner", "index.js");
+				if (existsSync(candidate)) return candidate;
+				const srcCandidate = join(full, "runner", "index.js");
+				if (existsSync(srcCandidate)) return srcCandidate;
+				queue.push({ dir: full, depth: depth + 1 });
+			}
+		} catch {
+			// intentionally ignored: filesystem permission error during directory walk
+		}
+	}
+	return null;
 }
 
 export function resolveRunnerPath(options?: ResolveRunnerOptions): string {
@@ -18,8 +73,8 @@ export function resolveRunnerPath(options?: ResolveRunnerOptions): string {
 	}
 
 	const baseDir = options?.fromDir ? resolve(options.fromDir) : __dirname;
-
 	const directCandidates = [
+		resolve(baseDir, "dist", "runner", "index.js"),
 		resolve(baseDir, "runner", "index.js"),
 		resolve(baseDir, "..", "runner", "index.js"),
 		resolve(baseDir, "..", "dist", "runner", "index.js"),
@@ -27,6 +82,27 @@ export function resolveRunnerPath(options?: ResolveRunnerOptions): string {
 	];
 
 	for (const candidate of directCandidates) {
+		if (existsSync(candidate)) return candidate;
+	}
+
+	const bbDbPath = options?.bbDbPath ?? join(homedir(), ".bb", "bb.db");
+	const dbRunner = findRunnerFromDb(bbDbPath);
+	if (dbRunner) return dbRunner;
+
+	const cacheRoots = options?.cacheDir
+		? [join(options.cacheDir, "git"), join(options.cacheDir, "npm"), options.cacheDir]
+		: [join(homedir(), ".bb", "plugins", "cache", "git"), join(homedir(), ".bb", "plugins", "cache", "npm")];
+
+	for (const cr of cacheRoots) {
+		const found = findRunnerInCache(cr);
+		if (found) return found;
+	}
+
+	const bbPluginCandidates = [
+		join(homedir(), ".bb", "plugins", "provider-pi-durable", "dist", "runner", "index.js"),
+		join(homedir(), ".bb", "plugins", "bb-plugin-provider-pi-durable", "dist", "runner", "index.js"),
+	];
+	for (const candidate of bbPluginCandidates) {
 		if (existsSync(candidate)) return candidate;
 	}
 
@@ -47,16 +123,7 @@ export function resolveRunnerPath(options?: ResolveRunnerOptions): string {
 		// intentionally ignored: filesystem permission error during directory walk
 	}
 
-	const bbPluginCandidates = [
-		join(homedir(), ".bb", "plugins", "provider-pi-durable", "dist", "runner", "index.js"),
-		join(homedir(), ".bb", "plugins", "bb-plugin-provider-pi-durable", "dist", "runner", "index.js"),
-	];
-
-	for (const candidate of bbPluginCandidates) {
-		if (existsSync(candidate)) return candidate;
-	}
-
-	const allSearched = [...directCandidates, `${parentDir}/*/dist/runner/index.js`, ...bbPluginCandidates];
+	const allSearched = [...directCandidates, `bb.db: ${bbDbPath}`, ...cacheRoots, ...bbPluginCandidates];
 
 	throw new Error(
 		`Pi Durable internal runner bundle not found. Searched in: ${allSearched.join(", ")}. Please build the plugin using "npm run build" or set PI_DURABLE_RUNNER_PATH.`,
@@ -71,7 +138,7 @@ export function resolveSessionDir(env: NodeJS.ProcessEnv = process.env): string 
 
 export function resolveSessionFilePath(threadId: string, env: NodeJS.ProcessEnv = process.env): string {
 	const sanitized = threadId.replace(/[^A-Za-z0-9._-]/g, "_");
-	return join(resolveSessionDir(env), `${sanitized}.jsonl`);
+	return join(resolveSessionDir(env), sanitized);
 }
 
 let activeScratchDir: string | null = null;

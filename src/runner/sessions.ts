@@ -40,10 +40,16 @@ export async function selectSession(
 	let directory: string;
 	let created = false;
 	if (targetSession) {
-		if (targetSession.includes("/") || targetSession.includes("\\")) {
-			directory = targetSession.endsWith(".sqlite") ? resolve(targetSession, "..") : resolve(targetSession);
+		let cleanTarget = targetSession;
+		if (cleanTarget.endsWith(".sqlite")) {
+			cleanTarget = resolve(cleanTarget, "..");
+		} else if (cleanTarget.endsWith(".jsonl")) {
+			cleanTarget = cleanTarget.slice(0, -6);
+		}
+		if (cleanTarget.includes("/") || cleanTarget.includes("\\")) {
+			directory = resolve(cleanTarget);
 		} else {
-			directory = join(root, targetSession);
+			directory = join(root, cleanTarget);
 		}
 		try {
 			await mkdir(directory, { recursive: true });

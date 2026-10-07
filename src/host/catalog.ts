@@ -8,12 +8,33 @@ export class ModelCatalog {
 	private modelScope: ModelScope = {};
 	private readyPromise: Promise<void>;
 	private readyResolve!: () => void;
+	private readyReject!: (err: Error) => void;
+	private startupSettled = false;
 
 	constructor(cwd: string = process.cwd()) {
 		this.cwd = cwd;
-		this.readyPromise = new Promise((resolve) => {
-			this.readyResolve = resolve;
+		this.readyPromise = this.createReadyPromise();
+	}
+
+	private createReadyPromise(): Promise<void> {
+		this.startupSettled = false;
+		const promise = new Promise<void>((resolve, reject) => {
+			this.readyResolve = () => {
+				if (!this.startupSettled) {
+					this.startupSettled = true;
+					resolve();
+				}
+			};
+			this.readyReject = (err: Error) => {
+				if (!this.startupSettled) {
+					this.startupSettled = true;
+					reject(err);
+				}
+			};
 		});
+		// intentionally ignored: prevent unhandledRejection if readyPromise rejects before caller awaits start()
+		promise.catch(() => {});
+		return promise;
 	}
 
 	public async start(): Promise<void> {
@@ -21,10 +42,9 @@ export class ModelCatalog {
 
 		if (this.runner?.exited) {
 			this.runner = null;
-			this.readyPromise = new Promise((resolve) => {
-				this.readyResolve = resolve;
-			});
 		}
+
+		this.readyPromise = this.createReadyPromise();
 
 		const extensionPath = requireExtensionPath();
 		this.runner = new RunnerProcess({
@@ -40,15 +60,29 @@ export class ModelCatalog {
 					this.readyResolve();
 				}
 			},
+			onError: (err) => {
+				this.readyReject(new Error(`Catalog runner launch failed: ${err.message}`));
+			},
+			onExit: (code, signal) => {
+				this.readyReject(new Error(`Catalog runner exited before becoming ready (code ${code}, signal ${signal})`));
+			},
 		});
 
+		let timer: NodeJS.Timeout | null = null;
 		try {
 			await Promise.race([
 				this.readyPromise,
-				new Promise((_, reject) => setTimeout(() => reject(new Error("Catalog runner startup timed out")), 20000)),
+				new Promise<void>((_, reject) => {
+					timer = setTimeout(() => reject(new Error("Catalog runner startup timed out")), 20000);
+				}),
 			]);
 		} catch (err) {
-			console.warn(`[Catalog] Startup ready check timed out or failed: ${err}`);
+			this.kill();
+			throw err;
+		} finally {
+			if (timer !== null) {
+				clearTimeout(timer);
+			}
 		}
 	}
 
@@ -104,11 +138,15 @@ export class ModelCatalog {
 		}
 	}
 
-	public close(): void {
+	public kill(): void {
 		if (this.runner) {
 			this.runner.kill();
 			this.runner = null;
 		}
+	}
+
+	public close(): void {
+		this.kill();
 	}
 }
 

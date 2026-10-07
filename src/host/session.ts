@@ -33,7 +33,7 @@ export class PiThreadSession {
 				}
 			};
 		});
-		// Prevent unhandledRejection if readyPromise rejects before caller awaits start()
+		// intentionally ignored: prevent unhandledRejection if readyPromise rejects before caller awaits start()
 		this.readyPromise.catch(() => {});
 
 		const args = ["--mode", "rpc"];
@@ -76,19 +76,24 @@ export class PiThreadSession {
 	public async start(): Promise<void> {
 		let timer: NodeJS.Timeout | null = null;
 		try {
-			await Promise.race([
-				this.readyPromise,
-				new Promise<void>((_, reject) => {
-					timer = setTimeout(() => reject(new Error("Runner startup ready timed out")), 20000);
-				}),
-			]);
-		} finally {
-			if (timer !== null) {
-				clearTimeout(timer);
+			try {
+				await Promise.race([
+					this.readyPromise,
+					new Promise<void>((_, reject) => {
+						timer = setTimeout(() => reject(new Error("Runner startup ready timed out")), 20000);
+					}),
+				]);
+			} finally {
+				if (timer !== null) {
+					clearTimeout(timer);
+				}
 			}
-		}
 
-		await this.refreshContextUsage();
+			await this.refreshContextUsage();
+		} catch (err) {
+			this.kill();
+			throw err;
+		}
 	}
 
 	private async handleRunnerEvent(event: RunnerEvent) {

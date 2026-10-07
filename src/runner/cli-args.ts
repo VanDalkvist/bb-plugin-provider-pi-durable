@@ -29,6 +29,7 @@ export function parseCliArgs(argv: string[]): CliArgs {
 		else if (arg === "--thinking" && i + 1 < argv.length) args.thinking = argv[++i] as ModelThinkingLevel;
 		else if (arg === "--system-prompt" && i + 1 < argv.length) args.systemPromptPath = argv[++i];
 		else if (arg === "--append-system-prompt" && i + 1 < argv.length) args.appendSystemPromptPath = argv[++i];
+		else if (arg === "--cwd" && i + 1 < argv.length) args.cwd = argv[++i];
 		else if (arg === "--extension" && i + 1 < argv.length) args.extension = argv[++i];
 		else if (arg.startsWith("-")) {
 			// Skip unknown options and consume their parameter if present
