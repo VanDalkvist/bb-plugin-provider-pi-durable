@@ -1,9 +1,17 @@
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type { DurableView } from "../runtime.ts";
-import type { BBAssistantMessage } from "./contracts.ts";
+import {
+	isUsageDocument,
+	isConversationEntryRecord,
+	type BBAssistantMessage,
+	type BBAssistantMessageUsage,
+	type ConversationEntryRecord,
+	type UsageDocument,
+} from "./contracts.ts";
 
 /**
  * Reconstructs or extracts the final assistant message and usage metrics for turn completion.
+ * AP-026, AP-029 compliant.
  */
 export function buildFinalAssistantMessage(
 	current: DurableView,
@@ -11,15 +19,27 @@ export function buildFinalAssistantMessage(
 	lastThinkingText: string,
 ): BBAssistantMessage {
 	const entries = current.conversation.entries ?? [];
-	const lastAssistantEntry = [...entries].reverse().find((e: any) => e.kind === "pi.assistant") as any;
+	const lastAssistantEntry = [...entries].reverse().find(
+		(e): e is ConversationEntryRecord => isConversationEntryRecord(e) && e.kind === "pi.assistant",
+	);
 	const lastAssistantMsg = lastAssistantEntry?.model?.[0] as AssistantMessage | undefined;
 
 	if (lastAssistantMsg) {
+		const content = Array.isArray(lastAssistantMsg.content)
+			? (lastAssistantMsg.content as unknown as BBAssistantMessage["content"])
+			: [{ type: "text" as const, text: lastGenerationText }];
+		const stopReason = typeof lastAssistantMsg.stopReason === "string"
+			? (lastAssistantMsg.stopReason as BBAssistantMessage["stopReason"])
+			: "stop";
+		const usage = (typeof lastAssistantMsg.usage === "object" && lastAssistantMsg.usage !== null)
+			? (lastAssistantMsg.usage as BBAssistantMessageUsage)
+			: undefined;
+
 		return {
 			role: "assistant",
-			content: (lastAssistantMsg.content as any) ?? [{ type: "text", text: lastGenerationText }],
-			stopReason: (lastAssistantMsg.stopReason as any) ?? "stop",
-			usage: lastAssistantMsg.usage as any,
+			content,
+			stopReason,
+			usage,
 		};
 	}
 
@@ -31,7 +51,8 @@ export function buildFinalAssistantMessage(
 		finalContent.push({ type: "text", text: lastGenerationText });
 	}
 
-	const usageDoc = (current.conversation.docs["pi.usage"] ?? {}) as any;
+	const rawUsageDoc = current.conversation.docs["pi.usage"];
+	const usageDoc: UsageDocument = isUsageDocument(rawUsageDoc) ? rawUsageDoc : {};
 	return {
 		role: "assistant",
 		content: finalContent.length > 0 ? finalContent : [{ type: "text", text: "" }],

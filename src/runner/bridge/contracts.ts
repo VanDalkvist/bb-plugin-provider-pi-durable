@@ -1,6 +1,6 @@
 /**
  * Wire contracts and DTO schemas for Beyond Boundaries (BB IDE) RPC integration.
- * In accordance with AP-026 (DTO boundaries & strict schema validation).
+ * In accordance with AP-026 (DTO boundaries & strict schema validation) and AP-029 (Zero any casts).
  */
 
 export interface BBToolExecutionStartEvent {
@@ -27,24 +27,15 @@ export interface BBToolExecutionEndEvent {
 
 export interface BBThinkingDeltaEvent {
 	type: "message_update";
-	assistantMessageEvent: {
-		type: "thinking_delta";
-		contentIndex: 0;
-		delta: string;
-	};
+	assistantMessageEvent: { type: "thinking_delta"; contentIndex: 0; delta: string };
 }
 
 export interface BBTextDeltaEvent {
 	type: "message_update";
-	assistantMessageEvent: {
-		type: "text_delta";
-		contentIndex: number;
-		delta: string;
-	};
+	assistantMessageEvent: { type: "text_delta"; contentIndex: number; delta: string };
 }
 
 export type BBMessageUpdateEvent = BBThinkingDeltaEvent | BBTextDeltaEvent;
-
 
 export interface BBAssistantMessageUsage {
 	input?: number;
@@ -72,13 +63,8 @@ export interface BBAssistantMessage {
 	usage?: BBAssistantMessageUsage;
 }
 
-export interface BBAgentStartEvent {
-	type: "agent_start";
-}
-
-export interface BBTurnStartEvent {
-	type: "turn_start";
-}
+export interface BBAgentStartEvent { type: "agent_start"; }
+export interface BBTurnStartEvent { type: "turn_start"; }
 
 export interface BBTurnEndEvent {
 	type: "turn_end";
@@ -110,10 +96,7 @@ export interface BBCompactionEndEvent {
 }
 
 export interface BBSessionStatsData {
-	contextUsage: {
-		tokens: number;
-		contextWindow: number;
-	};
+	contextUsage: { tokens: number; contextWindow: number };
 }
 
 export type BBWireEvent =
@@ -129,3 +112,73 @@ export type BBWireEvent =
 	| BBCompactionStartEvent
 	| BBCompactionEndEvent;
 
+// Durable SQLite Document Schemas & Type Guards (AP-026, AP-029)
+
+export interface AgentDocument {
+	model?: { provider?: string; modelId?: string };
+	[key: string]: unknown;
+}
+
+export interface UsageDocument {
+	input?: number;
+	output?: number;
+	cacheRead?: number;
+	cacheWrite?: number;
+	totalTokens?: number;
+	cost?: {
+		input?: number;
+		output?: number;
+		cacheRead?: number;
+		cacheWrite?: number;
+		total?: number;
+	};
+	[key: string]: unknown;
+}
+
+export interface ToolArgumentsDocument {
+	[key: string]: unknown;
+}
+
+export interface ToolCallBlock {
+	type: string;
+	id?: string;
+	callId?: string;
+	arguments?: Record<string, unknown>;
+	[key: string]: unknown;
+}
+
+export interface ConversationEntryRecord {
+	kind?: string;
+	model?: Array<{
+		role?: string;
+		isError?: boolean;
+		content?: unknown;
+		stopReason?: string;
+		usage?: BBAssistantMessageUsage;
+		[key: string]: unknown;
+	}>;
+	[key: string]: unknown;
+}
+
+export interface LiveToolSlotRecord {
+	id?: string | number;
+	callId?: string;
+	args?: Record<string, unknown>;
+	[key: string]: unknown;
+}
+
+export function isAgentDocument(doc: unknown): doc is AgentDocument {
+	return typeof doc === "object" && doc !== null;
+}
+
+export function isUsageDocument(doc: unknown): doc is UsageDocument {
+	return typeof doc === "object" && doc !== null;
+}
+
+export function isToolCallBlock(block: unknown): block is ToolCallBlock {
+	return typeof block === "object" && block !== null && (block as ToolCallBlock).type === "toolCall";
+}
+
+export function isConversationEntryRecord(entry: unknown): entry is ConversationEntryRecord {
+	return typeof entry === "object" && entry !== null;
+}

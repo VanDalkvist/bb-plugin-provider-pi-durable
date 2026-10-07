@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { StringDecoder } from "node:string_decoder";
 import { resolveRunnerPath } from "./paths.ts";
+import { RunnerRpcChannel } from "./runner-rpc-channel.ts";
 import type { RunnerEvent } from "./types.ts";
 
 export interface RunnerProcessOptions {
@@ -16,10 +16,7 @@ export interface RunnerProcessOptions {
 export class RunnerProcess {
 	private options: RunnerProcessOptions;
 	private child: ChildProcess;
-	private channelDecoder = new StringDecoder("utf8");
-	private channelBuf = "";
-	private pendingRequests = new Map<string, { resolve: (val: unknown) => void; reject: (err: Error) => void; timer?: NodeJS.Timeout }>();
-	private nextRequestId = 0;
+	private channel = new RunnerRpcChannel();
 	public exited = false;
 
 	constructor(options: RunnerProcessOptions) {
@@ -29,58 +26,26 @@ export class RunnerProcess {
 		this.child = spawn(process.execPath, [runnerPath, ...options.args], {
 			cwd: options.cwd,
 			stdio: ["pipe", "pipe", "pipe", "pipe", "pipe"],
-			env: {
-				...process.env,
-				...options.env,
-			},
+			env: { ...process.env, ...options.env },
 		});
 
-		this.setupStdout();
-		this.setupChannel();
+		this.setupStreams();
 		this.setupLifecycle();
 	}
 
-	private setupStdout() {
-		let stdoutBuf = "";
-		const decoder = new StringDecoder("utf8");
-
-		this.child.stdout?.on("data", (chunk: Buffer) => {
-			stdoutBuf += decoder.write(chunk);
-			const lines = stdoutBuf.split("\n");
-			stdoutBuf = lines.pop() ?? "";
-
-			for (const line of lines) {
-				const trimmed = line.trim();
-				if (!trimmed) continue;
-				try {
-					const parsed = JSON.parse(trimmed) as RunnerEvent;
-					this.handleIncoming(parsed);
-				} catch (err) {
-					console.error(`[RunnerProcess] Failed to parse or handle stdout line: ${trimmed}`, err);
-				}
-			}
-		});
+	public get pendingRequests() {
+		return this.channel.pendingRequests;
 	}
 
-	private setupChannel() {
-		// FD 3 is child-to-host channel
-		const stdioList = this.child.stdio as unknown as Array<NodeJS.ReadableStream | null>;
-		const channelIn = stdioList[3];
+	private setupStreams() {
+		this.child.stdout?.on("data", (chunk: Buffer) => {
+			this.channel.feedStdout(chunk, (event) => this.handleIncoming(event));
+		});
+
+		const channelIn = (this.child.stdio as unknown as Array<NodeJS.ReadableStream | null>)[3];
 		if (channelIn) {
 			channelIn.on("data", (chunk: Buffer) => {
-				this.channelBuf += this.channelDecoder.write(chunk);
-				const lines = this.channelBuf.split("\n");
-				this.channelBuf = lines.pop() ?? "";
-				for (const line of lines) {
-					const trimmed = line.trim();
-					if (!trimmed) continue;
-					try {
-						const parsed = JSON.parse(trimmed);
-						this.options.onChannelMessage?.(parsed);
-					} catch (err) {
-						console.error(`[RunnerProcess] Failed to parse channel message: ${trimmed}`, err);
-					}
-				}
+				this.channel.feedChannel(chunk, (msg) => this.options.onChannelMessage?.(msg));
 			});
 		}
 	}
@@ -88,21 +53,13 @@ export class RunnerProcess {
 	private setupLifecycle() {
 		this.child.on("error", (err) => {
 			this.exited = true;
-			for (const { reject, timer } of this.pendingRequests.values()) {
-				if (timer) clearTimeout(timer);
-				reject(err);
-			}
-			this.pendingRequests.clear();
+			this.channel.failAll(err);
 			this.options.onError?.(err);
 		});
 
 		this.child.on("exit", (code, signal) => {
 			this.exited = true;
-			for (const { reject, timer } of this.pendingRequests.values()) {
-				if (timer) clearTimeout(timer);
-				reject(new Error(`Runner process exited (code ${code}, signal ${signal})`));
-			}
-			this.pendingRequests.clear();
+			this.channel.failAll(new Error(`Runner process exited (code ${code}, signal ${signal})`));
 			this.options.onExit?.(code, signal);
 		});
 
@@ -114,28 +71,14 @@ export class RunnerProcess {
 		});
 	}
 
-	private handleIncoming(msg: RunnerEvent) {
-		if (typeof msg.id !== "undefined") {
-			const reqId = String(msg.id);
-			const pending = this.pendingRequests.get(reqId);
-			if (pending) {
-				if (pending.timer) clearTimeout(pending.timer);
-				this.pendingRequests.delete(reqId);
-				if (msg.error) {
-					const errObj = msg.error as { message?: string };
-					pending.reject(new Error(errObj?.message || String(msg.error)));
-				} else {
-					pending.resolve(msg.data !== undefined ? msg.data : (msg.result ?? msg));
-				}
-				return;
+	public handleIncoming(msg: RunnerEvent): void {
+		const handled = this.channel.handleIncoming(msg);
+		if (!handled) {
+			try {
+				this.options.onEvent?.(msg);
+			} catch (err) {
+				console.error("[RunnerProcess] onEvent subscriber threw an error:", err);
 			}
-		}
-
-		// Dispatch normal event to subscriber
-		try {
-			this.options.onEvent?.(msg);
-		} catch (err) {
-			console.error(`[RunnerProcess] onEvent subscriber threw an error:`, err);
 		}
 	}
 
@@ -143,18 +86,7 @@ export class RunnerProcess {
 		if (this.exited || !this.child.stdin) {
 			throw new Error("Runner process is not running");
 		}
-
-		this.nextRequestId++;
-		const id = `req_${this.nextRequestId}`;
-		const payload = { ...cmd, id };
-
-		return new Promise((resolve, reject) => {
-			const timer = setTimeout(() => {
-				this.pendingRequests.delete(id);
-				reject(new Error(`Runner request timed out (${timeoutMs}ms): ${cmd.type || JSON.stringify(cmd)}`));
-			}, timeoutMs);
-
-			this.pendingRequests.set(id, { resolve, reject, timer });
+		return this.channel.createRequest(cmd, timeoutMs, (payload) => {
 			this.child.stdin?.write(JSON.stringify(payload) + "\n");
 		});
 	}
@@ -171,8 +103,7 @@ export class RunnerProcess {
 	}
 
 	public sendChannel(msg: unknown): void {
-		const stdioList = this.child.stdio as unknown as Array<NodeJS.WritableStream | null>;
-		const channelOut = stdioList[4];
+		const channelOut = (this.child.stdio as unknown as Array<NodeJS.WritableStream | null>)[4];
 		if (channelOut) {
 			channelOut.write(JSON.stringify(msg) + "\n");
 		}
@@ -181,11 +112,10 @@ export class RunnerProcess {
 	public async closeGracefully(timeoutMs = 5000): Promise<void> {
 		if (this.exited) return;
 
-		// Intentionally best-effort abort before termination per AP-022
 		try {
 			await this.request({ type: "abort" }, Math.max(1000, Math.floor(timeoutMs / 2)));
 		} catch {
-			// intentionally ignored: process may already be terminating or unresponsive
+			// ignored: process may already be terminating per AP-022
 		}
 
 		this.child.stdin?.end();

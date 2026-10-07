@@ -1,0 +1,145 @@
+import type { RunnerEvent, ThreadDelta } from "./types.ts";
+
+export interface MessageTranslationState {
+	currentThinkingIndex: number;
+	currentAgentText: string;
+}
+
+export function translateMessageUpdate(
+	asst: Record<string, unknown> | undefined,
+	state: MessageTranslationState,
+): ThreadDelta[] {
+	if (!asst) return [];
+	const deltas: ThreadDelta[] = [];
+
+	if (asst.type === "thinking_delta" && typeof asst.delta === "string") {
+		const idx = typeof asst.contentIndex === "number" ? asst.contentIndex : state.currentThinkingIndex;
+		deltas.push({
+			kind: "item.textDelta",
+			key: { channel: `thinking-${idx}` },
+			channel: "reasoningText",
+			text: asst.delta,
+		});
+	} else if (asst.type === "thinking_end") {
+		const idx = typeof asst.contentIndex === "number" ? asst.contentIndex : state.currentThinkingIndex;
+		deltas.push({
+			kind: "item.textClose",
+			key: { channel: `thinking-${idx}` },
+			channel: "reasoningText",
+			text: (asst.content as string) ?? "",
+		});
+		state.currentThinkingIndex++;
+	} else if (asst.type === "text_delta" && typeof asst.delta === "string") {
+		state.currentAgentText += asst.delta;
+		deltas.push({
+			kind: "item.textDelta",
+			key: { channel: "agentMessage" },
+			channel: "agentMessage",
+			text: asst.delta,
+		});
+	}
+
+	return deltas;
+}
+
+export function translateMessageEnd(
+	msg: { content?: Array<{ type?: string; text?: string }> } | undefined,
+	currentAgentText: string,
+): { deltas: ThreadDelta[]; nextAgentText: string } {
+	let finalText = currentAgentText;
+	if (msg?.content && Array.isArray(msg.content)) {
+		const textParts = msg.content
+			.filter((p) => p && p.type === "text" && typeof p.text === "string")
+			.map((p) => p.text as string);
+		if (textParts.length > 0) {
+			finalText = textParts.join("");
+		}
+	}
+
+	const deltas: ThreadDelta[] = [];
+	if (finalText) {
+		deltas.push({
+			kind: "item.textClose",
+			key: { channel: "agentMessage" },
+			channel: "agentMessage",
+			text: finalText,
+		});
+	}
+	return { deltas, nextAgentText: "" };
+}
+
+export function translateAgentEnd(
+	event: RunnerEvent,
+	currentAgentText: string,
+	turnBoundarySent: boolean,
+): { deltas: ThreadDelta[]; turnBoundarySent: boolean } {
+	const deltas: ThreadDelta[] = [];
+	if (currentAgentText) {
+		deltas.push({
+			kind: "item.textClose",
+			key: { channel: "agentMessage" },
+			channel: "agentMessage",
+			text: currentAgentText,
+		});
+	}
+
+	const rawMsg = event.message ?? (event.messages as unknown[])?.[0];
+	deltas.push(...translateAgentEndUsage(rawMsg, event.contextWindow));
+
+	let boundarySent = turnBoundarySent;
+	if (!boundarySent) {
+		boundarySent = true;
+		deltas.push({
+			kind: "turn.boundary",
+			status: "completed",
+			claimIfIdle: true,
+		});
+	}
+
+	return { deltas, turnBoundarySent: boundarySent };
+}
+
+export function translateAgentEndUsage(
+	rawMsg: unknown,
+	contextWindow?: number,
+): ThreadDelta[] {
+	const usage = (rawMsg as { usage?: Record<string, unknown> } | undefined)?.usage;
+	if (!usage) return [];
+
+	const inTok = Number(usage.input ?? 0);
+	const outTok = Number(usage.output ?? 0);
+	const totTok = Number(usage.totalTokens ?? (inTok + outTok));
+	const cwSize = typeof contextWindow === "number" && contextWindow > 0 ? contextWindow : 128000;
+
+	return [
+		{
+			kind: "usage",
+			modelContextWindow: cwSize,
+			last: {
+				totalTokens: totTok,
+				inputTokens: inTok,
+				cachedInputTokens: Number(usage.cacheRead ?? 0),
+				cacheReadInputTokens: Number(usage.cacheRead ?? 0),
+				cacheWriteInputTokens: Number(usage.cacheWrite ?? 0),
+				outputTokens: outTok,
+				reasoningOutputTokens: Number(usage.reasoning ?? 0),
+			},
+			total: {
+				totalTokens: totTok,
+				inputTokens: inTok,
+				cachedInputTokens: Number(usage.cacheRead ?? 0),
+				cacheReadInputTokens: Number(usage.cacheRead ?? 0),
+				cacheWriteInputTokens: Number(usage.cacheWrite ?? 0),
+				outputTokens: outTok,
+				reasoningOutputTokens: Number(usage.reasoning ?? 0),
+			},
+		},
+		{
+			kind: "contextWindow",
+			used: totTok,
+			size: cwSize,
+			estimated: false,
+			attach: "currentOrLast",
+		},
+	];
+}

@@ -294,7 +294,7 @@
   - `tests/bb-event-adapter.test.ts`: 2 passed
   - `tests/bridge-error-handling.test.ts`: 6 passed
   - `tests/compaction-settings.test.ts`: 3 passed
-  - `tests/context-telemetry.test.ts`: 6 passed
+  - `tests/context-window-usage.test.ts`: 6 passed
   - `tests/cwd-isolation.test.ts`: 9 passed
   - `tests/extension-bridge.test.ts`: 6 passed
   - `tests/prompt-adapter.test.ts`: 5 passed
@@ -303,6 +303,53 @@
   - `tests/tool-delta-translator.test.ts`: 3 passed
 - `node scripts/build-runner.mjs && bb plugin build`: Clean build of both runner bundle (`dist/runner/index.js`) and plugin host/server bundles.
 - `bb plugin reload provider-pi-durable`: Plugin reloaded cleanly to v0.3.0.
+
+---
+
+## Cycle 62: Host Modularity & Bridge Type Safety (2026-10-07)
+
+**Release:** `v0.2.7`  
+**Governing Standard:** `arch-rules.md` (AP-010 – AP-071)  
+**Prior Cycle:** Cycle 61 (`v0.3.0`, commit `a94ff7c`)
+
+### 1. Scope and Objective
+
+Decompose bloated host layer files to maintain strict modularity, eliminate `as any` type escape hatches in the bridge reading internal Durable SQLite documents, and clean up upstream coupling.
+
+### 2. Changes Made
+
+- **AP-019 (Modularity & File Limits):**
+  - `src/host/delta-translator.ts` (131 lines): extracted message delta and usage mapping to `src/host/message-delta-translator.ts` (145 lines).
+  - `src/host/runner-process.ts` (141 lines): extracted line buffering and pending request promise mapping to `src/host/runner-rpc-channel.ts` (100 lines).
+  - `src/host/session.ts` (134 lines): extracted runner CLI arguments resolution, startup readiness deferred, and telemetry stats helpers to `src/host/session-telemetry.ts` (102 lines).
+  - `src/host/bridge.ts` (133 lines): extracted turn/steer, compaction, and thread/stop handler logic to `src/host/bridge-router.ts` (119 lines).
+  - All files in `src/host/` and `src/runner/` strictly adhere to modularity standards (< 200 lines).
+- **AP-029 (Zero `as any` / Strict TypeScript):**
+  - Added typed interfaces and type guards in `src/runner/bridge/contracts.ts`: `AgentDocument`, `UsageDocument`, `ToolCallBlock`, `ConversationEntryRecord`, `LiveToolSlotRecord`, `isAgentDocument`, `isUsageDocument`, `isToolCallBlock`, `isConversationEntryRecord`.
+  - Replaced all 12 `as any` casts in `src/runner/bridge/` (`tool-args-resolver.ts`, `assistant-message-builder.ts`, `bb-event-adapter.ts`) with typed schemas and type guards. Verified zero `as any` occurrences across the entire bridge.
+- **AP-011 (Low Coupling):**
+  - `src/runner/model-setup.ts`: replaced unnecessary local upstream re-export import of `getAgentDir` with canonical `@earendil-works/pi-coding-agent`.
+- **AP-028 (Documentation Integrity):**
+  - Fixed test filename reference in Cycle 61 ledger entry from `tests/context-telemetry.test.ts` to `tests/context-window-usage.test.ts`.
+
+### 3. Verification Evidence
+
+- `npm test`: **54 / 54 passing assertions (0 failed, 0 skipped)** across 6 suites.
+  - `tests/bb-event-adapter.test.ts`: 2 passed
+  - `tests/bridge-error-handling.test.ts`: 6 passed
+  - `tests/compaction-settings.test.ts`: 3 passed
+  - `tests/context-window-usage.test.ts`: 6 passed
+  - `tests/cwd-isolation.test.ts`: 9 passed
+  - `tests/extension-bridge.test.ts`: 6 passed
+  - `tests/prompt-adapter.test.ts`: 5 passed
+  - `tests/runner-discovery.test.ts`: 8 passed
+  - `tests/startup-readiness.test.ts`: 6 passed
+  - `tests/tool-delta-translator.test.ts`: 3 passed
+- `node scripts/build-runner.mjs && bb plugin build`: Clean build of both runner bundle (`dist/runner/index.js`) and plugin host/server bundles (`dist/server.js`, `dist/host.js`).
+- `wc -l src/host/*.ts src/runner/*.ts src/runner/**/*.ts`: Every file strictly under 200 lines (max 194 lines).
+- `grep -rn "as any" src/runner/bridge/`: 0 results.
+- `bb plugin reload provider-pi-durable`: Plugin reloaded cleanly to v0.2.7.
+
 
 
 

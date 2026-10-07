@@ -1,9 +1,43 @@
 import type { AgentEvent } from "@earendil-works/pi-durable";
 import type { DurableView } from "../runtime.ts";
-import type { BBWireEvent, BBAssistantMessage } from "./contracts.ts";
+import {
+	isAgentDocument,
+	type BBWireEvent,
+	type BBAssistantMessage,
+	type BBAssistantMessageUsage,
+} from "./contracts.ts";
 import { buildFinalAssistantMessage } from "./assistant-message-builder.ts";
 
 export { resolveToolCallArgs } from "./tool-args-resolver.ts";
+
+interface RawToolResultMessage {
+	isError?: boolean;
+	content?: string | Array<{ text?: string; [key: string]: unknown }>;
+	[key: string]: unknown;
+}
+
+interface RawAssistantEntryMessage {
+	role?: string;
+	content?: BBAssistantMessage["content"];
+	stopReason?: BBAssistantMessage["stopReason"];
+	usage?: BBAssistantMessageUsage;
+	[key: string]: unknown;
+}
+
+function extractToolResult(modelItem: unknown): { result: string; isError: boolean } {
+	const msg = typeof modelItem === "object" && modelItem !== null ? (modelItem as RawToolResultMessage) : undefined;
+	const isError = msg?.isError ?? false;
+	let result = "";
+	if (Array.isArray(msg?.content)) {
+		result = msg.content
+			.map((b) => (typeof b === "object" && b !== null && typeof b.text === "string" ? b.text : ""))
+			.filter(Boolean)
+			.join("\n");
+	} else if (typeof msg?.content === "string") {
+		result = msg.content;
+	}
+	return { result, isError };
+}
 
 /**
  * Transforms native @earendil-works/pi-durable AgentEvents into BB Wire JSONL events.
@@ -45,21 +79,13 @@ export class BBEventAdapter {
 						this.currentThinking += change.delta;
 						this.output({
 							type: "message_update",
-							assistantMessageEvent: {
-								type: "thinking_delta",
-								contentIndex: 0,
-								delta: change.delta,
-							},
+							assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: change.delta },
 						});
 					} else if (change.type === "text_delta") {
 						this.currentText += change.delta;
 						this.output({
 							type: "message_update",
-							assistantMessageEvent: {
-								type: "text_delta",
-								contentIndex: 0,
-								delta: change.delta,
-							},
+							assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: change.delta },
 						});
 					}
 				}
@@ -79,11 +105,8 @@ export class BBEventAdapter {
 			case "tool_execution_update": {
 				let partialResult = "";
 				if (event.output) {
-					if ("set" in event.output) {
-						partialResult = event.output.set;
-					} else if ("append" in event.output) {
-						partialResult = event.output.append ?? "";
-					}
+					if ("set" in event.output) partialResult = event.output.set;
+					else if ("append" in event.output) partialResult = event.output.append ?? "";
 				}
 				if (partialResult) {
 					this.output({
@@ -97,19 +120,7 @@ export class BBEventAdapter {
 			}
 
 			case "tool_execution_end": {
-				const toolResultMsg = event.entry?.model?.[0] as any;
-				const isError = toolResultMsg?.isError ?? false;
-				let result = "";
-
-				if (Array.isArray(toolResultMsg?.content)) {
-					result = toolResultMsg.content
-						.map((block: any) => (block && typeof block === "object" && "text" in block ? block.text : ""))
-						.filter(Boolean)
-						.join("\n");
-				} else if (typeof toolResultMsg?.content === "string") {
-					result = toolResultMsg.content;
-				}
-
+				const { result, isError } = extractToolResult(event.entry?.model?.[0]);
 				this.output({
 					type: "tool_execution_end",
 					toolCallId: event.toolCallId,
@@ -121,7 +132,9 @@ export class BBEventAdapter {
 			}
 
 			case "message_end": {
-				const msg = event.entry?.model?.[0] as any;
+				const modelItem = event.entry?.model?.[0];
+				const msg: RawAssistantEntryMessage | undefined =
+					typeof modelItem === "object" && modelItem !== null ? (modelItem as RawAssistantEntryMessage) : undefined;
 				if (msg?.role === "assistant") {
 					this.lastAssistantMessage = {
 						role: "assistant",
@@ -129,10 +142,7 @@ export class BBEventAdapter {
 						stopReason: msg.stopReason ?? "stop",
 						usage: msg.usage,
 					};
-					this.output({
-						type: "message_end",
-						message: this.lastAssistantMessage,
-					});
+					this.output({ type: "message_end", message: this.lastAssistantMessage });
 				}
 				break;
 			}
@@ -160,13 +170,10 @@ export class BBEventAdapter {
 					this.currentText,
 					this.currentThinking,
 				);
-				const agentDoc = (current?.conversation?.docs?.["pi.agent"] ?? {}) as any;
+				const rawAgentDoc = current?.conversation?.docs?.["pi.agent"];
+				const agentDoc = isAgentDocument(rawAgentDoc) ? rawAgentDoc : {};
 				const cw = this.resolveContextWindow?.(agentDoc.model?.provider, agentDoc.model?.modelId);
-				this.output({
-					type: "turn_end",
-					message: finalMsg,
-					contextWindow: cw,
-				});
+				this.output({ type: "turn_end", message: finalMsg, contextWindow: cw });
 				break;
 			}
 
@@ -176,13 +183,10 @@ export class BBEventAdapter {
 					this.currentText,
 					this.currentThinking,
 				);
-				const agentDoc = (current?.conversation?.docs?.["pi.agent"] ?? {}) as any;
+				const rawAgentDoc = current?.conversation?.docs?.["pi.agent"];
+				const agentDoc = isAgentDocument(rawAgentDoc) ? rawAgentDoc : {};
 				const cw = this.resolveContextWindow?.(agentDoc.model?.provider, agentDoc.model?.modelId);
-				this.output({
-					type: "agent_end",
-					messages: [finalMsg],
-					contextWindow: cw,
-				});
+				this.output({ type: "agent_end", messages: [finalMsg], contextWindow: cw });
 				break;
 			}
 		}

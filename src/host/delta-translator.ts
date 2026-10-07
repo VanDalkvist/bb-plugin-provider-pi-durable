@@ -3,6 +3,11 @@ import {
 	translateToolUpdate,
 	translateToolEnd,
 } from "./tool-delta-translator.ts";
+import {
+	translateMessageUpdate,
+	translateMessageEnd,
+	translateAgentEnd,
+} from "./message-delta-translator.ts";
 import type { RunnerEvent, ThreadDelta } from "./types.ts";
 
 export interface DeltaTranslatorContext {
@@ -56,8 +61,7 @@ export class DeltaTranslator {
 			}
 
 			case "compaction_end": {
-				deltas.push({ kind: "context.compacted" });
-				deltas.push({ kind: "turn.boundary", status: "completed" });
+				deltas.push({ kind: "context.compacted" }, { kind: "turn.boundary", status: "completed" });
 				this.turnOpenSent = false;
 				break;
 			}
@@ -75,58 +79,15 @@ export class DeltaTranslator {
 
 			case "message_update": {
 				const asst = event.assistantMessageEvent as Record<string, unknown> | undefined;
-				if (!asst) break;
-
-				if (asst.type === "thinking_delta" && typeof asst.delta === "string") {
-					const idx = typeof asst.contentIndex === "number" ? asst.contentIndex : this.currentThinkingIndex;
-					deltas.push({
-						kind: "item.textDelta",
-						key: { channel: `thinking-${idx}` },
-						channel: "reasoningText",
-						text: asst.delta,
-					});
-				} else if (asst.type === "thinking_end") {
-					const idx = typeof asst.contentIndex === "number" ? asst.contentIndex : this.currentThinkingIndex;
-					deltas.push({
-						kind: "item.textClose",
-						key: { channel: `thinking-${idx}` },
-						channel: "reasoningText",
-						text: (asst.content as string) ?? "",
-					});
-					this.currentThinkingIndex++;
-				} else if (asst.type === "text_delta" && typeof asst.delta === "string") {
-					this.currentAgentText += asst.delta;
-					deltas.push({
-						kind: "item.textDelta",
-						key: { channel: "agentMessage" },
-						channel: "agentMessage",
-						text: asst.delta,
-					});
-				}
+				deltas.push(...translateMessageUpdate(asst, this));
 				break;
 			}
 
 			case "message_end": {
 				const msg = event.message as { content?: Array<{ type?: string; text?: string }> } | undefined;
-				let finalText = this.currentAgentText;
-				if (msg?.content && Array.isArray(msg.content)) {
-					const textParts = msg.content
-						.filter((p) => p && p.type === "text" && typeof p.text === "string")
-						.map((p) => p.text as string);
-					if (textParts.length > 0) {
-						finalText = textParts.join("");
-					}
-				}
-
-				if (finalText) {
-					deltas.push({
-						kind: "item.textClose",
-						key: { channel: "agentMessage" },
-						channel: "agentMessage",
-						text: finalText,
-					});
-				}
-				this.currentAgentText = "";
+				const res = translateMessageEnd(msg, this.currentAgentText);
+				deltas.push(...res.deltas);
+				this.currentAgentText = res.nextAgentText;
 				break;
 			}
 
@@ -151,70 +112,14 @@ export class DeltaTranslator {
 				break;
 			}
 
-			case "turn_end": {
+			case "turn_end":
 				break;
-			}
 
 			case "agent_end": {
-				if (this.currentAgentText) {
-					deltas.push({
-						kind: "item.textClose",
-						key: { channel: "agentMessage" },
-						channel: "agentMessage",
-						text: this.currentAgentText,
-					});
-					this.currentAgentText = "";
-				}
-
-				const rawMsg = event.message ?? (event.messages as unknown[])?.[0];
-				const usage = (rawMsg as { usage?: Record<string, unknown> } | undefined)?.usage;
-				if (usage) {
-					const inTok = Number(usage.input ?? 0);
-					const outTok = Number(usage.output ?? 0);
-					const totTok = Number(usage.totalTokens ?? (inTok + outTok));
-					const cwSize = typeof event.contextWindow === "number" && event.contextWindow > 0 ? event.contextWindow : 128000;
-					deltas.push({
-						kind: "usage",
-						modelContextWindow: cwSize,
-						last: {
-							totalTokens: totTok,
-							inputTokens: inTok,
-							cachedInputTokens: Number(usage.cacheRead ?? 0),
-							cacheReadInputTokens: Number(usage.cacheRead ?? 0),
-							cacheWriteInputTokens: Number(usage.cacheWrite ?? 0),
-							outputTokens: outTok,
-							reasoningOutputTokens: Number(usage.reasoning ?? 0),
-						},
-						total: {
-							totalTokens: totTok,
-							inputTokens: inTok,
-							cachedInputTokens: Number(usage.cacheRead ?? 0),
-							cacheReadInputTokens: Number(usage.cacheRead ?? 0),
-							cacheWriteInputTokens: Number(usage.cacheWrite ?? 0),
-							outputTokens: outTok,
-							reasoningOutputTokens: Number(usage.reasoning ?? 0),
-						},
-					});
-
-					deltas.push({
-						kind: "contextWindow",
-						used: totTok,
-						size: cwSize,
-						estimated: false,
-						attach: "currentOrLast",
-					});
-				}
-
-				if (!this.turnBoundarySent) {
-					this.turnBoundarySent = true;
-					deltas.push({
-						kind: "turn.boundary",
-						status: "completed",
-						claimIfIdle: true,
-					});
-				}
-
-				// Reset turn state for subsequent turns
+				const res = translateAgentEnd(event, this.currentAgentText, this.turnBoundarySent);
+				deltas.push(...res.deltas);
+				this.currentAgentText = "";
+				this.turnBoundarySent = res.turnBoundarySent;
 				this.turnOpenSent = false;
 				this.turnBoundarySent = false;
 				break;

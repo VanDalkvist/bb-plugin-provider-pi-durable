@@ -12,88 +12,9 @@ import {
   DefaultResourceLoader,
   ModelRuntime,
   SettingsManager,
+  getAgentDir,
   resolveModelScopeWithDiagnostics
 } from "@earendil-works/pi-coding-agent";
-
-// src/runner/upstream/session-storage.ts
-import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readdir, realpath } from "node:fs/promises";
-import { homedir } from "node:os";
-import { basename, join, resolve } from "node:path";
-import lockfile from "proper-lockfile";
-function getAgentDir() {
-  const override = process.env.PI_AGENT_DIR;
-  if (override && override.trim().length > 0) {
-    return resolve(override.trim());
-  }
-  return join(homedir(), ".pi", "agent");
-}
-async function selectSession(cwdInput, continueSession, targetSession) {
-  const cwd = await realpath(resolve(cwdInput));
-  const root = join(
-    getAgentDir(),
-    "experimental",
-    "durable-sessions",
-    createHash("sha256").update(cwd).digest("hex").slice(0, 24)
-  );
-  await mkdir(root, { recursive: true });
-  let directory;
-  let created = false;
-  if (targetSession) {
-    let cleanTarget = targetSession;
-    if (cleanTarget.endsWith(".sqlite")) {
-      cleanTarget = resolve(cleanTarget, "..");
-    } else if (cleanTarget.endsWith(".jsonl")) {
-      cleanTarget = cleanTarget.slice(0, -6);
-    }
-    if (cleanTarget.includes("/") || cleanTarget.includes("\\")) {
-      directory = resolve(cleanTarget);
-    } else {
-      directory = join(root, cleanTarget);
-    }
-    try {
-      await mkdir(directory, { recursive: true });
-      const entries = await readdir(directory);
-      if (!entries.includes("session.sqlite")) {
-        const legacyDir = `${directory}.jsonl`;
-        try {
-          const legacyEntries = await readdir(legacyDir);
-          if (legacyEntries.includes("session.sqlite")) {
-            directory = legacyDir;
-            created = false;
-          } else {
-            created = true;
-          }
-        } catch {
-          created = true;
-        }
-      } else {
-        created = false;
-      }
-    } catch {
-      created = false;
-    }
-  } else if (continueSession) {
-    const entries = await readdir(root, { withFileTypes: true });
-    const newest = entries.filter((entry) => entry.isDirectory() && /^\d{13}-[0-9a-f-]{36}$/u.test(entry.name)).map((entry) => entry.name).sort().at(-1);
-    if (!newest) throw new Error(`No durable session exists for ${cwd}`);
-    directory = join(root, newest);
-  } else {
-    directory = join(root, `${String(Date.now()).padStart(13, "0")}-${randomUUID()}`);
-    await mkdir(directory);
-    created = true;
-  }
-  let release;
-  try {
-    release = await lockfile.lock(directory, {
-      realpath: false,
-      retries: { retries: 12, minTimeout: 1e3, maxTimeout: 1e3 }
-    });
-  } catch (error) {
-    throw new Error(`Session is already open in another process: ${directory}`, { cause: error });
-  }
-  return { id: basename(directory), directory, database: join(directory, "session.sqlite"), cwd, created, release };
-}
 
 // src/runner/harness-setup.ts
 import {
@@ -425,6 +346,86 @@ function attachJsonlLineReader(stream, onLine) {
 
 // src/runner/runtime.ts
 import { resolveModelScopeWithDiagnostics as resolveModelScopeWithDiagnostics2 } from "@earendil-works/pi-coding-agent";
+
+// src/runner/upstream/session-storage.ts
+import { createHash, randomUUID } from "node:crypto";
+import { mkdir, readdir, realpath } from "node:fs/promises";
+import { homedir } from "node:os";
+import { basename, join, resolve } from "node:path";
+import lockfile from "proper-lockfile";
+function getAgentDir2() {
+  const override = process.env.PI_AGENT_DIR;
+  if (override && override.trim().length > 0) {
+    return resolve(override.trim());
+  }
+  return join(homedir(), ".pi", "agent");
+}
+async function selectSession(cwdInput, continueSession, targetSession) {
+  const cwd = await realpath(resolve(cwdInput));
+  const root = join(
+    getAgentDir2(),
+    "experimental",
+    "durable-sessions",
+    createHash("sha256").update(cwd).digest("hex").slice(0, 24)
+  );
+  await mkdir(root, { recursive: true });
+  let directory;
+  let created = false;
+  if (targetSession) {
+    let cleanTarget = targetSession;
+    if (cleanTarget.endsWith(".sqlite")) {
+      cleanTarget = resolve(cleanTarget, "..");
+    } else if (cleanTarget.endsWith(".jsonl")) {
+      cleanTarget = cleanTarget.slice(0, -6);
+    }
+    if (cleanTarget.includes("/") || cleanTarget.includes("\\")) {
+      directory = resolve(cleanTarget);
+    } else {
+      directory = join(root, cleanTarget);
+    }
+    try {
+      await mkdir(directory, { recursive: true });
+      const entries = await readdir(directory);
+      if (!entries.includes("session.sqlite")) {
+        const legacyDir = `${directory}.jsonl`;
+        try {
+          const legacyEntries = await readdir(legacyDir);
+          if (legacyEntries.includes("session.sqlite")) {
+            directory = legacyDir;
+            created = false;
+          } else {
+            created = true;
+          }
+        } catch {
+          created = true;
+        }
+      } else {
+        created = false;
+      }
+    } catch {
+      created = false;
+    }
+  } else if (continueSession) {
+    const entries = await readdir(root, { withFileTypes: true });
+    const newest = entries.filter((entry) => entry.isDirectory() && /^\d{13}-[0-9a-f-]{36}$/u.test(entry.name)).map((entry) => entry.name).sort().at(-1);
+    if (!newest) throw new Error(`No durable session exists for ${cwd}`);
+    directory = join(root, newest);
+  } else {
+    directory = join(root, `${String(Date.now()).padStart(13, "0")}-${randomUUID()}`);
+    await mkdir(directory);
+    created = true;
+  }
+  let release;
+  try {
+    release = await lockfile.lock(directory, {
+      realpath: false,
+      retries: { retries: 12, minTimeout: 1e3, maxTimeout: 1e3 }
+    });
+  } catch (error) {
+    throw new Error(`Session is already open in another process: ${directory}`, { cause: error });
+  }
+  return { id: basename(directory), directory, database: join(directory, "session.sqlite"), cwd, created, release };
+}
 
 // src/runner/runtime-types.ts
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
@@ -774,7 +775,7 @@ async function loadHarnessEnvironment(location, options, envs) {
   const settingsManager = SettingsManager2.create(location.cwd);
   const resourceLoader = new DefaultResourceLoader2({
     cwd: location.cwd,
-    agentDir: getAgentDir(),
+    agentDir: getAgentDir2(),
     settingsManager,
     extensionFactories: createStandardExtensionFactories()
   });
@@ -993,17 +994,33 @@ async function openDurable(options = {}) {
 import { ROOT_CONVERSATION_ID as ROOT_CONVERSATION_ID3, watchEvents } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT as BACKGROUND_CONTEXT3 } from "@earendil-works/chord/context";
 
+// src/runner/bridge/contracts.ts
+function isAgentDocument(doc) {
+  return typeof doc === "object" && doc !== null;
+}
+function isUsageDocument(doc) {
+  return typeof doc === "object" && doc !== null;
+}
+function isConversationEntryRecord(entry) {
+  return typeof entry === "object" && entry !== null;
+}
+
 // src/runner/bridge/assistant-message-builder.ts
 function buildFinalAssistantMessage(current, lastGenerationText, lastThinkingText) {
   const entries = current.conversation.entries ?? [];
-  const lastAssistantEntry = [...entries].reverse().find((e) => e.kind === "pi.assistant");
+  const lastAssistantEntry = [...entries].reverse().find(
+    (e) => isConversationEntryRecord(e) && e.kind === "pi.assistant"
+  );
   const lastAssistantMsg = lastAssistantEntry?.model?.[0];
   if (lastAssistantMsg) {
+    const content = Array.isArray(lastAssistantMsg.content) ? lastAssistantMsg.content : [{ type: "text", text: lastGenerationText }];
+    const stopReason = typeof lastAssistantMsg.stopReason === "string" ? lastAssistantMsg.stopReason : "stop";
+    const usage = typeof lastAssistantMsg.usage === "object" && lastAssistantMsg.usage !== null ? lastAssistantMsg.usage : void 0;
     return {
       role: "assistant",
-      content: lastAssistantMsg.content ?? [{ type: "text", text: lastGenerationText }],
-      stopReason: lastAssistantMsg.stopReason ?? "stop",
-      usage: lastAssistantMsg.usage
+      content,
+      stopReason,
+      usage
     };
   }
   const finalContent = [];
@@ -1013,7 +1030,8 @@ function buildFinalAssistantMessage(current, lastGenerationText, lastThinkingTex
   if (lastGenerationText) {
     finalContent.push({ type: "text", text: lastGenerationText });
   }
-  const usageDoc = current.conversation.docs["pi.usage"] ?? {};
+  const rawUsageDoc = current.conversation.docs["pi.usage"];
+  const usageDoc = isUsageDocument(rawUsageDoc) ? rawUsageDoc : {};
   return {
     role: "assistant",
     content: finalContent.length > 0 ? finalContent : [{ type: "text", text: "" }],
@@ -1030,6 +1048,17 @@ function buildFinalAssistantMessage(current, lastGenerationText, lastThinkingTex
 }
 
 // src/runner/bridge/bb-event-adapter.ts
+function extractToolResult(modelItem) {
+  const msg = typeof modelItem === "object" && modelItem !== null ? modelItem : void 0;
+  const isError = msg?.isError ?? false;
+  let result = "";
+  if (Array.isArray(msg?.content)) {
+    result = msg.content.map((b) => typeof b === "object" && b !== null && typeof b.text === "string" ? b.text : "").filter(Boolean).join("\n");
+  } else if (typeof msg?.content === "string") {
+    result = msg.content;
+  }
+  return { result, isError };
+}
 var BBEventAdapter = class {
   output;
   resolveContextWindow;
@@ -1059,21 +1088,13 @@ var BBEventAdapter = class {
             this.currentThinking += change.delta;
             this.output({
               type: "message_update",
-              assistantMessageEvent: {
-                type: "thinking_delta",
-                contentIndex: 0,
-                delta: change.delta
-              }
+              assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: change.delta }
             });
           } else if (change.type === "text_delta") {
             this.currentText += change.delta;
             this.output({
               type: "message_update",
-              assistantMessageEvent: {
-                type: "text_delta",
-                contentIndex: 0,
-                delta: change.delta
-              }
+              assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: change.delta }
             });
           }
         }
@@ -1091,11 +1112,8 @@ var BBEventAdapter = class {
       case "tool_execution_update": {
         let partialResult = "";
         if (event.output) {
-          if ("set" in event.output) {
-            partialResult = event.output.set;
-          } else if ("append" in event.output) {
-            partialResult = event.output.append ?? "";
-          }
+          if ("set" in event.output) partialResult = event.output.set;
+          else if ("append" in event.output) partialResult = event.output.append ?? "";
         }
         if (partialResult) {
           this.output({
@@ -1108,14 +1126,7 @@ var BBEventAdapter = class {
         break;
       }
       case "tool_execution_end": {
-        const toolResultMsg = event.entry?.model?.[0];
-        const isError = toolResultMsg?.isError ?? false;
-        let result = "";
-        if (Array.isArray(toolResultMsg?.content)) {
-          result = toolResultMsg.content.map((block) => block && typeof block === "object" && "text" in block ? block.text : "").filter(Boolean).join("\n");
-        } else if (typeof toolResultMsg?.content === "string") {
-          result = toolResultMsg.content;
-        }
+        const { result, isError } = extractToolResult(event.entry?.model?.[0]);
         this.output({
           type: "tool_execution_end",
           toolCallId: event.toolCallId,
@@ -1126,7 +1137,8 @@ var BBEventAdapter = class {
         break;
       }
       case "message_end": {
-        const msg = event.entry?.model?.[0];
+        const modelItem = event.entry?.model?.[0];
+        const msg = typeof modelItem === "object" && modelItem !== null ? modelItem : void 0;
         if (msg?.role === "assistant") {
           this.lastAssistantMessage = {
             role: "assistant",
@@ -1134,10 +1146,7 @@ var BBEventAdapter = class {
             stopReason: msg.stopReason ?? "stop",
             usage: msg.usage
           };
-          this.output({
-            type: "message_end",
-            message: this.lastAssistantMessage
-          });
+          this.output({ type: "message_end", message: this.lastAssistantMessage });
         }
         break;
       }
@@ -1162,13 +1171,10 @@ var BBEventAdapter = class {
           this.currentText,
           this.currentThinking
         );
-        const agentDoc = current?.conversation?.docs?.["pi.agent"] ?? {};
+        const rawAgentDoc = current?.conversation?.docs?.["pi.agent"];
+        const agentDoc = isAgentDocument(rawAgentDoc) ? rawAgentDoc : {};
         const cw = this.resolveContextWindow?.(agentDoc.model?.provider, agentDoc.model?.modelId);
-        this.output({
-          type: "turn_end",
-          message: finalMsg,
-          contextWindow: cw
-        });
+        this.output({ type: "turn_end", message: finalMsg, contextWindow: cw });
         break;
       }
       case "run_end": {
@@ -1177,13 +1183,10 @@ var BBEventAdapter = class {
           this.currentText,
           this.currentThinking
         );
-        const agentDoc = current?.conversation?.docs?.["pi.agent"] ?? {};
+        const rawAgentDoc = current?.conversation?.docs?.["pi.agent"];
+        const agentDoc = isAgentDocument(rawAgentDoc) ? rawAgentDoc : {};
         const cw = this.resolveContextWindow?.(agentDoc.model?.provider, agentDoc.model?.modelId);
-        this.output({
-          type: "agent_end",
-          messages: [finalMsg],
-          contextWindow: cw
-        });
+        this.output({ type: "agent_end", messages: [finalMsg], contextWindow: cw });
         break;
       }
     }
