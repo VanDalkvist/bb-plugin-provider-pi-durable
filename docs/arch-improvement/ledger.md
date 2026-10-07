@@ -676,19 +676,19 @@ Resolve findings F-65-1, F-65-2, and F-65-3:
 
 ---
 
-## Cycle 69: Packaging Integrity & Production Dependency Quarantine (2026-10-07)
+## Cycle 68.1: Packaging Integrity & Production Dependency Quarantine (2026-10-07)
 
 **Goal:** Resolve marketplace review blocker (SawyerHood review on get-bb/marketplace#501) where clean production installs on BB0.45+ failed building the host bundle due to `@get-bb/plugin-sdk` appearing in both `dependencies` and `devDependencies`.  
 **Governing Standard:** `arch-rules.md` (AP-010 – AP-071), `arch-improvement-review`, `arch-rules-implementation-review`  
-**Plan Reference:** `docs/superpowers/plans/2026-10-07-arch-improvement-cycle-69-packaging-integrity.md`  
+**Plan Reference:** `docs/superpowers/plans/2026-10-07-arch-improvement-cycle-68.1-packaging-integrity.md`  
 **Target Release:** `v0.2.14`
 
 ### 1. Triaged Findings & Dispositions
 
 | ID | Issue / Review Finding | Severity | Rule | Disposition | Root Cause & Resolution |
 |---|---|---|---|---|---|
-| **F-69-1** | Duplicate `@get-bb/plugin-sdk` in `devDependencies` breaks clean production install | **P0** | AP-010, AP-026, AP-027 | `fix-now` | `package.json` duplicated `@get-bb/plugin-sdk` in both `dependencies` and `devDependencies`. During clean marketplace installations (`npm install --omit=dev`), npm treated it as dev-only and omitted `node_modules/@get-bb/plugin-sdk`, causing subsequent `bb plugin build` to fail resolving `@get-bb/plugin-sdk/provider-bridge` and `@get-bb/plugin-sdk/host`. **Fix:** Removed `@get-bb/plugin-sdk` from `devDependencies`. Retained strictly in `dependencies`. Verified clean reproduction builds with zero errors. |
-| **F-69-2** | Missing regression test for package manifest integrity | **P2** | AP-028 | `fix-now` | Absence of automated checks asserting disjoint dependency sets allowed duplicate keys to persist. **Fix:** Created `tests/package-integrity.test.ts` with 4 deterministic assertions verifying disjoint dependency sets, presence of SDK in production dependencies, canonical manifest entry points, and runtime imports. |
+| **F-68.1-1** | Duplicate `@get-bb/plugin-sdk` in `devDependencies` breaks clean production install | **P0** | AP-010, AP-026, AP-027 | `fix-now` | `package.json` duplicated `@get-bb/plugin-sdk` in both `dependencies` and `devDependencies`. During clean marketplace installations (`npm install --omit=dev`), npm treated it as dev-only and omitted `node_modules/@get-bb/plugin-sdk`, causing subsequent `bb plugin build` to fail resolving `@get-bb/plugin-sdk/provider-bridge` and `@get-bb/plugin-sdk/host`. **Fix:** Removed `@get-bb/plugin-sdk` from `devDependencies`. Retained strictly in `dependencies`. Verified clean reproduction builds with zero errors. |
+| **F-68.1-2** | Missing regression test for package manifest integrity | **P2** | AP-028 | `fix-now` | Absence of automated checks asserting disjoint dependency sets allowed duplicate keys to persist. **Fix:** Created `tests/package-integrity.test.ts` with 4 deterministic assertions verifying disjoint dependency sets, presence of SDK in production dependencies, canonical manifest entry points, and runtime imports. |
 
 ### 2. Implementation Changes
 
