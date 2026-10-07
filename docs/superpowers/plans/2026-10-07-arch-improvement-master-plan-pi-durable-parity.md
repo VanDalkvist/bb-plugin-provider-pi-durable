@@ -1,13 +1,13 @@
 # Master Architectural Implementation Plan: Remediation & Full Parity of Pi Durable in BB IDE
 
 **Document ID:** `plans/pi-durable-bb-provider-arch-master-plan`  
-**Version:** 3.3.0 (Master Unified Roadmap: Remediation + Feature Parity)  
+**Version:** 3.4.0 (Master Unified Roadmap: Remediation + Feature Parity)  
 **Target Repository:** `/Users/vanya/Projects/bb-plugin-provider-pi-durable`  
 **Governing Standard:** `arch-rules.md` (AP-010 – AP-071) & `arch-improvement-loop` State Machine  
 **Upstream PRDs:**
 - `prd/pi-durable-provider-remediation` (Audit of 13 Critical Divergences in Implemented Features)
 - `prd/pi-durable-bb-provider-full-parity` (Complete Engine Capabilities & Parity Features)  
-**Execution Model:** 12 Distinct Sequential Arch Improvement Loop Cycles (Cycle 56 to Cycle 67), each executed in a dedicated thread with strict verification gates.
+**Execution Model:** 13 Distinct Sequential Arch Improvement Loop Cycles (Cycle 56 to Cycle 68), each executed in a dedicated thread with strict verification gates.
 
 ---
 
@@ -60,23 +60,24 @@ Every individual cycle (Cycles 56 through 67) must be executed in its own dedica
 ## 3. Two-Stage Master Roadmap Overview
 
 ```
-STAGE 1: FOUNDATION HARDENING & AUDIT REMEDIATION (Cycles 56–59)
-Eliminate all 13 divergences in already-implemented session, streaming, tool, and model code.
-  - Cycle 56: Process Lifecycle, Lock Cleanup, Error Diagnostics & Session Path Normalization (D-1, D-2, D-13)
-  - Cycle 57: Tool Fault Integrity, Error Reporting & Diff Metadata Forwarding (D-5, D-6, D-9)
-  - Cycle 58: Full Native Event Streaming, Reasoning Channels & Thinking Accordion Lifecycle (D-3, D-4, D-10, D-11, D-12)
-  - Cycle 59: Model Reasoning Compatibility & Cumulative Usage Integrity (D-7, D-8)
+STAGE 1: FOUNDATION HARDENING & AUDIT REMEDIATION (Cycles 56–60)
+Eliminate all 13 divergences and community bugs in session, streaming, tool, context, and model code.
+  - Cycle 56: Process Lifecycle, Lock Cleanup, Error Diagnostics & Session Path Normalization (D-1, D-2, D-13, Issues #1, #2, #3) [COMPLETED - v0.2.1]
+  - Cycle 57: Context Window Telemetry & Usage Synchronization (Issue #4) [COMPLETED - v0.2.2]
+  - Cycle 58: Tool Execution Telemetry & Steer Protocol Integrity (Issues #5, #6) [COMPLETED - v0.2.3]
+  - Cycle 59: Tool Fault Integrity, Diff Metadata & Thinking Accordion Lifecycle (D-4, D-5, D-6, D-9, D-12)
+  - Cycle 60: Full Native Event Streaming, Checkpoints & Model Compatibility (D-3, D-7, D-8, D-10, D-11)
 
-STAGE 2: ADVANCED ENGINE CAPABILITIES & FULL PARITY (Cycles 60–67)
+STAGE 2: ADVANCED ENGINE CAPABILITIES & FULL PARITY (Cycles 61–68)
 Build new advanced capabilities on top of the hardened, defect-free foundation.
-  - Cycle 60: Checkpoint Thread Forking, Session Rewind & Message Editing (`thread/fork` & `bb thread edit-message`)
-  - Cycle 61: Provider Usage & Granular Spend Ledger (`provider/usage`)
-  - Cycle 62: Visual Subagent Delegation Cards & Hierarchy (`type: "delegation"`)
-  - Cycle 63: Live Task Graph Synchronization (`harness.taskGraph()`)
-  - Cycle 64: Advanced Inbox Queuing & Cancellation (`submission.abort` & `write`)
-  - Cycle 65: Context Handoff Reset (`/reset`) & Compaction Policies
-  - Cycle 66: Tool Replay Safety & Dynamic Runtime Expansion (`replay` & `control`)
-  - Cycle 67: Custom Durable Chord Documents (`defineDoc`) & Master Conformance
+  - Cycle 61: Checkpoint Thread Forking, Session Rewind & Message Editing (`thread/fork` & `bb thread edit-message`)
+  - Cycle 62: Provider Usage & Granular Spend Ledger (`provider/usage`)
+  - Cycle 63: Visual Subagent Delegation Cards & Hierarchy (`type: "delegation"`)
+  - Cycle 64: Live Task Graph Synchronization (`harness.taskGraph()`)
+  - Cycle 65: Advanced Inbox Queuing & Cancellation (`submission.abort` & `write`)
+  - Cycle 66: Context Handoff Reset (`/reset`) & Compaction Policies
+  - Cycle 67: Tool Replay Safety & Dynamic Runtime Expansion (`replay` & `control`)
+  - Cycle 68: Custom Durable Chord Documents (`defineDoc`) & Master Conformance
 ```
 
 ---
@@ -130,91 +131,99 @@ Build new advanced capabilities on top of the hardened, defect-free foundation.
 
 ---
 
-### Cycle 57: Tool Fault Integrity, Error Reporting & Diff Metadata Forwarding
-- **PRD Divergences Covered:** D-5, D-6, D-9.
+### Cycle 57: Context Window Telemetry & Usage Synchronization [COMPLETED]
+- **Status:** ✅ COMPLETED (Release: `v0.2.2`)
+- **Issues Covered:** Issue #4 (`usedTokens: 0` in context bar, missing contextWindow propagation, agentDoc fallback, legacy directory migration).
+- **Architectural Implementation Summary:**
+  1. **IPC Response Unwrapping (`src/host/runner-process.ts`, `src/host/session.ts`):** Fixed `RunnerProcess.requestOk` to unwrap nested `{ data: { contextUsage } }` payload; updated `getSessionStats()` to defensively unwrap stats.
+  2. **Turn Boundary Ordering (`src/host/session.ts`):** Guaranteed `await refreshContextUsage()` executes *before* emitting `turn.boundary` on `agent_end` so usage attaches to the active turn.
+  3. **Model Fallback Resolution (`src/runner/session-commands.ts`):** Added fallback to `args.provider` and `args.model` when `agentDoc.model` is unpopulated on thread initialization.
+  4. **Adapter Wire Propagation (`src/runner/bridge/bb-event-adapter.ts`, `src/host/delta-translator.ts`):** Passed `resolveContextWindow` into `BBEventAdapter`, included `contextWindow` on `turn_end` and `agent_end`, and mapped into `usage` deltas.
+  5. **Legacy Directory Adoption (`src/runner/sessions.ts`):** Added fallback migration for legacy directory names (`${sanitized}.jsonl/session.sqlite`).
+- **Verification Evidence:**
+  - `npm test`: 40 / 40 passing assertions.
+  - Live BB verification: Context ring indicator and bar display accurate token usage.
+
+---
+
+### Cycle 58: Tool Execution Telemetry & Steer Protocol Integrity [COMPLETED]
+- **Status:** ✅ COMPLETED (Commit: `eae5c31`, Release: `v0.2.3`)
+- **Issues Covered:**
+  - Issue #6: `edit` and `write` tool calls completely invisible in BB chat due to invalid `fileChange` schema values (`kind: "create"` / `"modify"` instead of `"add"` / `"update"`).
+  - Issue #5: Steer messages stuck in "Steer pending" / "Working..." due to `providerTurnId: params.expectedTurnId` causing 409 `MissingStoredTurnStartedError`.
+- **Architectural Implementation Summary:**
+  1. **Schema Compliance & Edits Mapping (`src/host/tool-delta-translator.ts`):**
+     - Mapped `write` to schema-compliant `kind: "add"` with `newText: args.content`.
+     - Mapped `edit` to schema-compliant `kind: "update"`. Mapped `args.edits` array to granular update items with `oldText` and `newText`.
+     - Output deltas now strictly pass BB host-daemon Zod validation (`jCe`), restoring full visibility of file change tool cards in the chat UI.
+  2. **Steer Protocol Acceptance (`src/host/bridge.ts`):**
+     - Omitted `providerTurnId` from `input.accepted` delta in `turn/steer`.
+     - Allows host-daemon assembler to associate steer input directly with the active turn, eliminating 409 conflict and permanent UI freeze.
+  3. **Thread State Reconciliation:**
+     - Reconciled stuck legacy threads (including `thr_ixcw5bus8c`), transitioning status to `idle` and refreshing the context meter to `125,390 / 1,048,576 tokens`.
+- **Verification Evidence:**
+  - `npm test`: 43 / 43 passing assertions across 5 suites.
+  - Build clean: `dist/runner/index.js`, `dist/host.js`, `dist/server.js`.
+  - Issue #5 and #6 verified fixed.
+
+---
+
+### Cycle 59: Tool Fault Integrity, Diff Metadata & Thinking Accordion Lifecycle
+- **PRD Divergences Covered:** D-4, D-5, D-6, D-9, D-12 (FR-R4, FR-R5, FR-R6, FR-R7, FR-R11).
 - **Architectural Problem:**
-  1. When a tool task crashes or is orphaned, `event.entry` is `undefined`. `bb-event-adapter.ts` evaluates `entry?.model?.[0]?.isError ?? false`, erroneously reporting fatal tool crashes as successful completions with empty output (violating AP-012/AP-013).
-  2. `CodingTools.edit` returns `details: { diff, patch, firstChangedLine }`, but `bb-event-adapter.ts` drops `event.details`, depriving BB Diff Viewer of patch data.
-  3. `tool_execution_update` ignores `trimStart` and drops `ToolDiagnostic` warnings.
+  1. When a tool task crashes or is orphaned, `event.entry` is `undefined`. `bb-event-adapter.ts` evaluates `entry?.model?.[0]?.isError ?? false`, erroneously reporting fatal tool crashes as successful completions with empty output (violating AP-012/AP-013) (D-5).
+  2. `CodingTools.edit` returns `details: { diff, patch, firstChangedLine }`, but `bb-event-adapter.ts` drops `event.details`, depriving BB Diff Viewer of patch data (D-6).
+  3. `tool_execution_update` ignores `trimStart` and drops `ToolDiagnostic` warnings (D-9).
+  4. Model thinking/reasoning lifecycle is incomplete:
+     - `catalog.ts` ignores `m.reasoning` and `m.thinkingLevelMap`.
+     - `turn/start` does not dynamically apply `reasoningLevel` via `set_thinking_level`.
+     - `bb-event-adapter.ts` hardcodes `contentIndex: 0`, drops `thinking_start` and `block`, and never emits `thinking_end` (D-4).
+     - `delta-translator.ts` streams `reasoningText` but never sends `item.textClose`, preventing BB from closing the item into the `Thought for Xs` accordion (D-12).
 - **Target Solution:**
   1. In `bb-event-adapter.ts`, if `event.entry === undefined` in `tool_execution_end`, enforce `isError: true` and `result: "Tool execution faulted or was orphaned"`.
-  2. Forward `details` (patch, diff, line) into `tool_execution_end`.
-  3. In `tool-delta-translator.ts`, map `details.patch` into the `fileChange` item deltas.
-  4. Handle `trimStart` and emit diagnostic notifications.
+  2. Forward `details` (patch, diff, line) into `tool_execution_end` and `tool-delta-translator.ts`.
+  3. Support `output.trimStart` and forward diagnostics.
+  4. Preserve real `change.contentIndex`, stream `item.textDelta` on `channel: "reasoningText"`, and finalize with `item.textClose` for collapsible thinking accordion.
 - **File Impact & Line Budget (AP-019):**
-  - `src/runner/bridge/bb-event-adapter.ts`: +30 lines (~150 lines).
-  - `src/host/tool-delta-translator.ts`: +25 lines (~125 lines).
-- **Test Suite (TDD):**
-  - `tests/tool-fault-and-diff.test.ts`: test tool execution with `entry === undefined` returns `isError: true`; test `edit` tool produces `patch` in `item.close` delta.
+  - `src/runner/bridge/bb-event-adapter.ts`: +35 lines (~185 lines).
+  - `src/host/tool-delta-translator.ts`: +25 lines (~145 lines).
+  - `src/host/delta-translator.ts`: +30 lines (~235 lines).
+  - `tests/tool-fault-and-thinking.test.ts`: new file (~130 lines).
 - **Verification Gates:**
   - `npm test` passes.
-  - Diff viewer renders syntax-highlighted patches in BB IDE chat.
+  - Diff viewer renders syntax-highlighted patches and reasoning model displays `Thought for Xs` accordion.
 
 ---
 
-### Cycle 58: Full Native Event Streaming, Reasoning Channels & Thinking Accordion Lifecycle
-- **PRD Divergences Covered:** D-3, D-4, D-10, D-11, D-12 (FR-17, FR-R10, FR-R11).
+### Cycle 60: Full Native Event Streaming, Checkpoints & Model Compatibility
+- **PRD Divergences Covered:** D-3, D-7, D-8, D-10, D-11 (FR-R3, FR-R8, FR-R9, FR-R10).
 - **Architectural Problem:**
-  1. Model thinking/reasoning is completely invisible in the BB IDE thread:
-     - `catalog.ts` ignores `m.reasoning` and `m.thinkingLevelMap`, hardcoding reasoning efforts and missing `none`.
-     - `turn/start` does not reconcile or dynamically apply `reasoningLevel` to the runner via `set_thinking_level`.
-     - `bb-event-adapter.ts` hardcodes `contentIndex: 0`, drops `thinking_start`, drops `block` events, and never emits `thinking_end`.
-     - `delta-translator.ts` streams `reasoningText` but never sends `item.textClose`, leaving reasoning unclosed so BB never emits `item/completed` with `type: "reasoning"` (no `Thought for Xs` accordion).
-  2. Dropped native events: `snapshot`, `auto_retry_start/end`, `deferred_poll`, `task_failed`, `agent_changed`.
-  3. Reconnecting to a running session drops active in-flight tool and thinking states because `snapshot` is ignored.
-  4. `turn.boundary` lacks `providerCheckpointId`, which causes BB IDE to record null and reject message edits with HTTP 409 conflict.
+  1. Dropped native events: `snapshot`, `auto_retry_start/end`, `deferred_poll`, `task_failed`, `agent_changed` (D-3, D-10).
+  2. Cumulative token spend falsification: `delta-translator.ts` duplicates single-turn `last` usage into `total` usage upon `agent_end`, resetting total cost every turn (D-7).
+  3. `setThinkingLevel` throws when called on non-reasoning models (`!model.reasoning`), even when setting `off`/`none` (D-8).
+  4. `turn.boundary` lacks `providerCheckpointId`, causing message editing on turns $N \ge 2$ to fail with HTTP 409 (D-11).
 - **Target Solution:**
-  1. **Catalog & Effort Mapping:** In `catalog.ts`, map `m.reasoning` to `supportedReasoningEfforts`: non-reasoning models get only `none`; reasoning models get `none` (mapped to `off`), `low`, `medium`, `high`, `max`.
-  2. **Turn Reasoning Reconciliation:** In `bridge.ts` and `session.ts`, translate `params.options.reasoningLevel` and call runner IPC `set_thinking_level` dynamically.
-  3. **Event Adapter Parity:** In `bb-event-adapter.ts`, preserve real `change.contentIndex`, emit `thinking_start` / `thinking_delta`, handle `block`, and emit `thinking_end` when transitioning to text/tool or on turn completion.
-  4. **Delta Translator & Accordion Lifecycle:** In `delta-translator.ts`, stream `item.textDelta` with `key: { channel: "thinking-${idx}" }` and `channel: "reasoningText"`. On `thinking_end` (or before starting text/tools), emit `item.textClose` on `reasoningText` to finalize the reasoning item into BB's `Thought for Xs` accordion.
-  5. **Snapshot & Reconnect:** Map `snapshot` events to restore live in-flight tool slots and background state.
-  6. **Turn Checkpoint ID:** Capture tail `EntryId` on `agent_end` and pass as `providerCheckpointId` in `turn.boundary` delta.
+  1. Map `snapshot` events to restore live in-flight slots on reconnect; translate `auto_retry` events to user progress notices.
+  2. In `delta-translator.ts`, accumulate genuine monotonic `totalTokens` from `docs["pi.usage"]`.
+  3. In `runtime.ts` and `catalog.ts`, guard `setThinkingLevel` so non-reasoning models safely accept `off`/`none` without error.
+  4. Capture tail `EntryId` on `agent_end` and pass as `providerCheckpointId` in `turn.boundary` delta.
 - **File Impact & Line Budget (AP-019):**
   - `src/host/catalog.ts`: +20 lines (~130 lines).
-  - `src/host/bridge.ts`: +15 lines (~215 lines).
-  - `src/runner/bridge/bb-event-adapter.ts`: +45 lines (~185 lines).
-  - `src/host/delta-translator.ts`: +35 lines (~235 lines).
-  - `tests/event-stream-parity.test.ts`: new file (~140 lines).
-- **Test Suite (TDD):**
-  - Verify non-reasoning model catalog returns only `reasoningEffort: "none"`.
-  - Verify reasoning model streams `item.textDelta` on `channel: "reasoningText"` and finalizes with `item.textClose`.
-  - Verify transition from thinking to text automatically closes thinking channel.
-  - Verify `contentIndex` > 0 maintains isolated text/reasoning channels.
-  - Verify `snapshot` with 2 running tools emits proper `tool_execution_start` deltas.
-  - Verify `turn.boundary` contains valid `providerCheckpointId`.
+  - `src/runner/runtime-controller.ts`: +15 lines (~160 lines).
+  - `src/runner/bridge/bb-event-adapter.ts`: +30 lines (~215 lines).
+  - `src/host/delta-translator.ts`: +25 lines (~245 lines).
+  - `tests/stream-parity-and-checkpoints.test.ts`: new file (~130 lines).
 - **Verification Gates:**
   - `npm test` passes.
-  - Live BB test: Reasoning model produces live thinking stream and collapsible `Thought for Xs` accordion.
+  - Monotonic token accumulation and checkpoint rewind IDs verified.
 
 ---
 
-### Cycle 59: Model Reasoning Compatibility & Cumulative Usage Integrity
-- **PRD Divergences Covered:** D-7, D-8.
-- **Architectural Problem:**
-  1. `delta-translator.ts` duplicates single-turn `last` usage into session `total` usage upon `agent_end`, resetting total session cost every turn (violating AP-013).
-  2. `setThinkingLevel` throws when called on non-reasoning models (`!model.reasoning`), even when setting `off`/`none`. `catalog.ts` falsely advertises reasoning efforts for non-reasoning models.
-- **Target Solution:**
-  1. In `runtime.ts`, make `setThinkingLevel("off" | "none")` a safe no-op on non-reasoning models instead of throwing.
-  2. In `catalog.ts`, inspect `model.reasoning` before advertising `supportedReasoningEfforts`.
-  3. In `src/host/delta-translator.ts` and `src/runner/index.ts`, track cumulative session usage across all turns from `docs["pi.usage"]` and emit true monotonic `total` metrics.
-- **File Impact & Line Budget (AP-019):**
-  - `src/runner/runtime.ts`: update `setThinkingLevel` guard (~20 lines).
-  - `src/host/catalog.ts`: filter reasoning efforts (~120 lines).
-  - `src/host/delta-translator.ts`: accumulate usage correctly (~230 lines).
-- **Test Suite (TDD):**
-  - `tests/reasoning-compat-and-usage.test.ts`: test selecting Claude 3.5 Sonnet / GPT-4o with thinking `off` succeeds; test 3-turn conversation accumulates monotonic `totalTokens`.
-- **Verification Gates:**
-  - `npm test` passes.
-  - Non-reasoning models spawn and chat cleanly in BB IDE; Context bar accumulates total tokens accurately.
+### STAGE 2: ADVANCED ENGINE CAPABILITIES & FULL PARITY (Cycles 61–68)
 
 ---
 
-### STAGE 2: ADVANCED ENGINE CAPABILITIES & FULL PARITY (Cycles 60–67)
-
----
-
-### Cycle 60: Checkpoint Thread Forking, Session Rewind & Message Editing (`thread/fork` & `bb thread edit-message`)
+### Cycle 61: Checkpoint Thread Forking, Session Rewind & Message Editing (`thread/fork` & `bb thread edit-message`)
 - **PRD Epics Covered:** FR-1, FR-2, FR-16, D-11, UJ-1, UJ-7, JTBD-2, JTBD-6.
 - **Architectural Problem:**
   1. `thread/fork` in `bridge.ts` ignores `sourceProviderThreadId` and `sourceProviderCheckpointId`, falling back to creating an unbranched fresh session.
@@ -241,7 +250,7 @@ Build new advanced capabilities on top of the hardened, defect-free foundation.
 
 ---
 
-### Cycle 61: Provider Usage & Granular Spend Ledger (`provider/usage`)
+### Cycle 62: Provider Usage & Granular Spend Ledger (`provider/usage`)
 - **PRD Epics Covered:** FR-11, UJ-6, JTBD-5.
 - **Target Solution:**
   1. Add IPC command `get_usage` to runner.
@@ -261,7 +270,7 @@ Build new advanced capabilities on top of the hardened, defect-free foundation.
 
 ---
 
-### Cycle 62: Visual Subagent Delegation Cards & Hierarchy (`type: "delegation"`)
+### Cycle 63: Visual Subagent Delegation Cards & Hierarchy (`type: "delegation"`)
 - **PRD Epics Covered:** FR-3, FR-4, UJ-2, JTBD-3.
 - **Target Solution:**
   1. Update `src/runner/subagent.ts` to assign `ownership: { kind: "task", taskId }` to child conversations.
@@ -282,7 +291,7 @@ Build new advanced capabilities on top of the hardened, defect-free foundation.
 
 ---
 
-### Cycle 63: Live Task Graph Synchronization (`harness.taskGraph()`)
+### Cycle 64: Live Task Graph Synchronization (`harness.taskGraph()`)
 - **PRD Epics Covered:** FR-5, UJ-5, JTBD-4.
 - **Target Solution:**
   1. In runner, subscribe to `harness.taskGraph(context)`.
@@ -300,7 +309,7 @@ Build new advanced capabilities on top of the hardened, defect-free foundation.
 
 ---
 
-### Cycle 64: Advanced Inbox Queuing & Cancellation (`submission.abort` & `write`)
+### Cycle 65: Advanced Inbox Queuing & Cancellation (`submission.abort` & `write`)
 - **PRD Epics Covered:** FR-6, FR-7, FR-8, UJ-3, JTBD-4.
 - **Target Solution:**
   1. Handle `turn/cancel_queued` in `src/host/bridge.ts`, delegating to `session.cancelQueued(clientRequestId)`.
@@ -319,7 +328,7 @@ Build new advanced capabilities on top of the hardened, defect-free foundation.
 
 ---
 
-### Cycle 65: Context Handoff Reset (`/reset`) & Compaction Policies
+### Cycle 66: Context Handoff Reset (`/reset`) & Compaction Policies
 - **PRD Epics Covered:** FR-9, FR-10, UJ-4, JTBD-5.
 - **Target Solution:**
   1. In `src/host/prompt-input.ts`, detect `/reset [handoff note]`.
@@ -338,7 +347,7 @@ Build new advanced capabilities on top of the hardened, defect-free foundation.
 
 ---
 
-### Cycle 66: Tool Replay Safety & Dynamic Runtime Expansion (`replay` & `control`)
+### Cycle 67: Tool Replay Safety & Dynamic Runtime Expansion (`replay` & `control`)
 - **PRD Epics Covered:** FR-12, FR-13, FR-14, UJ-1, UJ-2.
 - **Target Solution:**
   1. Annotate read-only tools (`read`, `image`, search tools) with `replay: "safe"`.
@@ -355,7 +364,7 @@ Build new advanced capabilities on top of the hardened, defect-free foundation.
 
 ---
 
-### Cycle 67: Custom Durable Chord Documents (`defineDoc`) & Master Conformance
+### Cycle 68: Custom Durable Chord Documents (`defineDoc`) & Master Conformance
 - **PRD Epics Covered:** FR-15, NFR-1..8, All User Journeys (UJ-1 – UJ-6).
 - **Target Solution:**
   1. Provide a generic `defineDoc<T>` bridge in runner, allowing plugins to commit custom documents alongside transcript entries.
