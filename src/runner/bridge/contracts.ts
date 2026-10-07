@@ -32,12 +32,17 @@ export interface BBThinkingDeltaEvent {
 	assistantMessageEvent: { type: "thinking_delta"; contentIndex: 0; delta: string };
 }
 
+export interface BBThinkingEndEvent {
+	type: "message_update";
+	assistantMessageEvent: { type: "thinking_end"; contentIndex: 0; content: string };
+}
+
 export interface BBTextDeltaEvent {
 	type: "message_update";
 	assistantMessageEvent: { type: "text_delta"; contentIndex: number; delta: string };
 }
 
-export type BBMessageUpdateEvent = BBThinkingDeltaEvent | BBTextDeltaEvent;
+export type BBMessageUpdateEvent = BBThinkingDeltaEvent | BBThinkingEndEvent | BBTextDeltaEvent;
 
 export interface BBAssistantMessageUsage {
 	input?: number;
@@ -68,11 +73,20 @@ export interface BBAssistantMessage {
 export interface BBAgentStartEvent { type: "agent_start"; }
 export interface BBTurnStartEvent { type: "turn_start"; }
 
+export interface CumulativeUsageMetrics {
+	totalTokens: number;
+	inputTokens: number;
+	outputTokens: number;
+	cachedInputTokens?: number;
+	cacheWriteInputTokens?: number;
+}
+
 export interface BBTurnEndEvent {
 	type: "turn_end";
 	message?: BBAssistantMessage;
 	contextWindow?: number;
 	providerCheckpointId?: string;
+	cumulativeUsage?: CumulativeUsageMetrics;
 }
 
 export interface BBMessageEndEvent {
@@ -85,6 +99,7 @@ export interface BBAgentEndEvent {
 	messages: BBAssistantMessage[];
 	providerCheckpointId?: string;
 	contextWindow?: number;
+	cumulativeUsage?: CumulativeUsageMetrics;
 }
 
 export interface BBCompactionStartEvent {
@@ -134,7 +149,6 @@ export type BBWireEvent =
 
 export interface AgentDocument {
 	model?: { provider?: string; modelId?: string };
-	[key: string]: unknown;
 }
 
 export interface UsageDocument {
@@ -143,6 +157,8 @@ export interface UsageDocument {
 	cacheRead?: number;
 	cacheWrite?: number;
 	totalTokens?: number;
+	models?: Record<string, unknown>;
+	tools?: Record<string, unknown>;
 	cost?: {
 		input?: number;
 		output?: number;
@@ -166,6 +182,8 @@ export interface ToolCallBlock {
 }
 
 export interface ConversationEntryRecord {
+	readonly id: number;
+	readonly conversationId: number;
 	kind?: string;
 	model?: Array<{
 		role?: string;

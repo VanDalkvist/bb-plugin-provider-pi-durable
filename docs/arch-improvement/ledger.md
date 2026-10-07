@@ -778,6 +778,65 @@ Resolve findings F-65-1, F-65-2, and F-65-3:
 - **Residual Risk:**
   - None. Source sessions remain untouched during fork; child sessions are fully independent ACID databases.
 
+---
+
+## Cycle 70: Cumulative Token Usage Monotonicity & pi.usage Sync (2026-10-08)
+
+**Goal:** Eliminate D-7 divergence where cumulative session token spend was overwritten with turn spend on every turn. Synchronize cumulative token usage with `@earendil-works/pi-durable`'s monotonic `pi.usage` document and propagate strictly monotonic `delta.total` metrics across turns.  
+**Governing Standard:** `arch-rules.md` (AP-010 – AP-071), `arch-improvement-review`, `arch-rules-implementation-review`  
+**Plan Reference:** `docs/superpowers/plans/2026-10-07-arch-improvement-cycle-70-cumulative-usage-sync.md`  
+**Target Release:** `v0.2.16`
+
+### 1. Triaged Findings & Dispositions
+
+| ID | Issue / Review Finding | Severity | Rule | Disposition | Root Cause & Resolution |
+|---|---|---|---|---|---|
+| **F-70-1** | Falsification of Total Token Spend (D-7) | **P1** | AP-013, AP-026 | `fix-now` | In `src/host/message-delta-translator.ts`, `translateAgentEndUsage` hardcoded `total` to be an exact duplicate of `last`, wiping out all prior turn spend on every turn. **Fix:** Extended `translateAgentEndUsage` with optional `cumulativeUsage: CumulativeUsageMetrics` parameter; populated `total` fields from `cumulativeUsage` (with fallback to turn metrics if absent) while maintaining `last` as turn spend. |
+| **F-70-2** | Missing Cumulative Usage on Bridge Wire Events | **P1** | AP-026 | `fix-now` | Wire contracts (`contracts.ts` and `types.ts`) lacked cumulative metrics definitions; `turn_end` and `agent_end` dropped cumulative usage from the Durable view. **Fix:** Defined `CumulativeUsageMetrics` in `contracts.ts` and `types.ts`; extended `BBTurnEndEvent`, `BBAgentEndEvent`, and `RunnerEvent`; implemented `extractCumulativeUsage` in `assistant-message-builder.ts` aggregating `models` and `tools` buckets from `current.conversation.docs["pi.usage"]`; emitted `cumulativeUsage` from `BBEventAdapter`. |
+| **F-70-3** | Missing Monotonicity & Schema Conformance Regression Tests | **P2** | AP-028 | `fix-now` | No automated tests verified multi-turn token monotonicity or Zod schema validation against `@get-bb/plugin-sdk/provider-bridge`. **Fix:** Created `tests/cumulative-usage.test.ts` with 5 deterministic tests verifying model/tool aggregation, wire event emission, delta population, schema validation, and multi-turn strict monotonicity. |
+
+### 2. Implementation Changes
+
+- **Slice 1: Protocol Contract Extension (`src/runner/bridge/contracts.ts` & `src/host/types.ts`):**
+  - Added `CumulativeUsageMetrics` interface (`totalTokens`, `inputTokens`, `outputTokens`, `cachedInputTokens`, `cacheWriteInputTokens`).
+  - Extended `BBTurnEndEvent` and `BBAgentEndEvent` with `cumulativeUsage?: CumulativeUsageMetrics;`.
+  - Extended `RunnerEvent` in `src/host/types.ts` with `cumulativeUsage?: CumulativeUsageMetrics;`.
+- **Slice 2: Cumulative Usage Aggregation in Runner Bridge (`src/runner/bridge/assistant-message-builder.ts` & `bb-event-adapter.ts`):**
+  - Implemented `extractCumulativeUsage(current: DurableView): CumulativeUsageMetrics | undefined` aggregating `models` and `tools` spend from `current.conversation.docs["pi.usage"]`.
+  - Wired `extractCumulativeUsage` into `BBEventAdapter` on `turn_end` and `run_end` (emitting `agent_end`).
+- **Slice 3: Monotonic Total Delta Emission (`src/host/message-delta-translator.ts`):**
+  - Forwarded `event.cumulativeUsage` from `translateAgentEnd` to `translateAgentEndUsage`.
+  - Set `delta.last` to turn spend and `delta.total` to monotonic cumulative spend.
+- **Slice 4: Deterministic Test Suite (`tests/cumulative-usage.test.ts`):**
+  - Created 5 deterministic tests covering aggregation, wire events, delta translation, schema conformance via `threadDeltaSchema.safeParse`, and multi-turn monotonicity.
+- **Slice 5: Verification, Version Bump & Tag:**
+  - Bumped version to `0.2.16` in `package.json`.
+  - Rebuilt runner and host bundles (`npm run build`).
+  - Verified 90 / 90 tests pass (`npm test`).
+
+### 3. Verification Evidence & Architecture Verification
+
+- `npm test`: **90 / 90 passing assertions (0 failed, 0 skipped)** across 8 test suites.
+- File size audit (`wc -l`):
+  - `src/runner/bridge/contracts.ts`: 219 lines (< 250 hard limit, AP-019).
+  - `src/host/types.ts`: 121 lines (< 250 hard limit, AP-019).
+  - `src/runner/bridge/assistant-message-builder.ts`: 162 lines (< 250 hard limit, AP-019).
+  - `src/runner/bridge/bb-event-adapter.ts`: 245 lines (< 250 hard limit, AP-019).
+  - `src/host/message-delta-translator.ts`: 228 lines (< 250 hard limit, AP-019).
+  - `tests/cumulative-usage.test.ts`: 207 lines (< 300 test limit, AP-019).
+- TypeScript strictness (AP-029): Zero `as any` or loose `any` casts.
+
+#### Architecture Verification
+- **Passed:**
+  - `AP-010`: Ports & Adapters separation preserved; cumulative usage cleanly bridged across runner/host process boundary.
+  - `AP-013`: User data integrity restored; session spend is monotonic and verified against primary source `pi.usage`.
+  - `AP-019`: All source files strictly < 250 lines.
+  - `AP-026`: DTO wire contracts and schema conformance verified against `@get-bb/plugin-sdk/provider-bridge`.
+  - `AP-028`: Deterministic testing with isolated mock views and strict multi-turn monotonicity assertions.
+  - `AP-029`: Strict TypeScript typing maintained throughout.
+- **Residual Risk:**
+  - None. Fallback preserves identical behavior for legacy events without `cumulativeUsage`.
+
 
 
 

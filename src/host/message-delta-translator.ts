@@ -1,4 +1,4 @@
-import type { RunnerEvent, ThreadDelta } from "./types.ts";
+import type { CumulativeUsageMetrics, RunnerEvent, ThreadDelta } from "./types.ts";
 
 export const REASONING_PRESENTATION = {
 	label: { pending: "Thinking", completed: "Thought" },
@@ -153,7 +153,13 @@ export function translateAgentEnd(
 	}
 
 	const rawMsg = event.message ?? (event.messages as unknown[])?.[0];
-	deltas.push(...translateAgentEndUsage(rawMsg, event.contextWindow));
+	deltas.push(
+		...translateAgentEndUsage(
+			rawMsg,
+			typeof event.contextWindow === "number" ? event.contextWindow : undefined,
+			event.cumulativeUsage,
+		),
+	);
 
 	let boundarySent = turnBoundarySent;
 	if (!boundarySent) {
@@ -172,6 +178,7 @@ export function translateAgentEnd(
 export function translateAgentEndUsage(
 	rawMsg: unknown,
 	contextWindow?: number,
+	cumulativeUsage?: CumulativeUsageMetrics,
 ): ThreadDelta[] {
 	const usage = (rawMsg as { usage?: Record<string, unknown> } | undefined)?.usage;
 	if (!usage) return [];
@@ -195,12 +202,12 @@ export function translateAgentEndUsage(
 				reasoningOutputTokens: Number(usage.reasoning ?? 0),
 			},
 			total: {
-				totalTokens: totTok,
-				inputTokens: inTok,
-				cachedInputTokens: Number(usage.cacheRead ?? 0),
-				cacheReadInputTokens: Number(usage.cacheRead ?? 0),
-				cacheWriteInputTokens: Number(usage.cacheWrite ?? 0),
-				outputTokens: outTok,
+				totalTokens: cumulativeUsage?.totalTokens ?? totTok,
+				inputTokens: cumulativeUsage?.inputTokens ?? inTok,
+				cachedInputTokens: cumulativeUsage?.cachedInputTokens ?? Number(usage.cacheRead ?? 0),
+				cacheReadInputTokens: cumulativeUsage?.cachedInputTokens ?? Number(usage.cacheRead ?? 0),
+				cacheWriteInputTokens: cumulativeUsage?.cacheWriteInputTokens ?? Number(usage.cacheWrite ?? 0),
+				outputTokens: cumulativeUsage?.outputTokens ?? outTok,
 				reasoningOutputTokens: Number(usage.reasoning ?? 0),
 			},
 		},

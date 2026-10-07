@@ -54,9 +54,18 @@ export interface SessionOptions {
 	providerOptions?: Record<string, unknown>;
 }
 
+export interface CumulativeUsageMetrics {
+	totalTokens: number;
+	inputTokens: number;
+	outputTokens: number;
+	cachedInputTokens?: number;
+	cacheWriteInputTokens?: number;
+}
+
 export interface RunnerEvent {
 	type: string;
 	providerCheckpointId?: string;
+	cumulativeUsage?: CumulativeUsageMetrics;
 	[key: string]: unknown;
 }
 

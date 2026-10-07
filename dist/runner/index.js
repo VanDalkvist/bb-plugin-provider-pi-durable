@@ -1013,6 +1013,58 @@ function isConversationEntryRecord(entry) {
 }
 
 // src/runner/bridge/assistant-message-builder.ts
+function extractCumulativeUsage(current) {
+  const rawUsageDoc = current?.conversation?.docs?.["pi.usage"];
+  if (!rawUsageDoc || typeof rawUsageDoc !== "object") {
+    return void 0;
+  }
+  const usageDoc = rawUsageDoc;
+  let totalTokens = 0;
+  let inputTokens = 0;
+  let outputTokens = 0;
+  let cachedInputTokens = 0;
+  let cacheWriteInputTokens = 0;
+  let hasUsage = false;
+  const accumulate = (entry) => {
+    if (!entry || typeof entry !== "object") return;
+    const inTok = Number(entry.input ?? 0);
+    const outTok = Number(entry.output ?? 0);
+    const totTok = Number(entry.totalTokens ?? inTok + outTok);
+    const cacheRead = Number(entry.cacheRead ?? 0);
+    const cacheWrite = Number(entry.cacheWrite ?? 0);
+    if (totTok > 0 || inTok > 0 || outTok > 0 || cacheRead > 0 || cacheWrite > 0) {
+      hasUsage = true;
+      totalTokens += totTok;
+      inputTokens += inTok;
+      outputTokens += outTok;
+      cachedInputTokens += cacheRead;
+      cacheWriteInputTokens += cacheWrite;
+    }
+  };
+  if (usageDoc.models && typeof usageDoc.models === "object") {
+    for (const modelUsage of Object.values(usageDoc.models)) {
+      accumulate(modelUsage);
+    }
+  }
+  if (usageDoc.tools && typeof usageDoc.tools === "object") {
+    for (const toolUsage of Object.values(usageDoc.tools)) {
+      accumulate(toolUsage);
+    }
+  }
+  if (!hasUsage && (usageDoc.totalTokens != null || usageDoc.input != null || usageDoc.output != null)) {
+    accumulate(usageDoc);
+  }
+  if (!hasUsage && totalTokens === 0) {
+    return void 0;
+  }
+  return {
+    totalTokens,
+    inputTokens,
+    outputTokens,
+    ...cachedInputTokens > 0 ? { cachedInputTokens } : {},
+    ...cacheWriteInputTokens > 0 ? { cacheWriteInputTokens } : {}
+  };
+}
 function buildFinalAssistantMessage(current, lastGenerationText, lastThinkingText) {
   const entries = current.conversation.entries ?? [];
   const lastAssistantEntry = [...entries].reverse().find(
@@ -1037,18 +1089,24 @@ function buildFinalAssistantMessage(current, lastGenerationText, lastThinkingTex
   if (lastGenerationText) {
     finalContent.push({ type: "text", text: lastGenerationText });
   }
-  const rawUsageDoc = current.conversation.docs["pi.usage"];
+  const rawUsageDoc = current?.conversation?.docs?.["pi.usage"];
   const usageDoc = isUsageDocument(rawUsageDoc) ? rawUsageDoc : {};
+  const cumUsage = extractCumulativeUsage(current);
+  const inTok = cumUsage?.inputTokens ?? usageDoc.input;
+  const outTok = cumUsage?.outputTokens ?? usageDoc.output;
+  const cacheRead = cumUsage?.cachedInputTokens ?? usageDoc.cacheRead;
+  const cacheWrite = cumUsage?.cacheWriteInputTokens ?? usageDoc.cacheWrite;
+  const totalTokens = cumUsage?.totalTokens ?? usageDoc.totalTokens ?? (inTok ?? 0) + (outTok ?? 0);
   return {
     role: "assistant",
     content: finalContent.length > 0 ? finalContent : [{ type: "text", text: "" }],
     stopReason: "stop",
     usage: {
-      input: usageDoc.input,
-      output: usageDoc.output,
-      cacheRead: usageDoc.cacheRead,
-      cacheWrite: usageDoc.cacheWrite,
-      totalTokens: usageDoc.totalTokens ?? (usageDoc.input ?? 0) + (usageDoc.output ?? 0),
+      input: inTok,
+      output: outTok,
+      cacheRead,
+      cacheWrite,
+      totalTokens,
       cost: usageDoc.cost
     }
   };
@@ -1241,11 +1299,13 @@ var BBEventAdapter = class {
         const rawAgentDoc = current?.conversation?.docs?.["pi.agent"];
         const agentDoc = isAgentDocument(rawAgentDoc) ? rawAgentDoc : {};
         const cw = this.resolveContextWindow?.(agentDoc.model?.provider, agentDoc.model?.modelId);
+        const cumulativeUsage = extractCumulativeUsage(current);
         this.output({
           type: "turn_end",
           message: finalMsg,
           contextWindow: cw,
-          ...this.lastCheckpointId ? { providerCheckpointId: this.lastCheckpointId } : {}
+          ...this.lastCheckpointId ? { providerCheckpointId: this.lastCheckpointId } : {},
+          ...cumulativeUsage ? { cumulativeUsage } : {}
         });
         break;
       }
@@ -1263,11 +1323,13 @@ var BBEventAdapter = class {
         const rawAgentDoc = current?.conversation?.docs?.["pi.agent"];
         const agentDoc = isAgentDocument(rawAgentDoc) ? rawAgentDoc : {};
         const cw = this.resolveContextWindow?.(agentDoc.model?.provider, agentDoc.model?.modelId);
+        const cumulativeUsage = extractCumulativeUsage(current);
         this.output({
           type: "agent_end",
           messages: [finalMsg],
           contextWindow: cw,
-          ...this.lastCheckpointId ? { providerCheckpointId: this.lastCheckpointId } : {}
+          ...this.lastCheckpointId ? { providerCheckpointId: this.lastCheckpointId } : {},
+          ...cumulativeUsage ? { cumulativeUsage } : {}
         });
         break;
       }

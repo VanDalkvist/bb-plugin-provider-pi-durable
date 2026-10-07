@@ -2,11 +2,15 @@ import type { AgentEvent, SnapshotEvent } from "@earendil-works/pi-durable";
 import type { DurableView } from "../runtime.ts";
 import {
 	isAgentDocument,
+	type AgentDocument,
 	type BBWireEvent,
 	type BBAssistantMessage,
 	type BBAssistantMessageUsage,
 } from "./contracts.ts";
-import { buildFinalAssistantMessage } from "./assistant-message-builder.ts";
+import {
+	buildFinalAssistantMessage,
+	extractCumulativeUsage,
+} from "./assistant-message-builder.ts";
 import {
 	buildToolExecutionUpdate,
 	buildToolExecutionEnd,
@@ -176,13 +180,15 @@ export class BBEventAdapter {
 					this.currentThinking,
 				);
 				const rawAgentDoc = current?.conversation?.docs?.["pi.agent"];
-				const agentDoc = isAgentDocument(rawAgentDoc) ? rawAgentDoc : {};
+				const agentDoc: AgentDocument = isAgentDocument(rawAgentDoc) ? rawAgentDoc : {};
 				const cw = this.resolveContextWindow?.(agentDoc.model?.provider, agentDoc.model?.modelId);
+				const cumulativeUsage = extractCumulativeUsage(current);
 				this.output({
 					type: "turn_end",
 					message: finalMsg,
 					contextWindow: cw,
 					...(this.lastCheckpointId ? { providerCheckpointId: this.lastCheckpointId } : {}),
+					...(cumulativeUsage ? { cumulativeUsage } : {}),
 				});
 				break;
 			}
@@ -199,13 +205,15 @@ export class BBEventAdapter {
 					this.currentThinking,
 				);
 				const rawAgentDoc = current?.conversation?.docs?.["pi.agent"];
-				const agentDoc = isAgentDocument(rawAgentDoc) ? rawAgentDoc : {};
+				const agentDoc: AgentDocument = isAgentDocument(rawAgentDoc) ? rawAgentDoc : {};
 				const cw = this.resolveContextWindow?.(agentDoc.model?.provider, agentDoc.model?.modelId);
+				const cumulativeUsage = extractCumulativeUsage(current);
 				this.output({
 					type: "agent_end",
 					messages: [finalMsg],
 					contextWindow: cw,
 					...(this.lastCheckpointId ? { providerCheckpointId: this.lastCheckpointId } : {}),
+					...(cumulativeUsage ? { cumulativeUsage } : {}),
 				});
 				break;
 			}
