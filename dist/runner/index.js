@@ -1139,24 +1139,43 @@ var BBEventAdapter = class {
           if ("set" in event.output) partialResult = event.output.set;
           else if ("append" in event.output) partialResult = event.output.append ?? "";
         }
-        if (partialResult) {
+        let trimStart;
+        if (event.output && "trimStart" in event.output && typeof event.output.trimStart === "number") {
+          trimStart = event.output.trimStart;
+        }
+        if (partialResult || trimStart !== void 0) {
           this.output({
             type: "tool_execution_update",
             toolCallId: event.toolCallId,
             toolName: event.toolName,
-            partialResult
+            partialResult,
+            ...trimStart !== void 0 ? { trimStart } : {}
           });
         }
         break;
       }
       case "tool_execution_end": {
+        if (event.entry === void 0) {
+          this.output({
+            type: "tool_execution_end",
+            toolCallId: event.toolCallId,
+            toolName: event.toolName,
+            result: "Tool execution faulted or was orphaned without generating an entry record.",
+            isError: true
+          });
+          break;
+        }
         const { result, isError } = extractToolResult(event.entry?.model?.[0]);
+        const entryData = typeof event.entry === "object" && event.entry !== null && "data" in event.entry ? event.entry.data : void 0;
+        const eventDetails = typeof event === "object" && event !== null && "details" in event ? event.details : void 0;
+        const details = entryData ?? eventDetails;
         this.output({
           type: "tool_execution_end",
           toolCallId: event.toolCallId,
           toolName: event.toolName,
           result,
-          isError
+          isError,
+          ...details !== void 0 ? { details } : {}
         });
         break;
       }

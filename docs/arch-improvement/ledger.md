@@ -543,6 +543,72 @@ Resolve findings F-65-1, F-65-2, and F-65-3:
 - **Residual Risk:**
   - None. BB IDE core controls reasoning expansion by design; full parity with native `provider-pi` achieved.
 
+---
+
+## [2026-10-07] — Cycle 67: Tool Fault Integrity, Output Diagnostics & Diff Metadata
+
+### 1. Goal & Context
+
+- **Goal:** Resolve tool execution fault masking (D-5), preserve diff/patch metadata for file change presentations (D-6), forward streaming truncation `trimStart` diagnostics (D-9), and maintain strict typing without `as any` (AP-029).
+- **Target Release:** `v0.2.12`
+- **Governing Standard:** `arch-rules.md` (AP-010 – AP-071), `arch-improvement-review`, `arch-rules-implementation-review`
+- **Plan Reference:** `docs/superpowers/plans/2026-10-07-arch-improvement-cycle-67-tool-fault-integrity-and-diff-metadata.md`
+- **Target Divergences:**
+  - **D-5:** Tool fault masking when `event.entry === undefined` on faulted or orphaned tool tasks.
+  - **D-6:** Discarded diff and patch metadata from tool executions.
+  - **D-9:** Truncation diagnostics and `trimStart` dropped from streaming tool updates.
+
+### 2. Triaged Findings & Dispositions
+
+| ID | Issue / Finding | Severity | Rule | Disposition | Root Cause & Resolution |
+|---|---|---|---|---|---|
+| **F-67-1** | Tool Fault Masking on Absent Entry Record (D-5) | **P1** | AP-012, AP-013 | `fix-now` | In `@earendil-works/pi-durable` spec §4129, `entry` is omitted when a tool task faults or is orphaned. `BBEventAdapter` called `extractToolResult(undefined)`, returning `{ result: "", isError: false }`. Crashed tools were reported as successful empty completions. **Fix:** Detect `event.entry === undefined` and emit `tool_execution_end` with `isError: true` and explicit fault description. |
+| **F-67-2** | Discarded Diff and Patch Metadata (D-6) | **P2** | AP-010, AP-026 | `fix-now` | Tool executions from `@earendil-works/pi-coding-agent` return `details: { diff, patch }`, which `BBEventAdapter` dropped. **Fix:** Extended `contracts.ts` with `details?: unknown` on `tool_execution_end`, forwarded in `BBEventAdapter`, and attached `diff` to `fileChange` item changes in `tool-delta-translator.ts`. |
+| **F-67-3** | Truncation Diagnostics & TrimStart Dropped (D-9) | **P2** | AP-026 | `fix-now` | `tool_execution_update` dropped `output.trimStart`. **Fix:** Extended `contracts.ts` with `trimStart?: number`, extracted and forwarded `trimStart` in `BBEventAdapter`. |
+| **F-67-4** | Type Safety Regression in `buildToolItemShape` | **P2** | AP-029 | `fix-now` | `src/host/tool-delta-translator.ts` contained `(edit: any)`. **Fix:** Replaced with typed `RawEditItem` interface and unknown assertion guard. |
+
+### 3. Implementation Changes
+
+- **Slice 1: Protocol Contracts Update (`src/runner/bridge/contracts.ts`):**
+  - Updated `BBToolExecutionStartEvent` to support `toolCallId: string | number`.
+  - Extended `BBToolExecutionUpdateEvent` with `trimStart?: number`.
+  - Extended `BBToolExecutionEndEvent` with `result: string`, `isError: boolean`, and `details?: unknown`.
+- **Slice 2: Tool Fault Detection & Metadata Forwarding (`src/runner/bridge/bb-event-adapter.ts`):**
+  - In `tool_execution_update`, extracted `trimStart` from `event.output` when present and forwarded on the wire event.
+  - In `tool_execution_end`, guarded against `event.entry === undefined` to emit `isError: true` with `"Tool execution faulted or was orphaned without generating an entry record."`.
+  - Extracted `details` from `entry.data` or `event.details` and forwarded to wire event.
+- **Slice 3: Host Tool Delta Translator Enrichment (`src/host/tool-delta-translator.ts`):**
+  - In `translateToolEnd`, mapped `event.isError: true` to `status: "failed"`, `exitCode: 1`, and attached `error: { message: resultText }`.
+  - For `fileChange` items, extracted diff/patch metadata from `event.details` and attached to `item.changes[0].diff`.
+  - For `tool` items on error, populated `item.error = resultText`.
+  - Validated all delta shapes strictly against `@bb/provider-bridge-protocol` `threadDeltaSchema`.
+  - Eliminated `(edit: any)` in favor of `(edit: unknown)` with typed interface.
+- **Slice 4: Non-Trivial Test Suite (`tests/tool-fault-and-diff.test.ts`):**
+  - Added 7 deterministic tests covering fault detection, clean results, explicit errors, trimStart forwarding, details propagation, failed item status translation, and diff metadata enrichment with strict Zod `threadDeltaSchema` validation.
+- **Slice 5: Verification, Release & Version Bump:**
+  - Bumped `package.json` to `0.2.12`.
+  - Verified `npm test`: **70 / 70 passing assertions (0 failed, 0 skipped)** across 6 suites.
+  - Verified AP-019 line limits: all source files strictly < 250 lines.
+  - Built bundles via `node scripts/build-runner.mjs && bb plugin build`.
+
+### 4. Verification Evidence & Architecture Verification
+
+- `npm test`: **70 / 70 passing assertions (0 failed, 0 skipped)** across all test suites.
+- `wc -l src/**/*.ts`: All source files under 240 lines (strictly < 250, AP-019).
+- `npm run build`: Built `dist/runner/index.js`, `dist/host.js`, and `dist/server.js` cleanly.
+
+#### Architecture Verification
+- **Passed:**
+  - `AP-010`: Clean separation between runner event adapter, wire contracts, and host delta translation.
+  - `AP-012`: Fail-fast error propagation when tool task faults or is orphaned.
+  - `AP-013`: Tool faults and data integrity preserved without masking failures.
+  - `AP-019`: All source files < 250 lines.
+  - `AP-026`: DTO contracts strictly validated against `threadDeltaSchema`.
+  - `AP-028`: Comprehensive deterministic tests with genuine assertions.
+  - `AP-029`: Strict TypeScript; zero `as any` casts introduced, existing cast removed.
+- **Residual Risk:**
+  - None. Wire protocol backwards compatible; host delta translator preserves full Zod compliance with host BB IDE.
+
 
 
 

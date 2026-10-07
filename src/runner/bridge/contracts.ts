@@ -5,24 +5,26 @@
 
 export interface BBToolExecutionStartEvent {
 	type: "tool_execution_start";
-	toolCallId: string;
+	toolCallId: string | number;
 	toolName: string;
 	args: Record<string, unknown>;
 }
 
 export interface BBToolExecutionUpdateEvent {
 	type: "tool_execution_update";
-	toolCallId: string;
+	toolCallId: string | number;
 	toolName: string;
-	partialResult: unknown;
+	partialResult: string;
+	trimStart?: number;
 }
 
 export interface BBToolExecutionEndEvent {
 	type: "tool_execution_end";
-	toolCallId: string;
+	toolCallId: string | number;
 	toolName: string;
-	result: unknown;
+	result: string;
 	isError: boolean;
+	details?: unknown;
 }
 
 export interface BBThinkingDeltaEvent {

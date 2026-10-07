@@ -1,5 +1,10 @@
 import type { RunnerEvent, ThreadDelta } from "./types.ts";
 
+interface RawEditItem {
+	oldText?: unknown;
+	newText?: unknown;
+}
+
 /**
  * Translates tool execution events into BB thread deltas.
  */
@@ -34,12 +39,15 @@ export function buildToolItemShape(
 		}
 		const edits = Array.isArray(args.edits) ? args.edits : [];
 		if (edits.length > 0) {
-			const changes = edits.map((edit: any) => ({
-				path: filePath,
-				kind: "update",
-				...(typeof edit?.oldText === "string" ? { oldText: edit.oldText } : {}),
-				...(typeof edit?.newText === "string" ? { newText: edit.newText } : {}),
-			}));
+			const changes = edits.map((edit: unknown) => {
+				const e = typeof edit === "object" && edit !== null ? (edit as RawEditItem) : undefined;
+				return {
+					path: filePath,
+					kind: "update",
+					...(typeof e?.oldText === "string" ? { oldText: e.oldText } : {}),
+					...(typeof e?.newText === "string" ? { newText: e.newText } : {}),
+				};
+			});
 			return { type: "fileChange", changes };
 		}
 		return {
@@ -111,13 +119,44 @@ export function translateToolEnd(
 		? event.result
 		: JSON.stringify(event.result ?? "");
 
+	const isError = Boolean(event.isError);
+
+	let item = shape;
+	if (item.type === "fileChange" && Array.isArray(item.changes)) {
+		const detailsObj = typeof event.details === "object" && event.details !== null
+			? (event.details as Record<string, unknown>)
+			: undefined;
+		const diff = typeof detailsObj?.diff === "string"
+			? detailsObj.diff
+			: typeof detailsObj?.patch === "string"
+				? detailsObj.patch
+				: undefined;
+		if (diff && item.changes.length > 0) {
+			item = {
+				...item,
+				changes: item.changes.map((change: unknown, index: number) => {
+					if (typeof change === "object" && change !== null && index === 0) {
+						return { ...change, diff };
+					}
+					return change;
+				}),
+			};
+		}
+	} else if (item.type === "tool" && isError) {
+		item = {
+			...item,
+			error: resultText,
+		};
+	}
+
 	return {
 		kind: "item.close",
 		key: { providerItemId: callId },
-		status: event.isError ? "failed" : "completed",
-		exitCode: event.isError ? 1 : 0,
+		status: isError ? "failed" : "completed",
+		exitCode: isError ? 1 : 0,
 		resultText,
-		aggregatedOutput: shape.type === "command" ? resultText : undefined,
-		item: shape,
+		aggregatedOutput: item.type === "command" ? resultText : undefined,
+		...(isError ? { error: { message: resultText } } : {}),
+		item,
 	};
 }
