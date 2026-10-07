@@ -1,12 +1,5 @@
 export default function plugin(bb: any) {
   bb.settings?.define?.({
-    openThinkingByDefault: {
-      type: "boolean",
-      label: "Open thoughts by default",
-      description:
-        "Keep reasoning thoughts expanded by default in the chat timeline. Toggle off to collapse thoughts by default.",
-      default: true,
-    },
     hideThinking: {
       type: "boolean",
       label: "Hide thoughts",
@@ -21,7 +14,6 @@ export default function plugin(bb: any) {
     icon: "./icons/pi-durable.svg",
     deriveProviderOptions(ctx: any) {
       return {
-        openThinkingByDefault: Boolean(ctx?.settings?.openThinkingByDefault ?? true),
         hideThinking: Boolean(ctx?.settings?.hideThinking ?? false),
       };
     },

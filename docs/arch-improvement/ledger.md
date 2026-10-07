@@ -491,6 +491,59 @@ Resolve findings F-65-1, F-65-2, and F-65-3:
 - `wc -l src/**/*.ts`: All source files under 220 lines (strictly < 250).
 - `bb plugin reload provider-pi-durable`: Plugin reloaded cleanly to v0.2.10.
 
+---
+
+## [2026-10-07] — Cycle 66: Retirement of Unsupported `openThinkingByDefault` Setting
+
+### 1. Goal & Context
+
+- **Goal:** Eliminate the dead/unsupported `openThinkingByDefault` setting from `server.ts` and test suites, preserving true architectural parity with native `provider-pi` and host BB IDE.
+- **Superpowers Plan:** `docs/superpowers/plans/2026-10-07-arch-improvement-cycle-66-retire-unsupported-settings.md`
+- **Findings Triage:**
+  - `[P1]` Dead/unsupported declarative setting `openThinkingByDefault`
+    - Evidence: `server.ts:3-10`, `start-server.js:571531` (`threadEventItemPresentationSchema` has no expansion fields), `workspace-checkout-display-DPXg7ihz.js:147883` (`status === "completed"` rows never auto-expand).
+    - Impact: Setting promises timeline auto-expansion that BB IDE core cannot satisfy, confusing users and violating AP-010/AP-026 contract truthfulness.
+    - Rule: AP-010, AP-026.
+    - Fix decision: `fix-now`.
+  - `[P2]` Unit test asserts dead setting contract
+    - Evidence: `tests/thinking-presentation.test.ts:167-190`.
+    - Impact: Tests validate non-existent capability, cementing a misleading contract.
+    - Rule: AP-028.
+    - Fix decision: `fix-now`.
+
+### 2. Implementation Changes
+
+- **Slice 1: Manifest & Server Settings Cleanup (`server.ts`):**
+  - Removed `openThinkingByDefault` descriptor from `bb.settings.define`.
+  - Removed `openThinkingByDefault` from `deriveProviderOptions(ctx)`.
+  - Retained `hideThinking` (boolean, default: false).
+- **Slice 2: Test Suite Realignment (`tests/thinking-presentation.test.ts`):**
+  - Updated test `"server.ts: registers settings and deriveProviderOptions forwards settings correctly"` to verify only `hideThinking` is registered and derived.
+  - Verified `openThinkingByDefault` is `undefined`.
+- **Slice 3: Build, Line Count & Verification:**
+  - Ran `npm test`: 63 / 63 tests pass.
+  - Built bundles: `node scripts/build-runner.mjs && bb plugin build`.
+  - Bumped version in `package.json` to `v0.2.11`.
+  - Reloaded plugin via `bb plugin reload provider-pi-durable`.
+  - Verified with `bb plugin config provider-pi-durable` that only `hideThinking` is present.
+
+### 3. Verification Evidence & Architecture Verification
+
+- `npm test`: **63 / 63 passing assertions (0 failed, 0 skipped)** across all test suites.
+- `wc -l src/**/*.ts server.ts`: All source files under 220 lines (strictly < 250, AP-019).
+- `bb plugin config provider-pi-durable`: Confirmed only `hideThinking = false (boolean)` is displayed.
+
+#### Architecture Verification
+- **Passed:**
+  - `AP-010`: Domain boundaries preserved; contract matches real runtime capabilities.
+  - `AP-019`: Source modularity maintained; all files < 250 lines.
+  - `AP-026`: DTO integrity; no phantom options in provider settings.
+  - `AP-028`: Deterministic unit tests; assertions reflect real behavior.
+  - `AP-029`: Strict TypeScript; zero type regressions.
+- **Residual Risk:**
+  - None. BB IDE core controls reasoning expansion by design; full parity with native `provider-pi` achieved.
+
+
 
 
 

@@ -164,8 +164,7 @@ test("server.ts: registers settings and deriveProviderOptions forwards settings 
 	plugin(mockBb);
 
 	assert.ok(registeredSettings);
-	assert.ok((registeredSettings as any).openThinkingByDefault);
-	assert.equal((registeredSettings as any).openThinkingByDefault.default, true);
+	assert.equal((registeredSettings as any).openThinkingByDefault, undefined);
 	assert.ok((registeredSettings as any).hideThinking);
 	assert.equal((registeredSettings as any).hideThinking.default, false);
 
@@ -175,19 +174,16 @@ test("server.ts: registers settings and deriveProviderOptions forwards settings 
 	// Default context settings
 	const defaultDerived = registeredProvider.deriveProviderOptions({});
 	assert.deepEqual(defaultDerived, {
-		openThinkingByDefault: true,
 		hideThinking: false,
 	});
 
 	// Custom context settings
 	const customDerived = registeredProvider.deriveProviderOptions({
 		settings: {
-			openThinkingByDefault: false,
 			hideThinking: true,
 		},
 	});
 	assert.deepEqual(customDerived, {
-		openThinkingByDefault: false,
 		hideThinking: true,
 	});
 });
