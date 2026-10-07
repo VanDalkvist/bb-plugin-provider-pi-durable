@@ -1,15 +1,15 @@
 # Master Architectural Implementation Plan: Remediation & Full Parity of Pi Durable in BB IDE
 
 **Document ID:** `plans/pi-durable-bb-provider-arch-master-plan`  
-**Version:** 4.5.0 (Master Unified Roadmap: Full Audit Reconciliation, Extension Lifecycle & MCP Parity)  
-**Current Release:** `v0.2.16` (Commit: `7ae7ba4`)  
+**Version:** 4.6.0 (Master Unified Roadmap: Full Audit Reconciliation, Extension Lifecycle & MCP Parity)  
+**Current Release:** `v0.2.17` (Commit: `4d00625`)  
 **Target Repository:** `/Users/vanya/Projects/bb-plugin-provider-pi-durable`  
 **Governing Standards:** `arch-rules.md` (AP-010 – AP-071), `arch-improvement-review`, `arch-rules-implementation-review`  
 **Upstream Engine:** `@earendil-works/pi-durable` v1.0.4 & `@earendil-works/pi-coding-agent` v1.0.4  
 **Host Target:** Beyond Boundaries (BB IDE) `>= 0.45`  
 **Status:**
 - **Stage 1 (Foundation Hardening, Territory Decoupling & Host Parity):** ✅ 100% COMPLETED (Cycles 56–66, Releases `v0.2.1` – `v0.2.11`)
-- **Stage 2 (Advanced Engine Capabilities & Extended Parity):** ⏳ IN PROGRESS (Cycles 67–70 ✅ COMPLETED, Cycles 71–75 PLANNED)
+- **Stage 2 (Advanced Engine Capabilities & Extended Parity):** ⏳ IN PROGRESS (Cycles 67–71 ✅ COMPLETED, Cycles 72–75 PLANNED)
 
 ---
 
@@ -94,7 +94,7 @@ Because `@earendil-works/pi-durable` is an execution engine rather than an agent
 | **D-17**| **Статический промпт без динамики расширений** | Расширения обогащают промпт (`mcp_servers`, Ambient Recall) через `before_agent_start` | ⏳ **SCOPED (NEW)** (Эмит `before_agent_start` и мердж секций промпта) | Stage 2 (Cycle 74) |
 | **D-18**| **Отсутствие хуков `tool_call`/`tool_result` в runner** | Ленивое ожидание серверов в `codemode` и guardrails (`skill-guardian`) не работают | ⏳ **SCOPED (NEW)** (Проброс `tool_call` и `tool_result` в `extensionRunner`) | Stage 2 (Cycle 74) |
 | **D-19**| **Глушение UI и диагностических notice расширений** | Ошибки и статусы MCP (`needs-auth`, сбои соединения) тонут в `noOpUIContext` | ⏳ **SCOPED (NEW)** (Привязка `runner.setUIContext` к wire notice и логам хоста) | Stage 2 (Cycle 74) |
-| **D-20**| **Блокировка сессий сиротами и жесткая привязка к ~/.bb** | Сиротские раннеры вешают `session.sqlite`; `BB_DATA_DIR` не учитывается при поиске раннера | ⏳ **SCOPED (HOTFIX)** (session.owner.json, graceful eviction, teardown, Issue #7) | Stage 2 (Cycle 71, v0.2.17) |
+| **D-20**| **Блокировка сессий сиротами и жесткая привязка к ~/.bb** | Сиротские раннеры вешают `session.sqlite`; `BB_DATA_DIR` не учитывается при поиске раннера | ✅ **FIXED** (session.owner.json, graceful eviction, teardown, Issue #7) | `v0.2.17` (Cycle 71) |
 
 ---
 
@@ -121,8 +121,8 @@ STAGE 2: РАСШИРЕННЫЕ ВОЗМОЖНОСТИ ДВИЖКА И ПОЛН�
   - Cycle 68.1: Защита целостности зависимостей SDK для чистого продакшен-инсталла [✅ ЗАВЕРШЕНО, v0.2.14]
   - Cycle 69: Чекпоинт-форки тредов, перемотка истории и редактирование сообщений (thread/fork) [✅ ЗАВЕРШЕНО, v0.2.15]
   - Cycle 70: Монотонный учет кумулятивного расхода токенов через pi.usage (D-7) [✅ ЗАВЕРШЕНО, v0.2.16]
-  - Cycle 71: Устранение блокировок сиротами, Teardown воркеров и BB_DATA_DIR (D-20, Issue #7) [⏳ В РАБОТЕ, v0.2.17]
-  - Cycle 72: Визуальные карточки сабагентов через протокольный deltaDelegationShape (type: "delegation") [PLANNED, v0.2.18]
+  - Cycle 71: Устранение блокировок сиротами, Teardown воркеров и BB_DATA_DIR (D-20, Issue #7) [✅ ЗАВЕРШЕНО, v0.2.17]
+  - Cycle 72: Визуальные карточки сабагентов через протокольный deltaDelegationShape (type: "delegation") [⏳ СЛЕДУЮЩИЙ, v0.2.18]
   - Cycle 73: Корректное прерывание хода, inbox-отмена и обработка thread/stop (submission.abort) [PLANNED, v0.2.19]
   - Cycle 74: Паритет жизненного цикла расширений Pi и надёжность MCP-серверов (D-16, D-17, D-18, D-19) [PLANNED, v0.2.20]
   - Cycle 75: Мастер-аттестация паритета с нативным provider-pi и conformance-тесты [PLANNED, v0.2.21]
@@ -199,24 +199,24 @@ STAGE 2: РАСШИРЕННЫЕ ВОЗМОЖНОСТИ ДВИЖКА И ПОЛН�
 
 ---
 
-### Cycle 71: Session Lock Contention, Orphan Eviction, Worker Teardown & Multi-DataDir Runner Discovery (D-20, Issue #7) [⏳ СЛЕДУЮЩИЙ, v0.2.17]
+### Cycle 71: Session Lock Contention, Orphan Eviction, Worker Teardown & Multi-DataDir Runner Discovery (D-20, Issue #7) [✅ COMPLETED, v0.2.17]
 - **Целевые расхождения:** D-20 (AP-012, AP-022, AP-027, AP-034), GitHub Issue #7 (Install Portability on Custom `--data-dir`).
 - **Архитектурный анализ первоисточников:**
   1. В `session-storage.ts` upstream-раннера: `proper-lockfile` захватывает директорию сессии и обновляет mtime каждые несколько секунд. Если процесс раннера остался жив после краша/рестарта воркера (сиротский процесс), mtime продолжает обновляться, и новый раннер после 12 секунд ожидания падает с `Session is already open in another process`.
-  2. В `src/host/index.ts`: отсутствуют обработчики завершения `process.on('disconnect')`, `SIGTERM`, `SIGINT`, из-за чего при релоаде воркера хост-демоном BB дочерние раннеры теряют родителя и не закрывают `activeDurable.close()`.
-  3. В `src/host/runner-process.ts`: метод `kill()` сразу шлёт `SIGKILL`, лишая раннер возможности выполнить `activeDurable.close()` и снять блокировку.
-  4. В `src/host/paths.ts` (Issue #7): `resolveRunnerPath()` ищет `bb.db` и кэш плагинов только по жесткому пути `join(homedir(), ".bb", ...)`. При запуске BB с кастомным `--data-dir /path` (переменная окружения `BB_DATA_DIR`) раннер не обнаруживается, каталог пуст, а старый `~/.bb/bb.db` создает риск чтения устаревших записей.
+  2. В `src/host/index.ts`: отсутствовали обработчики завершения `process.on('disconnect')`, `SIGTERM`, `SIGINT`, из-за чего при релоаде воркера хост-демоном BB дочерние раннеры теряли родителя и не закрывали `activeDurable.close()`.
+  3. В `src/host/runner-process.ts`: метод `kill()` сразу слал `SIGKILL`, лишая раннер возможности выполнить `activeDurable.close()` и снять блокировку.
+  4. В `src/host/paths.ts` (Issue #7): `resolveRunnerPath()` искал `bb.db` и кэш плагинов только по жесткому пути `join(homedir(), ".bb", ...)`. При запуске BB с кастомным `--data-dir /path` (переменная окружения `BB_DATA_DIR`) раннер не обнаруживался, каталог был пуст, а старый `~/.bb/bb.db` создавал риск чтения устаревших записей.
 - **Решение:**
-  1. **Запись владения сессией (`session.owner.json`):** При успешном локе сессии записывать `{ pid, startedAt, providerThreadId, cwd }` рядом с `session.sqlite`, удалять при `release()`.
-  2. **Протокол вытеснения сирот (Graceful Takeover):** Если лок занят, читать `session.owner.json`. Если PID мёртв (`ESRCH`), сбрасывать лок. Если жив и принадлежит раннеру того же пользователя — слать `SIGTERM` на graceful exit (`activeDurable.close()`), ожидать до 3 секунд и повторно захватывать лок. При неудаче выбрасывать явную ошибку с PID.
-  3. **Teardown хост-воркера:** В `src/host/index.ts` подписаться на `disconnect`, `SIGTERM`, `SIGINT` и вызывать `await bridge.shutdown()`.
-  4. **Двухфазное завершение раннера:** В `RunnerProcess.kill()` сначала отправлять `SIGTERM`, и только при таймауте — `SIGKILL`.
-  5. **Поддержка `BB_DATA_DIR` (Issue #7):** В `src/host/paths.ts` определять базовую директорию данных: `process.env.BB_DATA_DIR?.trim() || join(homedir(), ".bb")`. Использовать её для разрешения `bbDbPath` и `cacheDir`.
+  1. **Запись владения сессией (`session.owner.json`):** При успешном локе сессии записывается `{ pid, startedAt, providerThreadId, cwd }` рядом с `session.sqlite`, удаляется при `release()`.
+  2. **Протокол вытеснения сирот (Graceful Takeover):** Если лок занят, считывается `session.owner.json`. Если PID мёртв (`ESRCH`), сбрасывается лок. Если жив и принадлежит раннеру того же пользователя — отправляется `SIGTERM` на graceful exit (`activeDurable.close()`), ожидается до 3 секунд и повторно захватывается лок. При неудаче выбрасывается явная ошибка с PID.
+  3. **Teardown хост-воркера:** В `src/host/index.ts` зарегистрированы слушатели `disconnect`, `SIGTERM`, `SIGINT` с вызовом `await bridge.shutdown()`.
+  4. **Двухфазное завершение раннера:** В `RunnerProcess.kill()` сначала отправляется `SIGTERM`, и только при таймауте (500ms `timer.unref()`) — `SIGKILL`.
+  5. **Поддержка `BB_DATA_DIR` (Issue #7):** В `src/host/paths.ts` внедрена функция `getBbDataDir()`, определяющая директорию данных: `process.env.BB_DATA_DIR?.trim() || join(homedir(), ".bb")`. Используется для разрешения `bbDbPath`, `cacheDir` и путей сессий моста с сохранением fallback на `~/.bb`.
 - **Файлы:** `src/runner/upstream/session-storage.ts`, `src/host/index.ts`, `src/host/runner-process.ts`, `src/host/paths.ts`, `tests/session-lock-eviction.test.ts`, `tests/worker-teardown.test.ts`, `tests/runner-discovery.test.ts`.
 
 ---
 
-### Cycle 72: Visual Subagent Delegation Cards via Protocol Schema (`type: "delegation"`)
+### Cycle 72: Visual Subagent Delegation Cards via Protocol Schema (`type: "delegation"`) [⏳ СЛЕДУЮЩИЙ, v0.2.18]
 - **Возможности платформы:** Визуализация сабагентов через протокол BB `@bb/provider-bridge-protocol`.
 - **Архитектурный анализ первоисточников:**
   1. Протокол моста BB содержит каноническую схему `deltaDelegationShapeSchema`:

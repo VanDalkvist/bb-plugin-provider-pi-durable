@@ -837,6 +837,37 @@ Resolve findings F-65-1, F-65-2, and F-65-3:
 - **Residual Risk:**
   - None. Fallback preserves identical behavior for legacy events without `cumulativeUsage`.
 
+---
+
+### Cycle 71: Orphan Eviction, Worker Teardown & BB_DATA_DIR Runner Discovery (D-20, Issue #7)
+- **Commit:** `4d00625`
+- **Release:** `v0.2.17`
+- **Date:** 2026-10-08
+- **Independent Auditor Verdict:** PASS (Subthread `@thread:thr_8pkqcr3y34`)
+- **Tests Passing:** 100/100 tests
+
+#### Context & Objectives
+1. **D-20 (Session Lock Contention & Orphan Process Leaks):** When BB rebuilds plugin host artifacts or restarts workers, orphaned child runner processes maintained locks on `session.sqlite`, causing new turns to crash with HTTP 502 / exit code 1 (`Session is already open in another process`).
+2. **Issue #7 (Runner Bundle Discovery on Custom `BB_DATA_DIR`):** When BB is launched with `--data-dir /path` (setting `BB_DATA_DIR`), runner bundle candidates hardcoded to `~/.bb` failed to resolve, reporting empty model lists.
+
+#### Key Implementations
+1. **`src/host/paths.ts`:**
+   - Implemented `getBbDataDir(env)` prioritizing `env.BB_DATA_DIR?.trim()` with fallback to `join(homedir(), ".bb")`.
+   - Propagated active data directory to runner discovery candidates, plugin cache roots, and session directory resolution.
+   - Retained legacy `~/.bb` locations as fallback search paths.
+2. **`src/runner/upstream/session-storage.ts`:**
+   - Added `session.owner.json` writing on lock acquisition (`{ pid, id, cwd, startedAt }`) and guaranteed deletion on release.
+   - Implemented `isProcessAlive(pid)` using `process.kill(pid, 0)` with `EPERM` check.
+   - Implemented orphan eviction: instant force unlock for dead PIDs, graceful `SIGTERM` takeover with 3s polling for live runner orphans, and descriptive error with PID diagnostics on timeout.
+3. **`src/host/runner-process.ts`:**
+   - Dual-stage `kill()`: sends `SIGTERM` first, followed by a 500ms `unref()` fallback timer escalating to `SIGKILL`.
+4. **`src/host/index.ts`:**
+   - Added worker lifecycle teardown handlers for `disconnect`, `SIGTERM`, and `SIGINT` invoking `bridge.shutdown()`.
+
+#### Verification & Architecture Compliance
+- **Passed:** AP-010, AP-012, AP-013, AP-019 (all files 59–205 lines < 250), AP-022, AP-023, AP-027, AP-028 (100/100 tests pass), AP-029 (0 `as any`), AP-034, AP-035, AP-045.
+- **Residual Risk:** None. All 10 suites green, bundle builds cleanly.
+
 
 
 
