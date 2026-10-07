@@ -43,17 +43,21 @@ export function createStandardExtensionFactories(): ExtensionFactory[] {
 export function adaptExtensionTool(
 	toolDef: ToolDefinition,
 	executeToolFn: NestedToolExecutor,
+	createToolContext?: (callId: string) => ExtensionToolContext,
 ): ToolRegistration {
 	return defineTool({
 		name: toolDef.name,
 		description: toolDef.description,
 		parameters: toolDef.parameters,
 		async execute(args, api) {
-			const ctx = {
-				executeTool: async (name: string, nestedArgs: unknown, options?: { signal?: AbortSignal }) => {
-					return executeToolFn(api.callId, name, nestedArgs, options);
-				},
-			} as ExtensionToolContext;
+			const ctx = createToolContext
+				? createToolContext(api.callId)
+				: ({
+						tools: [],
+						executeTool: async (name: string, nestedArgs: unknown, options?: { signal?: AbortSignal }) => {
+							return executeToolFn(api.callId, name, nestedArgs, options);
+						},
+					} as ExtensionToolContext);
 
 			const result = await toolDef.execute(
 				api.callId,
@@ -99,6 +103,8 @@ export interface SetupExtensionRunnerOptions {
 	cwd: string;
 	modelRuntime: ModelRuntime;
 	executeToolFn: NestedToolExecutor;
+	getCallableTools?: () => Array<{ name: string; description: string; parameters: unknown }>;
+	onToolsChanged?: () => void;
 }
 
 /**
@@ -124,15 +130,21 @@ export async function setupExtensionRunner(
 			getActiveTools: () => [],
 			getAllTools: () => [],
 			getSettings: () => ({}),
+			refreshTools: () => {
+				options.onToolsChanged?.();
+			},
 		},
 		{
+			isProjectTrusted: () => true,
 			executeTool: (callerId, name, args, opts) => options.executeToolFn(callerId, name, args, opts),
 			getCallableTools: () => {
-				return runner.getAllRegisteredTools().map((t) => ({
-					name: t.definition.name,
-					description: t.definition.description,
-					parameters: t.definition.parameters,
-				}));
+				return options.getCallableTools
+					? options.getCallableTools()
+					: runner.getAllRegisteredTools().map((t) => ({
+							name: t.definition.name,
+							description: t.definition.description,
+							parameters: t.definition.parameters,
+						}));
 			},
 			getSystemPrompt: () => "",
 		},

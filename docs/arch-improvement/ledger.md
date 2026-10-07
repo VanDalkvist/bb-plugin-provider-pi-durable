@@ -239,5 +239,11 @@
 - `npm test`: **47 / 47 passing assertions (0 failed, 0 skipped)** across 5 suites.
 - `bb plugin reload provider-pi-durable`: Plugin reloaded cleanly (`provider-pi-durable@0.2.5 running`).
 - Verified README architectural invariant section detailing the Thin Bridge contract and user configuration primacy.
+- Live verification in subthread `thr_63equtkzkx` confirmed 100% operational success:
+  - `codemode` executed JavaScript cleanly in QuickJS sandbox without errors.
+  - All built-in Pi tools active (`codemode`, `tool_search`).
+  - User extensions active (`google_search`, `generate_image`, `web_search_exa`, `deep_search_exa`).
+  - External MCP servers loaded and mounted into session (`mcp__telegram__*`, 33 tools total).
+
 
 

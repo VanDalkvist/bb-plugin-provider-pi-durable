@@ -129,16 +129,35 @@ export async function loadHarnessEnvironment(
 
 	let extensionRunner: import("@earendil-works/pi-coding-agent").ExtensionRunner | undefined;
 	try {
+		const syncToolsToRegistry = () => {
+			if (!extensionRunner) return;
+			const createToolContext = (callId: string) => extensionRunner!.createToolContext(callId, undefined);
+			const registeredTools = extensionRunner.getAllRegisteredTools();
+			const adaptedTools = registeredTools.map((t) =>
+				adaptExtensionTool(t.definition, executeToolFn, createToolContext),
+			);
+			installExtensionTools(registry, adaptedTools);
+		};
+
+		const getCallableTools = () => {
+			return registry.snapshot().tools().map((t) => ({
+				name: t.tool.name,
+				description: (t.tool as any).description ?? "",
+				parameters: t.tool.parameters,
+			}));
+		};
+
 		extensionRunner = await setupExtensionRunner({
 			extensions: extensionsResult.extensions,
 			runtime: extensionsResult.runtime,
 			cwd: location.cwd,
 			modelRuntime,
 			executeToolFn,
+			getCallableTools,
+			onToolsChanged: syncToolsToRegistry,
 		});
-		const registeredTools = extensionRunner.getAllRegisteredTools();
-		const adaptedTools = registeredTools.map((t) => adaptExtensionTool(t.definition, executeToolFn));
-		installExtensionTools(registry, adaptedTools);
+
+		syncToolsToRegistry();
 	} catch (error) {
 		report(error);
 	}

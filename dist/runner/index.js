@@ -612,13 +612,14 @@ function createStandardExtensionFactories() {
     createMcpExtension()
   ];
 }
-function adaptExtensionTool(toolDef, executeToolFn) {
+function adaptExtensionTool(toolDef, executeToolFn, createToolContext) {
   return defineTool({
     name: toolDef.name,
     description: toolDef.description,
     parameters: toolDef.parameters,
     async execute(args2, api) {
-      const ctx = {
+      const ctx = createToolContext ? createToolContext(api.callId) : {
+        tools: [],
         executeTool: async (name, nestedArgs, options) => {
           return executeToolFn(api.callId, name, nestedArgs, options);
         }
@@ -668,12 +669,16 @@ async function setupExtensionRunner(options) {
     {
       getActiveTools: () => [],
       getAllTools: () => [],
-      getSettings: () => ({})
+      getSettings: () => ({}),
+      refreshTools: () => {
+        options.onToolsChanged?.();
+      }
     },
     {
+      isProjectTrusted: () => true,
       executeTool: (callerId, name, args2, opts) => options.executeToolFn(callerId, name, args2, opts),
       getCallableTools: () => {
-        return runner.getAllRegisteredTools().map((t) => ({
+        return options.getCallableTools ? options.getCallableTools() : runner.getAllRegisteredTools().map((t) => ({
           name: t.definition.name,
           description: t.definition.description,
           parameters: t.definition.parameters
@@ -812,16 +817,32 @@ async function loadHarnessEnvironment(location, options, envs) {
   };
   let extensionRunner;
   try {
+    const syncToolsToRegistry = () => {
+      if (!extensionRunner) return;
+      const createToolContext = (callId) => extensionRunner.createToolContext(callId, void 0);
+      const registeredTools = extensionRunner.getAllRegisteredTools();
+      const adaptedTools = registeredTools.map(
+        (t) => adaptExtensionTool(t.definition, executeToolFn, createToolContext)
+      );
+      installExtensionTools(registry, adaptedTools);
+    };
+    const getCallableTools = () => {
+      return registry.snapshot().tools().map((t) => ({
+        name: t.tool.name,
+        description: t.tool.description ?? "",
+        parameters: t.tool.parameters
+      }));
+    };
     extensionRunner = await setupExtensionRunner({
       extensions: extensionsResult.extensions,
       runtime: extensionsResult.runtime,
       cwd: location.cwd,
       modelRuntime,
-      executeToolFn
+      executeToolFn,
+      getCallableTools,
+      onToolsChanged: syncToolsToRegistry
     });
-    const registeredTools = extensionRunner.getAllRegisteredTools();
-    const adaptedTools = registeredTools.map((t) => adaptExtensionTool(t.definition, executeToolFn));
-    installExtensionTools(registry, adaptedTools);
+    syncToolsToRegistry();
   } catch (error) {
     report(error);
   }
