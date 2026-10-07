@@ -123,3 +123,114 @@ test("DeltaTranslator translates compaction and context window deltas", () => {
 	assert.equal(deltasContext[0].size, 200000);
 	assert.equal(deltasContext[0].estimated, true);
 });
+
+test("BBEventAdapter emits thinking_end when transitioning from thinking_delta to text_delta", () => {
+	const emitted: BBWireEvent[] = [];
+	const adapter = new BBEventAdapter((evt) => emitted.push(evt));
+	const dummyView = {} as DurableView;
+
+	adapter.handleEvent(
+		{
+			type: "message_update",
+			changes: [{ type: "thinking_delta", delta: "Thinking deeply..." }],
+		} as any,
+		dummyView,
+	);
+
+	assert.equal(emitted.length, 1);
+	assert.deepEqual(emitted[0], {
+		type: "message_update",
+		assistantMessageEvent: {
+			type: "thinking_delta",
+			contentIndex: 0,
+			delta: "Thinking deeply...",
+		},
+	});
+
+	adapter.handleEvent(
+		{
+			type: "message_update",
+			changes: [{ type: "text_delta", delta: "Hello user!" }],
+		} as any,
+		dummyView,
+	);
+
+	assert.equal(emitted.length, 3);
+	assert.deepEqual(emitted[1], {
+		type: "message_update",
+		assistantMessageEvent: {
+			type: "thinking_end",
+			contentIndex: 0,
+			content: "Thinking deeply...",
+		},
+	});
+	assert.deepEqual(emitted[2], {
+		type: "message_update",
+		assistantMessageEvent: {
+			type: "text_delta",
+			contentIndex: 0,
+			delta: "Hello user!",
+		},
+	});
+});
+
+test("BBEventAdapter emits thinking_end on message_end and tool_execution_start", () => {
+	const emitted: BBWireEvent[] = [];
+	const adapter = new BBEventAdapter((evt) => emitted.push(evt));
+	const dummyView = {} as DurableView;
+
+	// 1. Thinking before tool execution
+	adapter.handleEvent(
+		{
+			type: "message_update",
+			changes: [{ type: "thinking_delta", delta: "Thinking about bash command..." }],
+		} as any,
+		dummyView,
+	);
+
+	adapter.handleEvent(
+		{
+			type: "tool_execution_start",
+			toolCallId: "call_t1",
+			toolName: "bash",
+			args: { command: "ls" },
+		},
+		dummyView,
+	);
+
+	const thinkingEnd1 = emitted.find(
+		(e) =>
+			e.type === "message_update" &&
+			(e as any).assistantMessageEvent?.type === "thinking_end",
+	);
+	assert.ok(thinkingEnd1);
+	assert.equal((thinkingEnd1 as any).assistantMessageEvent.content, "Thinking about bash command...");
+
+	// 2. Thinking before message_end
+	emitted.length = 0;
+	adapter.handleEvent(
+		{
+			type: "message_update",
+			changes: [{ type: "thinking_delta", delta: "Final reasoning..." }],
+		} as any,
+		dummyView,
+	);
+
+	adapter.handleEvent(
+		{
+			type: "message_end",
+			entry: {
+				model: [{ role: "assistant", content: [] }],
+			} as any,
+		},
+		dummyView,
+	);
+
+	const thinkingEnd2 = emitted.find(
+		(e) =>
+			e.type === "message_update" &&
+			(e as any).assistantMessageEvent?.type === "thinking_end",
+	);
+	assert.ok(thinkingEnd2);
+	assert.equal((thinkingEnd2 as any).assistantMessageEvent.content, "Thinking about bash command...Final reasoning...");
+});

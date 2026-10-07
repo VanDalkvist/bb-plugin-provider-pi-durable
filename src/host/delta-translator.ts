@@ -88,7 +88,7 @@ export class DeltaTranslator {
 
 			case "message_end": {
 				const msg = event.message as { content?: Array<{ type?: string; text?: string }> } | undefined;
-				const res = translateMessageEnd(msg, this.currentAgentText);
+				const res = translateMessageEnd(msg, this.currentAgentText, this.openThinkingChannels);
 				deltas.push(...res.deltas);
 				this.currentAgentText = res.nextAgentText;
 				break;

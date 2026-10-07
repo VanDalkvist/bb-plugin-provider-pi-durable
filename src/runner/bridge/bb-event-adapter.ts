@@ -49,6 +49,7 @@ export class BBEventAdapter {
 	private lastAssistantMessage?: BBAssistantMessage;
 	private currentText = "";
 	private currentThinking = "";
+	private isInThinking = false;
 
 	constructor(
 		output: (event: BBWireEvent) => void,
@@ -58,11 +59,25 @@ export class BBEventAdapter {
 		this.resolveContextWindow = resolveContextWindow;
 	}
 
+	private closeThinkingIfNeeded(): void {
+		if (!this.isInThinking) return;
+		this.isInThinking = false;
+		this.output({
+			type: "message_update",
+			assistantMessageEvent: {
+				type: "thinking_end",
+				contentIndex: 0,
+				content: this.currentThinking,
+			},
+		});
+	}
+
 	public handleEvent(event: AgentEvent, current: DurableView): void {
 		switch (event.type) {
 			case "run_start": {
 				this.currentText = "";
 				this.currentThinking = "";
+				this.isInThinking = false;
 				this.lastAssistantMessage = undefined;
 				this.output({ type: "agent_start" });
 				break;
@@ -76,12 +91,14 @@ export class BBEventAdapter {
 			case "message_update": {
 				for (const change of event.changes) {
 					if (change.type === "thinking_delta") {
+						this.isInThinking = true;
 						this.currentThinking += change.delta;
 						this.output({
 							type: "message_update",
 							assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: change.delta },
 						});
 					} else if (change.type === "text_delta") {
+						this.closeThinkingIfNeeded();
 						this.currentText += change.delta;
 						this.output({
 							type: "message_update",
@@ -93,6 +110,7 @@ export class BBEventAdapter {
 			}
 
 			case "tool_execution_start": {
+				this.closeThinkingIfNeeded();
 				this.output({
 					type: "tool_execution_start",
 					toolCallId: event.toolCallId,
@@ -132,6 +150,7 @@ export class BBEventAdapter {
 			}
 
 			case "message_end": {
+				this.closeThinkingIfNeeded();
 				const modelItem = event.entry?.model?.[0];
 				const msg: RawAssistantEntryMessage | undefined =
 					typeof modelItem === "object" && modelItem !== null ? (modelItem as RawAssistantEntryMessage) : undefined;
@@ -165,6 +184,7 @@ export class BBEventAdapter {
 			}
 
 			case "turn_end": {
+				this.closeThinkingIfNeeded();
 				const finalMsg = this.lastAssistantMessage ?? buildFinalAssistantMessage(
 					current,
 					this.currentText,
@@ -178,6 +198,7 @@ export class BBEventAdapter {
 			}
 
 			case "run_end": {
+				this.closeThinkingIfNeeded();
 				const finalMsg = this.lastAssistantMessage ?? buildFinalAssistantMessage(
 					current,
 					this.currentText,

@@ -74,6 +74,17 @@ export function translateMessageUpdate(
 		state.openThinkingChannels?.delete(channel);
 		state.currentThinkingIndex++;
 	} else if (asst.type === "text_delta" && typeof asst.delta === "string") {
+		if (state.openThinkingChannels && state.openThinkingChannels.size > 0) {
+			for (const channel of state.openThinkingChannels) {
+				deltas.push({
+					kind: "item.textClose",
+					key: { channel },
+					channel: "reasoningText",
+					text: "",
+				});
+			}
+			state.openThinkingChannels.clear();
+		}
 		state.currentAgentText += asst.delta;
 		deltas.push({
 			kind: "item.textDelta",
@@ -89,7 +100,22 @@ export function translateMessageUpdate(
 export function translateMessageEnd(
 	msg: { content?: Array<{ type?: string; text?: string }> } | undefined,
 	currentAgentText: string,
+	openThinkingChannels?: Set<string>,
 ): { deltas: ThreadDelta[]; nextAgentText: string } {
+	const deltas: ThreadDelta[] = [];
+
+	if (openThinkingChannels && openThinkingChannels.size > 0) {
+		for (const channel of openThinkingChannels) {
+			deltas.push({
+				kind: "item.textClose",
+				key: { channel },
+				channel: "reasoningText",
+				text: "",
+			});
+		}
+		openThinkingChannels.clear();
+	}
+
 	let finalText = currentAgentText;
 	if (msg?.content && Array.isArray(msg.content)) {
 		const textParts = msg.content
@@ -100,7 +126,6 @@ export function translateMessageEnd(
 		}
 	}
 
-	const deltas: ThreadDelta[] = [];
 	if (finalText) {
 		deltas.push({
 			kind: "item.textClose",

@@ -51,7 +51,11 @@ export async function openDurable(options: OpenDurableOptions = {}): Promise<Ope
 		harness = envState.harness;
 
 		const root = await harness.root(runtimeContext, {
-			agent: { cwd: location.cwd, ...(envState.initialModelRef ? { model: envState.initialModelRef } : {}) },
+			agent: {
+				cwd: location.cwd,
+				...(envState.initialModelRef ? { model: envState.initialModelRef } : {}),
+				...(envState.initialThinkingLevel ? { thinkingLevel: envState.initialThinkingLevel } : {}),
+			},
 		});
 
 		if (!location.created) {
@@ -62,6 +66,8 @@ export async function openDurable(options: OpenDurableOptions = {}): Promise<Ope
 				if (cli.model) {
 					envState.setActiveModelRef(cli.model);
 					await root.configure({ model: cli.model, thinkingLevel: cli.thinkingLevel }, runtimeContext);
+				} else if (cli.thinkingLevel !== undefined) {
+					await root.configure({ thinkingLevel: cli.thinkingLevel }, runtimeContext);
 				}
 			}
 		}

@@ -10,6 +10,7 @@ import {
 	createHarnessSettings,
 	findInitialAgentModel,
 	type ExecutionEnvs,
+	type ModelThinkingLevel,
 } from "./harness-setup.ts";
 import { createStandardExtensionFactories } from "./extension-bridge.ts";
 import { createNestedToolExecutor, mountExtensionBridge } from "./extension-mount.ts";
@@ -24,6 +25,7 @@ export interface LoadedHarnessEnvironment {
 	settingsManager: SettingsManager;
 	harness: Harness;
 	initialModelRef?: ModelRef;
+	initialThinkingLevel?: ModelThinkingLevel;
 	fallbackMessage?: string;
 	pendingReports: unknown[];
 	getActiveModel: () => ModelRef | undefined;
@@ -106,6 +108,7 @@ export async function loadHarnessEnvironment(
 		settingsManager,
 		harness,
 		initialModelRef: initial?.model,
+		initialThinkingLevel: initial?.thinkingLevel,
 		fallbackMessage: initial?.fallbackMessage,
 		pendingReports,
 		getActiveModel,

@@ -446,6 +446,52 @@ Resolve finding F-64-1 (AP-010, AP-032):
   ```
 - `bb plugin reload provider-pi-durable`: Plugin reloaded cleanly to v0.2.9.
 
+---
+
+## Cycle 65: Durable Thinking Level Initialization & Reasoning Lifecycle Parity (2026-10-07)
+
+**Release:** `v0.2.10`  
+**Governing Standard:** `arch-rules.md` (AP-010 – AP-071)  
+**Prior Cycle:** Cycle 64 (`v0.2.9`, commit `6e5682e`)  
+**Plan Reference:** `docs/superpowers/plans/2026-10-07-arch-improvement-cycle-65-thinking-level-initialization-and-lifecycle.md`
+
+### 1. Scope and Objective
+
+Resolve findings F-65-1, F-65-2, and F-65-3:
+- **F-65-1 (AP-010, AP-018):** `LoadedHarnessEnvironment` interface discarded `initial.thinkingLevel`.
+- **F-65-2 (AP-010, AP-026):** `harness.root()` omitted `thinkingLevel` in `agent: { ... }`, and resumed sessions (`!location.created`) did not guarantee configuration sync for `cli.thinkingLevel`.
+- **F-65-3 (AP-018, AP-026):** `BBEventAdapter` never emitted `thinking_end` when transitioning from reasoning to `text_delta`, `tool_execution_start`, `message_end`, `turn_end`, or `run_end`.
+- Add fallback channel closure in `message-delta-translator.ts` to ensure unclosed reasoning channels are gracefully closed when `text_delta` or `message_end` arrives.
+
+### 2. Changes Made
+
+- **Slice 1: Runner Initialization Plumbing (`runtime-loader.ts` & `runtime.ts`):**
+  - Added `initialThinkingLevel?: ModelThinkingLevel` to `LoadedHarnessEnvironment` and propagated `initialThinkingLevel: initial?.thinkingLevel` in `loadHarnessEnvironment`.
+  - In `runtime.ts`, passed `...(envState.initialThinkingLevel ? { thinkingLevel: envState.initialThinkingLevel } : {})` into `harness.root(runtimeContext, { agent: { ... } })`.
+  - In `runtime.ts`, for resumed sessions (`!location.created`), ensured `root.configure({ model: cli.model, thinkingLevel: cli.thinkingLevel })` is applied.
+- **Slice 2: Reasoning Lifecycle Stream Closure (`bb-event-adapter.ts`):**
+  - Added `isInThinking: boolean` state.
+  - Implemented `closeThinkingIfNeeded()` emitting `{ type: "message_update", assistantMessageEvent: { type: "thinking_end", contentIndex: 0, content: this.currentThinking } }` and resetting `isInThinking = false`.
+  - Injected `closeThinkingIfNeeded()` on `text_delta`, `tool_execution_start`, `message_end`, `turn_end`, and `run_end`.
+- **Slice 3: Host Message Delta Translator Fallback Closure (`message-delta-translator.ts` & `delta-translator.ts`):**
+  - In `message-delta-translator.ts`, closed all unclosed channels in `openThinkingChannels` when `text_delta` or `message_end` arrives.
+  - Forwarded `this.openThinkingChannels` from `DeltaTranslator.translate` into `translateMessageEnd`.
+- **Slice 4: Test Suite & Verification (AP-013, AP-028):**
+  - Added tests in `tests/bb-event-adapter.test.ts` verifying `thinking_end` emission on text transition, tool start, and message end.
+  - Added tests in `tests/thinking-presentation.test.ts` verifying fallback thinking channel closure in `DeltaTranslator` on `text_delta` and `message_end`.
+  - Verified 63 / 63 tests pass cleanly.
+- **Slice 5: Build, Line Count & Release:**
+  - Verified all files strictly respect AP-019 (< 250 lines).
+  - Built bundles with `node scripts/build-runner.mjs && bb plugin build`.
+  - Reloaded plugin with `bb plugin reload provider-pi-durable`.
+
+### 3. Verification Evidence
+
+- `npm test`: **63 / 63 passing assertions (0 failed, 0 skipped)** across all test suites.
+- `wc -l src/**/*.ts`: All source files under 220 lines (strictly < 250).
+- `bb plugin reload provider-pi-durable`: Plugin reloaded cleanly to v0.2.10.
+
+
 
 
 

@@ -819,6 +819,7 @@ async function loadHarnessEnvironment(location, options, envs) {
     settingsManager,
     harness,
     initialModelRef: initial?.model,
+    initialThinkingLevel: initial?.thinkingLevel,
     fallbackMessage: initial?.fallbackMessage,
     pendingReports,
     getActiveModel,
@@ -850,7 +851,11 @@ async function openDurable(options = {}) {
     const { modelRuntime, settingsManager } = envState2;
     harness = envState2.harness;
     const root = await harness.root(runtimeContext, {
-      agent: { cwd: location.cwd, ...envState2.initialModelRef ? { model: envState2.initialModelRef } : {} }
+      agent: {
+        cwd: location.cwd,
+        ...envState2.initialModelRef ? { model: envState2.initialModelRef } : {},
+        ...envState2.initialThinkingLevel ? { thinkingLevel: envState2.initialThinkingLevel } : {}
+      }
     });
     if (!location.created) {
       const rootAgent = await root.agent(runtimeContext);
@@ -860,6 +865,8 @@ async function openDurable(options = {}) {
         if (cli.model) {
           envState2.setActiveModelRef(cli.model);
           await root.configure({ model: cli.model, thinkingLevel: cli.thinkingLevel }, runtimeContext);
+        } else if (cli.thinkingLevel !== void 0) {
+          await root.configure({ thinkingLevel: cli.thinkingLevel }, runtimeContext);
         }
       }
     }
@@ -1065,15 +1072,29 @@ var BBEventAdapter = class {
   lastAssistantMessage;
   currentText = "";
   currentThinking = "";
+  isInThinking = false;
   constructor(output2, resolveContextWindow) {
     this.output = output2;
     this.resolveContextWindow = resolveContextWindow;
+  }
+  closeThinkingIfNeeded() {
+    if (!this.isInThinking) return;
+    this.isInThinking = false;
+    this.output({
+      type: "message_update",
+      assistantMessageEvent: {
+        type: "thinking_end",
+        contentIndex: 0,
+        content: this.currentThinking
+      }
+    });
   }
   handleEvent(event, current) {
     switch (event.type) {
       case "run_start": {
         this.currentText = "";
         this.currentThinking = "";
+        this.isInThinking = false;
         this.lastAssistantMessage = void 0;
         this.output({ type: "agent_start" });
         break;
@@ -1085,12 +1106,14 @@ var BBEventAdapter = class {
       case "message_update": {
         for (const change of event.changes) {
           if (change.type === "thinking_delta") {
+            this.isInThinking = true;
             this.currentThinking += change.delta;
             this.output({
               type: "message_update",
               assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: change.delta }
             });
           } else if (change.type === "text_delta") {
+            this.closeThinkingIfNeeded();
             this.currentText += change.delta;
             this.output({
               type: "message_update",
@@ -1101,6 +1124,7 @@ var BBEventAdapter = class {
         break;
       }
       case "tool_execution_start": {
+        this.closeThinkingIfNeeded();
         this.output({
           type: "tool_execution_start",
           toolCallId: event.toolCallId,
@@ -1137,6 +1161,7 @@ var BBEventAdapter = class {
         break;
       }
       case "message_end": {
+        this.closeThinkingIfNeeded();
         const modelItem = event.entry?.model?.[0];
         const msg = typeof modelItem === "object" && modelItem !== null ? modelItem : void 0;
         if (msg?.role === "assistant") {
@@ -1166,6 +1191,7 @@ var BBEventAdapter = class {
         break;
       }
       case "turn_end": {
+        this.closeThinkingIfNeeded();
         const finalMsg = this.lastAssistantMessage ?? buildFinalAssistantMessage(
           current,
           this.currentText,
@@ -1178,6 +1204,7 @@ var BBEventAdapter = class {
         break;
       }
       case "run_end": {
+        this.closeThinkingIfNeeded();
         const finalMsg = this.lastAssistantMessage ?? buildFinalAssistantMessage(
           current,
           this.currentText,
