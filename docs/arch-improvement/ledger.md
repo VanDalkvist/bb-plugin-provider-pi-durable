@@ -173,3 +173,37 @@
   - `tests/runner-discovery.test.ts`: 8 passed
   - `tests/startup-readiness.test.ts`: 6 passed
   - `tests/tool-delta-translator.test.ts`: 3 passed
+
+---
+
+## Cycle 59: Synchronous Context Window Telemetry & Stale Runner Lifecycle (2026-10-07)
+
+**Goal:** Ensure real-time, accurate context window usage telemetry (`Estimated context: X / Y tokens`) in BB IDE for all turns without UI stalls or dependencies on asynchronous IPC polling, and prevent stale background runner processes from locking sessions and dropping RPC commands.
+
+**Governing Standard:** `arch-rules.md` (AP-010 – AP-071) & `arch-improvement-loop`  
+**Plan Reference:** `docs/superpowers/plans/2026-10-07-arch-improvement-cycle-59-context-meter-synchronization.md`  
+
+### 1. Triaged Findings & Dispositions
+
+| ID | Issue | Severity | Rule | Disposition | Root Cause & Resolution |
+|---|---|---|---|---|---|
+| **F-59-1** | #7 | **P1** | AP-026, AP-013 | `fix-now` | `src/host/delta-translator.ts` emitted only `kind: "usage"` on `event.type === "agent_end"`. `kind: "usage"` updates `thread/tokenUsage/updated` (cumulative tokens), but does NOT emit `thread/contextWindowUsage/updated` (the composer context meter). Updates relied solely on asynchronous IPC roundtrips (`refreshContextUsage` -> `get_session_stats`), which hung or failed when runners were busy. **Fix:** In `delta-translator.ts`, synchronously emit `kind: "contextWindow"` alongside `kind: "usage"` and `turn.boundary` on `agent_end` with real LLM token counts (`totTok`, `cwSize`). |
+| **F-59-2** | #8 | **P1** | AP-022, AP-012 | `fix-now` | Host daemon kept old runner processes (e.g. PID 44938 spawned before Cycle 57 build) alive in memory across plugin reload commands, retaining active locks on `session.sqlite` and rejecting newer RPC commands. **Fix:** Terminated stale runner processes, verified clean lock release, and aligned session directory resolution with absolute paths. |
+
+### 2. Architecture Rule Verifications
+
+- **AP-010 (Modular Monolith & Ports/Adapters):** Context delta assembly remains within `DeltaTranslator`.
+- **AP-012 (Fail-Fast & Explicit Error Contracts):** Prevents silent stalls of context meter.
+- **AP-013 (Data Integrity without Fakes):** Context tokens mapped directly from genuine LLM usage objects (`usage.totalTokens`, `usage.input + usage.cacheRead`).
+- **AP-019 (File Size Limits & Modularity):**
+  - `src/host/delta-translator.ts`: 226 lines (< 250)
+- **AP-026 (DTO Boundaries & Strict Schema Validation):** `contextWindow` delta strictly conforms to host daemon Zod schema (`kind: "contextWindow"`, `used`, `size`, `estimated`, `attach: "currentOrLast"`).
+- **AP-028 (Testing Strategy & Determinism):** Pure unit tests in `tests/context-window-usage.test.ts`.
+
+### 3. Verification Evidence
+
+- `npm run build`: Success (`dist/runner/index.js`, `dist/host.js`, `dist/server.js`).
+- `npm test`: **43 / 43 passing assertions (0 failed, 0 skipped)** across 5 suites.
+- `bb plugin reload provider-pi-durable`: Plugin reloaded cleanly (`provider-pi-durable@0.2.4 running`).
+- Verified against real durable session `/Users/vanya/.bb/pi-bridge-sessions/pi_durable_1791314935082`: 436 messages, 161,243 tokens accurately evaluated without errors.
+

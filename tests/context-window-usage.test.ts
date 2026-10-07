@@ -273,5 +273,11 @@ describe("Context Window Telemetry & Usage Synchronization (Cycle 57)", () => {
 		const usageDelta = deltas.find((d) => d.kind === "usage") as any;
 		assert.ok(usageDelta);
 		assert.equal(usageDelta.modelContextWindow, 1048576);
+
+		const cwDelta = deltas.find((d) => d.kind === "contextWindow") as any;
+		assert.ok(cwDelta, "contextWindow delta must be emitted synchronously on agent_end");
+		assert.equal(cwDelta.used, 1050);
+		assert.equal(cwDelta.size, 1048576);
+		assert.equal(cwDelta.attach, "currentOrLast");
 	});
 });

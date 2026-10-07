@@ -172,9 +172,10 @@ export class DeltaTranslator {
 					const inTok = Number(usage.input ?? 0);
 					const outTok = Number(usage.output ?? 0);
 					const totTok = Number(usage.totalTokens ?? (inTok + outTok));
+					const cwSize = typeof event.contextWindow === "number" && event.contextWindow > 0 ? event.contextWindow : 128000;
 					deltas.push({
 						kind: "usage",
-						modelContextWindow: typeof event.contextWindow === "number" && event.contextWindow > 0 ? event.contextWindow : 128000,
+						modelContextWindow: cwSize,
 						last: {
 							totalTokens: totTok,
 							inputTokens: inTok,
@@ -193,6 +194,14 @@ export class DeltaTranslator {
 							outputTokens: outTok,
 							reasoningOutputTokens: Number(usage.reasoning ?? 0),
 						},
+					});
+
+					deltas.push({
+						kind: "contextWindow",
+						used: totTok,
+						size: cwSize,
+						estimated: false,
+						attach: "currentOrLast",
 					});
 				}
 
