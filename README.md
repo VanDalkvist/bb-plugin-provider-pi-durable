@@ -100,13 +100,9 @@ The plugin works out-of-the-box with default paths, but supports optional enviro
 
 ## Troubleshooting
 
-### "Could not find @earendil-works/pi-durable"
-If the plugin reports that Pi Durable is not installed:
-1. Run `npm install -g @earendil-works/pi-durable` on your machine.
-2. If installed in a non-standard location or monorepo, set `BB_PI_DURABLE_PACKAGE_PATH=/path/to/@earendil-works/pi-durable`.
-
 ### "Pi has no authenticated model provider available"
 Run `pi` in your terminal to log in to your desired provider (Google, Anthropic, OpenAI), then reload BB IDE.
+Credentials are read automatically from `~/.pi/agent/auth.json`.
 
 ---
 

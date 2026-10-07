@@ -1,9 +1,137 @@
 # PRD: Архитектурное выравнивание территорий и устранение чужого владения в `bb-plugin-provider-pi-durable`
 
-**Статус:** Draft / На согласовании (Ready for Review)  
-**Дата:** 2026-10-07  
+**Статус:** ✅ Completed & Verified (Cycles 61–66, релизы `v0.2.7` – `v0.2.11`)  
+**Дата создания:** 2026-10-07  
+**Дата актуализации:** 2026-10-07 (после завершения Cycles 61–66)  
 **Автор:** Lead Architect & Agent Systems Engineer  
-**Целевой релиз:** v0.3.0 (Cycle 61 Arch Improvement Loop)  
+**Реализовано в релизах:** `v0.2.7` (Cycles 61–62), `v0.2.8` (Cycle 63), `v0.2.9` (Cycle 64), `v0.2.10` (Cycle 65), `v0.2.11` (Cycle 66)  
+
+---
+
+## 1. Введение и постановка проблемы
+
+### 1.1. Контекст
+Плагин `bb-plugin-provider-pi-durable` разрабатывался как мост между Beyond Boundaries (BB IDE) и транзакционным ACID SQLite движком `@earendil-works/pi-durable`. 
+
+### 1.2. Проблема (Диагноз независимого ревью)
+В ходе независимого архитектурного аудита (сабтред `thr_vmhmq2bgra`) было выявлено фундаментальное несоответствие архитектурному контракту:
+> **Плагин позиционируется как тонкий двусторонний адаптер (GoF Adapter), но внутри владел чужими доменными территориями и содержал завендоренные куски кода, которые должны принадлежать ядру `pi-durable` или экосистеме `pi-coding-agent`.**
+
+Вместо того чтобы быть чистой прослойкой между протоколом BB и Harness ядра Durable, плагин взял на себя:
+1. **Генерацию системного промпта и правил агента (`src/runner/prompt.ts`)** — хардкод сниппетов базовых инструментов, XML-структуры правил и ручной обход `AGENTS.md` (Feature Envy по отношению к `pi-coding-agent`).
+2. **Низкоуровневую реализацию сабагента (`src/runner/subagent.ts`)** — завендоренную агентскую механику рекурсивных под-сессий через транзакции Durable.
+3. **Хеширование директорий сессий и lockfile-менеджмент (`src/runner/sessions.ts`)** — код управления директориями, скопированный из прототипа `experimental/durable`.
+4. **Неуместную близость (Inappropriate Intimacy) в сборке расширений (`src/runner/runtime-loader.ts` + `extension-bridge.ts`)** — эмуляция внутренних контрактов `ExtensionRunner` через хаки `(api as any).output` и ручной перебор внутренних очередей провайдеров.
+
+---
+
+## 2. Анализ первоисточников: Что есть в Pi, а чего нет
+
+Мы провели глубокий аудит локальных первоисточников `~/Projects/pi` (`packages/durable` и `packages/coding-agent`):
+
+| Компонент / Функционал | Есть ли в npm пакете `@earendil-works/pi-durable`? | Есть ли в `@earendil-works/pi-coding-agent`? | Где он живет в репозитории Pi? | Вывод для нашего плагина |
+|---|---|---|---|---|
+| **Ядро Durable (Harness, SQLite, FSM, Storage)** | **ДА** (Harness, ToolTask, GenerationTask, CompactionTask, LiveDoc) | Нет (потребляет durable) | `packages/durable/src/` | **Переиспользуем на 100%** через публичный API пакета. |
+| **Базовые инструменты разработчика (read, write, edit, bash)** | **ДА** (`@earendil-works/pi-durable/tools`) | ДА (`create*Tool`) | `packages/durable/src/tools/` | **Переиспользуем на 100%**. |
+| **Промптинг, сниппеты тулов, гайдлайны** | **НЕТ** (durable агностичен к промпту, дает только `section`) | **ДА** (`create*ToolDefinition().promptSnippet`, `formatSkillsForPrompt`) | `packages/coding-agent/src/core/system-prompt.ts` | **Устранено в Cycle 61:** сниппеты и файлы контекста берутся из `pi-coding-agent`. |
+| **Инструмент `Subagent`** | **НЕТ** (не экспортируется из пакета `pi-durable`) | Нет в публичном API | `packages/coding-agent/src/experimental/durable/subagent.ts` | **Изолировано в Cycle 61:** вынесено в `src/runner/upstream/` с фиксацией provenance. |
+| **Управление директориями сессий и Lockfile (`sessions.ts`)** | **НЕТ** (`pi-durable` дает только `openNodeSqliteStorage(file)`) | Нет в публичном API | `packages/coding-agent/src/experimental/durable/sessions.ts` | **Изолировано в Cycle 61:** вынесено в `src/runner/upstream/`. |
+| **Инструменты `codemode` и `mcp`** | **НЕТ** | **ДА** (`createCodemodeExtension`, `createMcpExtension`) | `packages/coding-agent/src/extensions/` | **Реализовано в Cycle 60/60.1:** подключаются через `DefaultResourceLoader`. |
+
+### Ключевое открытие аудита: 4 Территории Владения
+Причина исторического смешения слоёв:
+> **Пакет `@earendil-works/pi-durable` является низкоуровневым вычислительным ядром (Engine), а не законченным агентом.**
+> В монорепозитории Pi авторы создали директорию `packages/coding-agent/src/experimental/durable/`, где лежали прототипы клея (`sessions.ts`, `subagent.ts`, `prompt.ts`, `runtime.ts`). 
+> Создатель плагина скопировал эту экспериментальную папку целиком в `src/runner/`.
+
+**Каноническая модель 4 Территорий:**
+1. **Территория 1 (BB IDE Host & UI):** Протоколы `turn/start`, `turn/steer`, дельты, Diff Viewers, аккордеон Thinking, счетчик Context Window. Принадлежит десктопному приложению BB и хост-демону.
+2. **Территория 2 (Pi Durable Core):** Harness, SQLite WAL, FSM задачи (`GenerationTask`, `ToolTask`, `CompactionTask`), транзакционный поток `watchEvents`. Пакет `@earendil-works/pi-durable`.
+3. **Территория 3 (Pi Ecosystem / CLI):** SettingsManager, MCP discovery, ToolDefinitions, skills, расширения (`codemode`, `mcp`, `tool-search`). Пакет `@earendil-works/pi-coding-agent`.
+4. **Территория 4 (Provider Plugin):** Исключительно тонкий двусторонний адаптер (GoF Adapter). Не владеет чужими сущностями, а только переводит запросы BB в команды Durable и события Durable в дельты BB.
+
+---
+
+## 3. Целевая архитектура (Clean Architecture & Refactoring Guru)
+
+Чётко разграничены папки и обязанности внутри репозитория плагина по принципу **Ports and Adapters**:
+
+```
+src/
+├── host/                              ◄── ТЕРРИТОРИЯ 1: BB IDE HOST ADAPTER
+│   ├── bridge.ts                      (Прием JSON-RPC от BB демона, диспетчеризация)
+│   ├── bridge-router.ts               (Роутинг методов JSON-RPC: turn/start, turn/steer, stop)
+│   ├── delta-translator.ts            (Трансляция AgentEvent -> BB turn/delta)
+│   ├── message-delta-translator.ts    (Трансляция текста, reasoning, usage)
+│   ├── tool-delta-translator.ts       (Преобразование diffs/write в виджеты BB)
+│   ├── session-telemetry.ts           (Синхронизация контекстного окна и расхода токенов)
+│   └── runner-process.ts              (Управление дочерним процессом раннера)
+│
+├── runner/                            ◄── ТЕРРИТОРИЯ 4: RUNNER PROTOCOL BRIDGE
+│   ├── index.ts                       (CLI точка входа --mode rpc)
+│   ├── session-commands.ts            (Диспетчер команд prompt, steer, stats)
+│   ├── runtime.ts                     (Фасад жизненного цикла Durable)
+│   ├── runtime-controller.ts          (Управление FSM и циклом выполнения)
+│   ├── runtime-loader.ts              (Трёхфазная инициализация окружения)
+│   ├── bridge/
+│   │   ├── bb-event-adapter.ts        (Трансляция FSM событий в поток WireEvent)
+│   │   └── contracts.ts               (Строгие DTO и интерфейсы wire-протокола)
+│   │
+│   ├── adapters/                      ◄── АДАПТЕРЫ К ЭКОСИСТЕМЕ PI
+│   │   ├── extension-bridge.ts        (Адаптер Pi Extension -> Durable ToolRegistration)
+│   │   └── prompt.ts                  (Формирование системного промпта через pi-coding-agent)
+│   │
+│   └── upstream/                      ◄── КАРАНТИН ПРОТОТИПОВ АПСТРИМА
+│       ├── subagent.ts                (Foreground subagent prototype из experimental)
+│       └── sessions.ts                (Session directories, SQLite locking prototype)
+```
+
+---
+
+## 4. Статус реализации срезов (Refactoring Slices Status)
+
+### Срез 1: Декуплинг системного промпта (`prompt.ts`) [✅ Выполнено в Cycle 61]
+- **Результат:** Ликвидированы 120 строк захардкоженного текста правил. Сниппеты инструментов и гайдлайны динамически читаются из фабрик `@earendil-works/pi-coding-agent`. Файлы контекста (`AGENTS.md`) и навыки извлекаются через `resourceLoader.getAgentsFiles()` и `resourceLoader.getSkills()`.
+
+### Срез 2: Изоляция и типизация моста расширений (`extension-bridge.ts`) [✅ Выполнено в Cycles 60–62]
+- **Результат:** Класс `PiExtensionBridge` строго типизирован (AP-029). Устранены все касты `(api as any).output`. Реализована поддержка динамической синхронизации инструментов `refreshTools` при асинхронном запуске MCP серверов.
+
+### Срез 3: Выделение `upstream/` [✅ Выполнено в Cycle 61]
+- **Результат:** Прототипы `subagent.ts` и `sessions.ts` изолированы в `src/runner/upstream/` с явной фиксацией происхождения из `packages/coding-agent/src/experimental/durable/`.
+
+### Срез 4: Декомпозиция God-модулей хоста и раннера [✅ Выполнено в Cycles 61–62]
+- **Результат:** Хост-слой декомпозирован на модули < 150 строк (`bridge-router.ts`, `message-delta-translator.ts`, `runner-rpc-channel.ts`, `session-telemetry.ts`). Все файлы кодовой базы строго укладываются в лимит AP-019 (< 250 строк).
+
+### Срез 5: Паритет отображения рассуждений и устранение холостых настроек [✅ Выполнено в Cycles 63–66]
+- **Результат:**
+  - Внедрен Brain-аккордеон рассуждений (`glyph: "Brain"`, каналы `reasoningText` и `thinking-${idx}`).
+  - В `BBEventAdapter` внедрено гарантированное закрытие стрима мыслей `closeThinkingIfNeeded()` при переходах на текст, тулы или завершение хода.
+  - Проведён аудит ядра BB IDE (`start-server.js` и `workspace-checkout-display`), доказавший, что строки `operationKind: "reasoning"` захардкожены на состояние «свернуто по умолчанию». Холостая настройка `openThinkingByDefault` выпилена; сохранена реально работающая настройка `hideThinking` (`suppress: true`).
+
+---
+
+## 5. Аудит требований к установке (Requirements Audit)
+
+### Что обязан предоставить пользователь:
+1. **BB IDE >= 0.45**
+2. **Node.js >= 22.19** (для встроенного в Node движка `node:sqlite`)
+3. **Авторизованный CLI `pi`** (хотя бы один вход через `pi` / `/login` для сохранения ключей в `~/.pi/agent/auth.json`)
+4. **Конфигурации по желанию:** `~/.pi/agent/settings.json`, `~/.pi/agent/mcp.json`.
+
+### Что предоставляет плагин (всё остальное "из коробки"):
+- Встроенный самодостаточный раннер с зависимостями `@earendil-works/pi-durable` и `@earendil-works/pi-coding-agent`.
+- **Никаких `npm install -g @earendil-works/pi-durable`!**
+- Автоматический поиск сессий и SQLite хранилище в `~/.bb/pi-bridge-sessions/`.
+
+---
+
+## 6. Метрики успеха и верификация
+
+1. **AP-010 / AP-018 Compliance:** PASS — системный промпт не содержит хардкод-правил; 4 территории строго изолированы.
+2. **AP-019 Modularity Compliance:** PASS — все 33 файла `.ts` строго < 220 строк (максимум `message-delta-translator.ts` — 214 строк при хард-лимите 250).
+3. **AP-026 / AP-029 Strict TypeScript:** PASS — zero `as any` в мостах расширений и DTO; нулевые расхождения схем.
+4. **Тесты:** PASS — 63 / 63 теста проходят успешно.
+5. **Runtime Parity:** PASS — полное соответствие поведению эталонного `provider-pi` в BB IDE.  
 
 ---
 
