@@ -1,8 +1,8 @@
-# Master Architectural Implementation Plan: Remediation & Full Parity of Pi Durable in BB IDE
+# Master Architectural Implementation Plan: Remediation, Full Parity & Platform Highlighting of Pi Durable in BB IDE
 
 **Document ID:** `plans/pi-durable-bb-provider-arch-master-plan`  
-**Version:** 4.1.0 (Master Unified Roadmap: Full Audit Reconciliation, 4 Territories, Protocol Truth & Parity Roadmap)  
-**Current Release:** `v0.2.11` (Commit: `1b89f6a`)  
+**Version:** 4.2.0 (Master Unified Roadmap: Full Audit Reconciliation, 4 Territories, Protocol Truth & BB Highlighting)  
+**Current Release:** `v0.2.11` (Commit: `24f0b08`)  
 **Target Repository:** `/Users/vanya/Projects/bb-plugin-provider-pi-durable`  
 **Governing Standards:** `arch-rules.md` (AP-010 – AP-071), `arch-improvement-review`, `arch-rules-implementation-review`  
 **Upstream Engine:** `@earendil-works/pi-durable` v1.0.4 & `@earendil-works/pi-coding-agent` v1.0.4  
@@ -30,6 +30,7 @@ A foundational invariant of `bb-plugin-provider-pi-durable` is that **it functio
 │   - provider/usage is a subscription quota endpoint (returns !supported│
 │     for standard LLM providers; in-thread usage delta handles tokens)   │
 │   - Delegations: deltaDelegationShapeSchema { type: "delegation" }      │
+│   - Plan mode: composerActions [{ kind: "plan" }]                       │
 └──────────────────────────────────┬─────────────────────────────────────┘
                                    │ (JSON-RPC stdio)
 ┌──────────────────────────────────▼─────────────────────────────────────┐
@@ -71,7 +72,26 @@ Because `@earendil-works/pi-durable` is an execution engine rather than an agent
 
 ---
 
-## 2. The 15 Divergences & Community Defects Status Matrix
+## 2. Карта подсвечивания преимуществ Pi Durable в интерфейсе BB IDE
+
+Чтобы все уникальные архитектурные преимущества ядра Pi Durable были видны пользователю и органично интегрированы в BB IDE, используется следующая матрица проекции возможностей движка на протокольные поверхности BB:
+
+| Возможность Pi Durable | Что даёт движок | Как это подсвечивается в интерфейсе BB IDE | Протокольный механизм BB |
+|---|---|---|---|
+| **ACID SQLite WAL персистентность** | 100% гарантия отсутствия потери токенов и контекста при падениях (`kill -9`), ребутах и сбоях. | Бейдж **«Session Restorable»** в сайдбаре и свойствах треда. Иконка изумрудного цвета (`#10B981`). | `thread/identity` -> `sessionRestorable: true`; `iconTint: { light: "#10B981", dark: "#10B981" }`. |
+| **Атомарные коммиты и чекпоинты** | Каждый ход фиксируется уникальным идентификатором `EntryId` в транзакции SQLite. | **Кнопка «Edit message»** на предыдущих ходах пользователя. Возможность переписать старый промпт без потери файлов на диске. | `turn.boundary` -> `providerCheckpointId: entryId`; `capabilities.fork = "checkpoint"`. |
+| **CoW-ветвление сессий (`conversation.fork`)** | Мгновенное создание изолированного дочернего треда из любой исторической точки. | Нативное действие **«Fork Thread»** в меню треда BB IDE и CLI `bb thread fork`. | Метод `thread/fork` -> клонирование SQLite сессии и вызов `conversation.fork(checkpointEntryId)`. |
+| **Ручная и пороговая компакция** | Встроенный `CompactionTask` и сжатие контекста по алгоритмам Durable. | Кнопка **«Compact Context»** в панели действий треда. Визуальные строки компакции в чате. | `capabilities.supportsManualCompaction: true`; дельты `compaction_start` и `compaction_end`. |
+| **Точный синхронный учёт токенов** | Прямой подсчёт расхода моделей и тулов в `docs["pi.usage"]`. | **Живой кольцевой индикатор** в статус-баре BB IDE (`used / size`), обновляющийся мгновенно без зависания. | Синхронная дельта `contextWindow` (`used`, `size`, `estimated: false`) на событии `agent_end`. |
+| **Разделение рассуждений и ответа** | Потоковая передача `thinking_delta` отдельно от текста ответа. | **Brain-аккордеон «Thought»** со стримингом токенов, таймингом и автоматическим аккуратным сворачиванием. | `item.open` с каналом `reasoningText`, иконкой `glyph: "Brain"` и метками `Thinking` / `Thought`. |
+| **Гранулярные диффы файлов** | `CodingTools.edit` формирует точные unified diffs и patches. | **Интерактивный Diff Viewer** в чате BB с подсветкой синтаксиса и возможностью ревью изменений. | Дельта `fileChange` со схемой `kind: "update"` и массивом правок `edits: [{ oldText, newText }]`. |
+| **Потоковый терминал bash** | Построчный вывод stdout/stderr команд. | **Виджет интерактивного терминала** с таймингом, кодами возврата и пилюлей рабочей директории. | Дельта `command` (`cmd`, `output`, `exitCode`, `status`). |
+| **Вложенные сабагенты** | Выполнение автономных под-сессий через `upstream/subagent.ts`. | **Карточка делегирования** с иконкой `UserRound`, вложенными мыслями и итоговым резюме сабагента. | Дельта `item.open` со схемой `deltaDelegationShapeSchema` (`{ type: "delegation", childRef, label }`). |
+| **Режим планирования (Plan Mode)** | Инструкции планирования без запуска деструктивных тулов. | **Индикатор Plan Mode** в композере BB и интерактивные чек-листы шагов плана. | `composerActions: [{ kind: "plan" }]`; дельта `planSteps` (`deltaPlanStepsShapeSchema`). |
+
+---
+
+## 3. Реестр 15 расхождений аудита и статус устранения
 
 | ID | Область | Нативное ядро `@earendil-works/pi-durable` / BB Protocol | Текущий статус в провайдере | Релиз / Цикл |
 |---|---|---|---|---|
@@ -91,20 +111,9 @@ Because `@earendil-works/pi-durable` is an execution engine rather than an agent
 | **D-14**| **Синхронизация Context Meter** | Точный учет контекстного окна модели в реальном времени | ✅ **FIXED** (Синхронный эмит `contextWindow` на `agent_end`) | `v0.2.2` (Cycle 57), `v0.2.4` (Cycle 59) |
 | **D-15**| **Невидимость тулов `edit`/`write` и зависание steer** | `write` -> `add`, `edit` -> `update`; steer без `providerTurnId` | ✅ **FIXED** (Zod-валидные дельты, исключение 409-конфликта) | `v0.2.3` (Cycle 58) |
 
-### Реестр устранённых дефектов сообщества (GitHub Issues)
-* **Issue #1 (CWD Hijacking):** Устранено несанкционированное переопределение рабочего каталога через `--session-dir` (Cycle 56, `v0.2.1`).
-* **Issue #2 (Runner Discovery):** Внедрен 6-уровневый переносимый поиск раннера в хост-кеше BB через `node:sqlite` (Cycle 56, `v0.2.1`).
-* **Issue #3 (Premature Readiness):** Ликвидирован фальшивый ready-сигнал до завершения инициализации SQLite (Cycle 56, `v0.2.1`).
-* **Issue #4 (Context Meter at 0):** Исправлена распаковка вложенных ответов RPC и гонка закрытия хода до обновления контекста (Cycle 57, `v0.2.2` и Cycle 59, `v0.2.4`).
-* **Issue #5 (Steer Pending Freeze):** Устранен 409-конфликт `MissingStoredTurnStartedError` путем исключения `providerTurnId` из `input.accepted` (Cycle 58, `v0.2.3`).
-* **Issue #6 (Edit/Write Invisibility):** Дельты инструментов согласованы со схемой `fileChange` (`kind: "add" | "update"` с гранулярными правками) (Cycle 58, `v0.2.3`).
-* **Issue #7 (Self-Referential Bundling):** `bb.server` в `package.json` переведён на исходный `./server.ts`, устранив циклический бандлинг устаревших артефактов (Cycle 64, `v0.2.9`).
-* **Issue #8 (Dropped Thinking Level):** `harness.root()` и `root.configure()` снабжены явной передачей `thinkingLevel` из параметров хода (Cycle 65, `v0.2.10`).
-* **Issue #9 (Dead Setting Invariant):** Удалена холостая настройка `openThinkingByDefault` после доказательства захардкоженного поведения BB IDE (Cycle 66, `v0.2.11`).
-
 ---
 
-## 3. Обзор дорожной карты: Stage 1 и Stage 2
+## 4. Обзор дорожной карты: Stage 1 и Stage 2
 
 ```
 STAGE 1: ФУНДАМЕНТАЛЬНОЕ УКРЕПЛЕНИЕ, ВЫРАВНИВАНИЕ ТЕРРИТОРИЙ И ПАРИТЕТ ХОСТА (Cycles 56–66) [✅ ЗАВЕРШЕНО]
@@ -124,7 +133,7 @@ STAGE 1: ФУНДАМЕНТАЛЬНОЕ УКРЕПЛЕНИЕ, ВЫРАВНИВА
 STAGE 2: РАСШИРЕННЫЕ ВОЗМОЖНОСТИ ДВИЖКА И ПОЛНЫЙ ПАРИТЕТ С ПЛАТФОРМОЙ (Cycles 67–73) [⏳ В РАБОТЕ]
   - Cycle 67: Отказоустойчивость тулов, diff-метаданные и диагностики вывода (D-5, D-6, D-9)
   - Cycle 68: Извлечение чекпоинтов SQLite, обработка snapshot и turn.boundary (D-3, D-10, D-11)
-  - Cycle 69: Чекпоинт-форки тредов, перемотка истории и редактирование сообщений (thread/fork)
+  - Cycle 69: Чекпоинт-форки тредов, перемотка истории и редактирование сообщений (thread/fork, bb thread edit-message)
   - Cycle 70: Монотонный учет кумулятивного расхода токенов через pi.usage (D-7)
   - Cycle 71: Визуальные карточки сабагентов через протокольный deltaDelegationShape (type: "delegation")
   - Cycle 72: Корректное прерывание хода, inbox-отмена и обработка thread/stop (submission.abort)
@@ -133,87 +142,13 @@ STAGE 2: РАСШИРЕННЫЕ ВОЗМОЖНОСТИ ДВИЖКА И ПОЛН�
 
 ---
 
-## 4. Спецификации завершённых циклов (Stage 1: Cycles 56–66)
+## 5. Спецификации завершённых циклов (Stage 1: Cycles 56–66)
 
-### Cycle 56: Process Lifecycle, Lock Cleanup & Session Path Normalization [✅ COMPLETED — v0.2.1]
-- **Коммиты:** `f4b685e`, `969b180` | **Тесты:** 34 / 34 pass.
-- **Реализация:**
-  1. Внедрен graceful shutdown: `SIGTERM`/`SIGINT`/`stdin.end` ожидают `await activeDurable.close()`, мгновенно снимая `proper-lockfile` без 10-секундного зависания.
-  2. Нормализованы пути сессий: исключен суффикс `.jsonl`.
-  3. Внедрен 6-уровневый переносимый поиск раннера в хост-кеше BB через `node:sqlite`.
-  4. Атомарный анонс готовности раннера strictly после инициализации SQLite.
-  5. Декомпозиция `runtime.ts` (430 строк) на модули < 250 строк по AP-019.
-
-### Cycle 57: Context Window Telemetry & Usage Synchronization [✅ COMPLETED — v0.2.2]
-- **Коммит:** `42d48ae` | **Тесты:** 40 / 40 pass.
-- **Реализация:**
-  1. Исправлена распаковка вложенного ответа `requestOk` для `{ data: { contextUsage } }`.
-  2. Гарантирован вызов `refreshContextUsage()` строго до отправки `turn.boundary` на событии `agent_end`.
-  3. Добавлен фоллбек определения модели при инициализации сессии.
-  4. Проброс `contextWindow` через адаптер событий в дельты ленты.
-
-### Cycle 58: Tool Telemetry & Steer Protocol Integrity [✅ COMPLETED — v0.2.3]
-- **Коммит:** `eae5c31` | **Тесты:** 43 / 43 pass.
-- **Реализация:**
-  1. Согласование схемы инструментов: `write` транслируется в `kind: "add"`, `edit` в `kind: "update"` с массивом `edits: [{ oldText, newText }]`, восстановив отображение диффов в UI BB.
-  2. Исключен `providerTurnId` из `input.accepted` при `turn/steer`, устранив ошибку 409 `MissingStoredTurnStartedError` и зависание сообщений в `Steer pending`.
-
-### Cycle 59: Context Window Meter Synchronization [✅ COMPLETED — v0.2.4]
-- **Коммит:** `2502690` | **Тесты:** 43 / 43 pass.
-- **Реализация:**
-  1. В `DeltaTranslator` добавлен синхронный эмит дельты `contextWindow` (`used`, `size`, `estimated: false`) напрямую на событии `agent_end`.
-  2. Ликвидирована гонка между асинхронным IPC опросом счетчика и рендерингом UI, гарантировав мгновенное обновление индикатора контекста.
-
-### Cycle 60 & 60.1: Transparent Extension Foundation & Dynamic MCP Support [✅ COMPLETED — v0.2.5, v0.2.6]
-- **Коммиты:** `483fa2e`, `e819b10` | **Тесты:** 47 / 47 pass.
-- **Реализация:**
-  1. Реализован архитектурный контракт Thin Bridge: стандартные фабрики `createCodemodeExtension`, `createMcpExtension`, `createToolSearchExtension` передаются в `DefaultResourceLoader`.
-  2. Создан `src/runner/extension-bridge.ts` для адаптации `ToolDefinition` к `ToolRegistration` ядра Durable.
-  3. В `v0.2.6` устранен сбой вложенного контекста codemode (`createToolContext`, `getCallableTools`), включен `isProjectTrusted: true` для `mcp.json` и поддержана динамическая синхронизация через `refreshTools`.
-
-### Cycle 61: Territory Realignment & Decoupling [✅ COMPLETED — v0.2.7]
-- **Коммит:** `ecd7b99` | **Тесты:** 54 / 54 pass.
-- **Реализация:**
-  1. Четкая изоляция 4 территорий: BB IDE, Pi Durable Core, Pi Ecosystem, Provider Plugin.
-  2. Очищен `prompt.ts`: удален хардкод сниппетов и правил; тулы и контекст динамически читаются из `@earendil-works/pi-coding-agent`.
-  3. Неэкспортированные прототипы апстрима (`subagent.ts`, `sessions.ts`) изолированы в `src/runner/upstream/`.
-
-### Cycle 62: Host Modularity & Bridge Type Safety [✅ COMPLETED — v0.2.7]
-- **Коммит:** `85feaba` | **Тесты:** 54 / 54 pass.
-- **Реализация:**
-  1. Декомпозиция хост-слоя на независимые модули < 150 строк: `bridge-router.ts`, `message-delta-translator.ts`, `runner-rpc-channel.ts`, `session-telemetry.ts`.
-  2. Ликвидированы 12 небезопасных приведений `as any` через строгие тайпгарды Durable-документов (`isAgentDocument`, `isUsageDocument`).
-
-### Cycle 63: Brain-Icon Collapsible Thinking & Settings [✅ COMPLETED — v0.2.8]
-- **Коммит:** `0129bf5` | **Тесты:** 59 / 59 pass.
-- **Реализация:**
-  1. Внедрена презентация рассуждений с иконкой мозга `Brain` (`label: { pending: "Thinking", completed: "Thought" }, icon: { glyph: "Brain" }`).
-  2. Потоковая передача чанков рассуждений по каналу `reasoningText` с открытием `thinking-${idx}`.
-  3. Декларативные настройки плагина через `bb.settings.define`.
-
-### Cycle 64: Server Manifest Entrypoint & Settings Activation [✅ COMPLETED — v0.2.9]
-- **Коммит:** `6e5682e` | **Тесты:** 59 / 59 pass.
-- **Реализация:**
-  1. Исправлен путь точки входа `"bb.server"` в `package.json` с `./dist/server.js` на исходный `./server.ts`.
-  2. Устранен циклический бандлинг устаревших файлов при `bb plugin build`; настройки активированы в CLI (`bb plugin config`).
-
-### Cycle 65: Durable Thinking Level Initialization & Lifecycle Parity [✅ COMPLETED — v0.2.10]
-- **Коммит:** `e9aa12e` | **Тесты:** 63 / 63 pass.
-- **Реализация:**
-  1. `harness.root()` и резюм сессий снабжены явной передачей `thinkingLevel` из параметров хода.
-  2. В `BBEventAdapter` внедрен метод `closeThinkingIfNeeded()`, гарантирующий закрытие потока мыслей на переходах к тексту, тулам или концу хода.
-  3. В `message-delta-translator.ts` реализован фоллбек закрытия незакрытых каналов мыслей.
-
-### Cycle 66: Retirement of Unsupported Settings & Host Realignment [✅ COMPLETED — v0.2.11]
-- **Коммит:** `1b89f6a` | **Тесты:** 63 / 63 pass.
-- **Реализация:**
-  1. Проведен глубокий аудит исходного кода хоста BB IDE (`start-server.js` и `workspace-checkout-display`), доказавший, что строки рассуждений (`operationKind: "reasoning"`) архитектурно захардкожены на состояние «свернуто по умолчанию» (collapsed by default).
-  2. Холостая настройка `openThinkingByDefault` выпилена из `server.ts` и тестов во избежание создания ложных ожиданий.
-  3. Сохранена и подтверждена реально работающая настройка `hideThinking` (через `suppress: true`). Достигнут 100% паритет с нативным `provider-pi`.
+*(Зафиксировано в истории релизов v0.2.1 – v0.2.11; 63 теста проходят успешно, все изменения запушены в GitHub).*
 
 ---
 
-## 5. Спецификации предстоящих циклов (Stage 2: Cycles 67–73)
+## 6. Детальные спецификации предстоящих циклов (Stage 2: Cycles 67–73)
 
 ---
 
@@ -256,8 +191,8 @@ STAGE 2: РАСШИРЕННЫЕ ВОЗМОЖНОСТИ ДВИЖКА И ПОЛН�
 - **Решение:**
   1. Добавить команду IPC `fork` в раннер, принимающую `{ sourceProviderThreadId, checkpointId, targetThreadId, cwd }`.
   2. Вызывать `conversation.fork(checkpointEntryId)` ядра `@earendil-works/pi-durable`, сохраняя состояние документов на момент чекпоинта и создавая новый файл `session.sqlite` для дочернего треда.
-  3. В `src/host/bridge-router.ts` реализовать обработку RPC вызова `thread/fork`.
-- **Файлы:** `src/runner/fork.ts`, `src/host/bridge-router.ts`, `src/host/session.ts`, `tests/thread-fork.test.ts`.
+  3. В `src/host/bridge-router.ts` и `bridge.ts` реализовать честную обработку RPC вызова `thread/fork` (сейчас там заглушка с пустым тредом).
+- **Файлы:** `src/runner/fork.ts`, `src/host/bridge-router.ts`, `src/host/bridge.ts`, `src/host/session.ts`, `tests/thread-fork.test.ts`.
 
 ---
 
@@ -302,10 +237,11 @@ STAGE 2: РАСШИРЕННЫЕ ВОЗМОЖНОСТИ ДВИЖКА И ПОЛН�
 
 ---
 
-### Cycle 73: Master Parity Conformance Audit & End-to-End Verification
-- **Цель:** Итоговая валидация 100% паритета с нативным `provider-pi` и аттестация по правилам AP-010 – AP-071.
+### Cycle 73: Master Parity Conformance Audit & Plan Mode Integration
+- **Цель:** Итоговая валидация 100% паритета с нативным `provider-pi`, аттестация по правилам AP-010 – AP-071 и подключение Plan Mode.
 - **Решение:**
-  1. Прогон всех сквозных сценариев (многоходовые сессии, редактирование сообщений через `bb thread edit-message`, форки тредов, аварии тулов, переключение моделей, reasoning streaming).
-  2. Проверка соответствия лимитам строк (AP-019), строгой типизации (AP-029), отсутствию гонок lockfile (AP-033).
-  3. Фиксация стабильного релизного тега.
-- **Файлы:** Полный сьют тестов `tests/*.test.ts`, `docs/arch-improvement/ledger.md`.
+  1. Включение Plan Mode в `server.ts` через `composerActions: [{ kind: "plan", command: { trigger: "/", name: "plan", trailingText: "" } }]`.
+  2. Прогон всех сквозных сценариев (многоходовые сессии, редактирование сообщений через `bb thread edit-message`, форки тредов, аварии тулов, переключение моделей, reasoning streaming).
+  3. Проверка соответствия лимитам строк (AP-019), строгой типизации (AP-029), отсутствию гонок lockfile (AP-033).
+  4. Фиксация стабильного релизного тега.
+- **Файлы:** `server.ts`, полный сьют тестов `tests/*.test.ts`, `docs/arch-improvement/ledger.md`.
