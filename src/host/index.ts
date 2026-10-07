@@ -1,14 +1,37 @@
 import {
 	experimental_defineHostEntry,
 	experimental_nativeRootsHostContract,
-	experimental_filterResolvedNativeRoots,
 } from "@get-bb/plugin-sdk/host";
 import { experimental_defineProviderBridge } from "@get-bb/plugin-sdk/provider-bridge";
-import { homedir } from "node:os";
 import { ProviderBridge } from "./bridge.ts";
 
 const bridge = new ProviderBridge((line) => {
 	process.stdout.write(line);
+});
+
+let isShuttingDown = false;
+export async function teardown(exitCode = 0): Promise<void> {
+	if (isShuttingDown) return;
+	isShuttingDown = true;
+	try {
+		await bridge.shutdown();
+	} catch (err) {
+		console.error("[HostWorker] Error during bridge shutdown:", err);
+	} finally {
+		process.exit(exitCode);
+	}
+}
+
+process.on("disconnect", () => {
+	void teardown(0);
+});
+
+process.on("SIGTERM", () => {
+	void teardown(0);
+});
+
+process.on("SIGINT", () => {
+	void teardown(0);
 });
 
 export const experimental_providerBridge = experimental_defineProviderBridge({
@@ -16,13 +39,13 @@ export const experimental_providerBridge = experimental_defineProviderBridge({
 		bridge.handleLine(line);
 	},
 	onClose: () => {
-		bridge.shutdown().finally(() => process.exit(0));
+		void teardown(0);
 	},
 	onSigterm: () => {
-		bridge.shutdown().finally(() => process.exit(0));
+		void teardown(0);
 	},
 	onSigint: () => {
-		bridge.shutdown().finally(() => process.exit(0));
+		void teardown(0);
 	},
 });
 

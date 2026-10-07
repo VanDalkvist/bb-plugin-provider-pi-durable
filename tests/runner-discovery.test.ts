@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, writeFileSync, rmSync } from "node:
 import { DatabaseSync } from "node:sqlite";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import { resolveRunnerPath } from "../src/host/paths.ts";
+import { getBbDataDir, resolveRunnerPath, resolveSessionDir } from "../src/host/paths.ts";
 
 describe("Runner Path Discovery & Portability (Issue #2)", () => {
 	it("honors BB_PI_DURABLE_BRIDGE_COMMAND explicit override", () => {
@@ -202,6 +202,57 @@ describe("Runner Path Discovery & Portability (Issue #2)", () => {
 		} finally {
 			if (savedBridge !== undefined) process.env.BB_PI_DURABLE_BRIDGE_COMMAND = savedBridge;
 			if (savedRunner !== undefined) process.env.PI_DURABLE_RUNNER_PATH = savedRunner;
+		}
+	});
+
+	it("resolves getBbDataDir and honors BB_DATA_DIR environment variable (Issue #7)", () => {
+		assert.equal(getBbDataDir({}), join(homedir(), ".bb"));
+		assert.equal(getBbDataDir({ BB_DATA_DIR: "   " }), join(homedir(), ".bb"));
+		assert.equal(getBbDataDir({ BB_DATA_DIR: "/custom/bb/dir" }), "/custom/bb/dir");
+	});
+
+	it("resolves runner via BB_DATA_DIR custom database and cache (Issue #7)", () => {
+		const temp = mkdtempSync(join(tmpdir(), "bb-custom-datadir-"));
+		const customDataDir = join(temp, "custom-data");
+		const customPluginRoot = join(temp, "custom-plugin-pkg");
+		mkdirSync(join(customPluginRoot, "dist", "runner"), { recursive: true });
+		const expectedRunner = join(customPluginRoot, "dist", "runner", "index.js");
+		writeFileSync(expectedRunner, "// runner in custom datadir");
+
+		mkdirSync(customDataDir, { recursive: true });
+		const mockDbFile = join(customDataDir, "bb.db");
+		const db = new DatabaseSync(mockDbFile);
+		db.exec(`
+			CREATE TABLE plugins (
+				id TEXT PRIMARY KEY,
+				root_dir TEXT NOT NULL,
+				enabled INTEGER DEFAULT 1,
+				updated_at INTEGER DEFAULT 0
+			);
+			INSERT INTO plugins (id, root_dir, enabled) VALUES ('provider-pi-durable', '${customPluginRoot}', 1);
+		`);
+		db.close();
+
+		const savedBridge = process.env.BB_PI_DURABLE_BRIDGE_COMMAND;
+		const savedRunner = process.env.PI_DURABLE_RUNNER_PATH;
+		const savedDataDir = process.env.BB_DATA_DIR;
+		delete process.env.BB_PI_DURABLE_BRIDGE_COMMAND;
+		delete process.env.PI_DURABLE_RUNNER_PATH;
+
+		try {
+			process.env.BB_DATA_DIR = customDataDir;
+			const resolved = resolveRunnerPath({ fromDir: join(temp, "isolated-dir") });
+			assert.equal(resolved, expectedRunner);
+
+			// Also verify resolveSessionDir uses BB_DATA_DIR
+			const sessionDir = resolveSessionDir(process.env);
+			assert.equal(sessionDir, join(customDataDir, "pi-bridge-sessions"));
+		} finally {
+			if (savedBridge !== undefined) process.env.BB_PI_DURABLE_BRIDGE_COMMAND = savedBridge;
+			if (savedRunner !== undefined) process.env.PI_DURABLE_RUNNER_PATH = savedRunner;
+			if (savedDataDir !== undefined) process.env.BB_DATA_DIR = savedDataDir;
+			else delete process.env.BB_DATA_DIR;
+			rmSync(temp, { recursive: true, force: true });
 		}
 	});
 });

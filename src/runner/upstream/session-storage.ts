@@ -7,17 +7,132 @@
  */
 
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readdir, realpath } from "node:fs/promises";
+import { mkdir, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import lockfile from "proper-lockfile";
 
 export function getAgentDir(): string {
 	const override = process.env.PI_AGENT_DIR;
-	if (override && override.trim().length > 0) {
-		return resolve(override.trim());
-	}
+	if (override && override.trim().length > 0) return resolve(override.trim());
 	return join(homedir(), ".pi", "agent");
+}
+
+export interface SessionOwnerInfo {
+	pid: number;
+	id: string;
+	cwd: string;
+	startedAt: number;
+}
+
+export function isProcessAlive(pid: number): boolean {
+	if (!pid || pid <= 0) return false;
+	try {
+		process.kill(pid, 0);
+		return true;
+	} catch (err: unknown) {
+		return (err as NodeJS.ErrnoException).code === "EPERM";
+	}
+}
+
+async function writeOwnerFile(directory: string, owner: SessionOwnerInfo): Promise<void> {
+	await writeFile(join(directory, "session.owner.json"), JSON.stringify(owner, null, 2), "utf8");
+}
+
+async function readOwnerFile(directory: string): Promise<SessionOwnerInfo | null> {
+	try {
+		const content = await readFile(join(directory, "session.owner.json"), "utf8");
+		return JSON.parse(content) as SessionOwnerInfo;
+	} catch {
+		return null;
+	}
+}
+
+async function removeOwnerFile(directory: string): Promise<void> {
+	try {
+		await rm(join(directory, "session.owner.json"), { force: true });
+	} catch {
+		// intentionally ignored
+	}
+}
+
+async function forceUnlock(directory: string): Promise<void> {
+	try {
+		await lockfile.unlock(directory, { realpath: false });
+	} catch {
+		// intentionally ignored: not owned by this process
+	}
+	try {
+		await rm(`${directory}.lock`, { recursive: true, force: true });
+	} catch {
+		// intentionally ignored: directory removal error
+	}
+}
+
+async function acquireSessionLock(directory: string, cwd: string, id: string): Promise<() => Promise<void>> {
+	const lockOpts = { realpath: false, retries: { retries: 2, minTimeout: 100, maxTimeout: 200 } };
+
+	let rawRelease: () => Promise<void>;
+	try {
+		rawRelease = await lockfile.lock(directory, lockOpts);
+	} catch (initialErr) {
+		let owner = await readOwnerFile(directory);
+		if (!owner) {
+			await new Promise((r) => setTimeout(r, 100));
+			owner = await readOwnerFile(directory);
+		}
+		if (!owner) {
+			throw new Error(`Session is already open in another process: ${directory}`, { cause: initialErr });
+		}
+
+		if (!isProcessAlive(owner.pid)) {
+			await forceUnlock(directory);
+			await removeOwnerFile(directory);
+			try {
+				rawRelease = await lockfile.lock(directory, lockOpts);
+			} catch (retryErr) {
+				throw new Error(`Session is already open in another process (PID: ${owner.pid}): ${directory}`, { cause: retryErr });
+			}
+		} else if (owner.pid !== process.pid) {
+			try {
+				process.kill(owner.pid, "SIGTERM");
+			} catch {
+				// intentionally ignored
+			}
+
+			const deadline = Date.now() + 3000;
+			while (Date.now() < deadline && isProcessAlive(owner.pid)) {
+				await new Promise((r) => setTimeout(r, 100));
+			}
+
+			if (!isProcessAlive(owner.pid)) {
+				await forceUnlock(directory);
+				await removeOwnerFile(directory);
+				try {
+					rawRelease = await lockfile.lock(directory, lockOpts);
+				} catch (retryErr) {
+					throw new Error(`Session is already open in another process (PID: ${owner.pid}): ${directory}`, { cause: retryErr });
+				}
+			} else {
+				throw new Error(`Session is already open in another process (PID: ${owner.pid}): ${directory}`, { cause: initialErr });
+			}
+		} else {
+			throw new Error(`Session is already open in another process (PID: ${owner.pid}): ${directory}`, { cause: initialErr });
+		}
+	}
+
+	await writeOwnerFile(directory, { pid: process.pid, id, cwd, startedAt: Date.now() });
+
+	let released = false;
+	return async () => {
+		if (released) return;
+		released = true;
+		try {
+			await removeOwnerFile(directory);
+		} finally {
+			await rawRelease();
+		}
+	};
 }
 
 /** One session directory holding `session.sqlite`, locked by this process. */
@@ -37,28 +152,16 @@ export async function selectSession(
 	targetSession?: string,
 ): Promise<SessionLocation> {
 	const cwd = await realpath(resolve(cwdInput));
-	const root = join(
-		getAgentDir(),
-		"experimental",
-		"durable-sessions",
-		createHash("sha256").update(cwd).digest("hex").slice(0, 24),
-	);
+	const root = join(getAgentDir(), "experimental", "durable-sessions", createHash("sha256").update(cwd).digest("hex").slice(0, 24));
 	await mkdir(root, { recursive: true });
 
 	let directory: string;
 	let created = false;
 	if (targetSession) {
 		let cleanTarget = targetSession;
-		if (cleanTarget.endsWith(".sqlite")) {
-			cleanTarget = resolve(cleanTarget, "..");
-		} else if (cleanTarget.endsWith(".jsonl")) {
-			cleanTarget = cleanTarget.slice(0, -6);
-		}
-		if (cleanTarget.includes("/") || cleanTarget.includes("\\")) {
-			directory = resolve(cleanTarget);
-		} else {
-			directory = join(root, cleanTarget);
-		}
+		if (cleanTarget.endsWith(".sqlite")) cleanTarget = resolve(cleanTarget, "..");
+		else if (cleanTarget.endsWith(".jsonl")) cleanTarget = cleanTarget.slice(0, -6);
+		directory = (cleanTarget.includes("/") || cleanTarget.includes("\\")) ? resolve(cleanTarget) : join(root, cleanTarget);
 		try {
 			await mkdir(directory, { recursive: true });
 			const entries = await readdir(directory);
@@ -79,7 +182,6 @@ export async function selectSession(
 				created = false;
 			}
 		} catch {
-			// intentionally ignored: directory inspection error falls back to existing session
 			created = false;
 		}
 	} else if (continueSession) {
@@ -97,15 +199,7 @@ export async function selectSession(
 		created = true;
 	}
 
-	let release: () => Promise<void>;
-	try {
-		// A lock left by a crashed process goes stale after 10 s; wait that long before giving up.
-		release = await lockfile.lock(directory, {
-			realpath: false,
-			retries: { retries: 12, minTimeout: 1000, maxTimeout: 1000 },
-		});
-	} catch (error) {
-		throw new Error(`Session is already open in another process: ${directory}`, { cause: error });
-	}
-	return { id: basename(directory), directory, database: join(directory, "session.sqlite"), cwd, created, release };
+	const id = basename(directory);
+	const release = await acquireSessionLock(directory, cwd, id);
+	return { id, directory, database: join(directory, "session.sqlite"), cwd, created, release };
 }

@@ -134,8 +134,22 @@ export class RunnerProcess {
 
 	public kill(): void {
 		if (!this.exited) {
-			this.child.kill("SIGKILL");
 			this.exited = true;
+			try {
+				this.child.kill("SIGTERM");
+			} catch {
+				// intentionally ignored: process may already have terminated
+			}
+			const timer = setTimeout(() => {
+				if (this.child.exitCode === null && this.child.signalCode === null) {
+					try {
+						this.child.kill("SIGKILL");
+					} catch {
+						// intentionally ignored
+					}
+				}
+			}, 500);
+			timer.unref();
 		}
 	}
 }

@@ -11,6 +11,13 @@ export interface ResolveRunnerOptions {
 	fromDir?: string;
 	bbDbPath?: string;
 	cacheDir?: string;
+	env?: NodeJS.ProcessEnv;
+}
+
+export function getBbDataDir(env: NodeJS.ProcessEnv = process.env): string {
+	const custom = env.BB_DATA_DIR?.trim();
+	if (custom) return resolve(custom);
+	return join(homedir(), ".bb");
 }
 
 function findRunnerFromDb(dbPath: string): string | null {
@@ -66,7 +73,8 @@ function findRunnerInCache(cacheRoot: string, maxDepth = 5): string | null {
 }
 
 export function resolveRunnerPath(options?: ResolveRunnerOptions): string {
-	const envCmd = process.env.BB_PI_DURABLE_BRIDGE_COMMAND?.trim() || process.env.PI_DURABLE_RUNNER_PATH?.trim();
+	const env = options?.env ?? process.env;
+	const envCmd = env.BB_PI_DURABLE_BRIDGE_COMMAND?.trim() || env.PI_DURABLE_RUNNER_PATH?.trim();
 	if (envCmd) {
 		const custom = resolve(envCmd);
 		if (existsSync(custom)) return custom;
@@ -85,13 +93,29 @@ export function resolveRunnerPath(options?: ResolveRunnerOptions): string {
 		if (existsSync(candidate)) return candidate;
 	}
 
-	const bbDbPath = options?.bbDbPath ?? join(homedir(), ".bb", "bb.db");
-	const dbRunner = findRunnerFromDb(bbDbPath);
+	const dataDir = getBbDataDir(env);
+	const legacyDataDir = join(homedir(), ".bb");
+	const isCustomDataDir = dataDir !== legacyDataDir;
+
+	const bbDbPath = options?.bbDbPath ?? join(dataDir, "bb.db");
+	let dbRunner = findRunnerFromDb(bbDbPath);
+	if (!dbRunner && isCustomDataDir && !options?.bbDbPath) {
+		dbRunner = findRunnerFromDb(join(legacyDataDir, "bb.db"));
+	}
 	if (dbRunner) return dbRunner;
 
 	const cacheRoots = options?.cacheDir
 		? [join(options.cacheDir, "git"), join(options.cacheDir, "npm"), options.cacheDir]
-		: [join(homedir(), ".bb", "plugins", "cache", "git"), join(homedir(), ".bb", "plugins", "cache", "npm")];
+		: [
+				join(dataDir, "plugins", "cache", "git"),
+				join(dataDir, "plugins", "cache", "npm"),
+				...(isCustomDataDir
+					? [
+							join(legacyDataDir, "plugins", "cache", "git"),
+							join(legacyDataDir, "plugins", "cache", "npm"),
+						]
+					: []),
+		  ];
 
 	for (const cr of cacheRoots) {
 		const found = findRunnerInCache(cr);
@@ -99,8 +123,14 @@ export function resolveRunnerPath(options?: ResolveRunnerOptions): string {
 	}
 
 	const bbPluginCandidates = [
-		join(homedir(), ".bb", "plugins", "provider-pi-durable", "dist", "runner", "index.js"),
-		join(homedir(), ".bb", "plugins", "bb-plugin-provider-pi-durable", "dist", "runner", "index.js"),
+		join(dataDir, "plugins", "provider-pi-durable", "dist", "runner", "index.js"),
+		join(dataDir, "plugins", "bb-plugin-provider-pi-durable", "dist", "runner", "index.js"),
+		...(isCustomDataDir
+			? [
+					join(legacyDataDir, "plugins", "provider-pi-durable", "dist", "runner", "index.js"),
+					join(legacyDataDir, "plugins", "bb-plugin-provider-pi-durable", "dist", "runner", "index.js"),
+			  ]
+			: []),
 	];
 	for (const candidate of bbPluginCandidates) {
 		if (existsSync(candidate)) return candidate;
@@ -133,7 +163,7 @@ export function resolveRunnerPath(options?: ResolveRunnerOptions): string {
 export function resolveSessionDir(env: NodeJS.ProcessEnv = process.env): string {
 	const custom = env.BB_PI_BRIDGE_SESSION_DIR?.trim();
 	if (custom) return resolve(custom);
-	return join(homedir(), ".bb", "pi-bridge-sessions");
+	return join(getBbDataDir(env), "pi-bridge-sessions");
 }
 
 export function resolveSessionFilePath(threadId: string, env: NodeJS.ProcessEnv = process.env): string {
