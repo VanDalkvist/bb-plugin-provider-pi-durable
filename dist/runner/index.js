@@ -11,11 +11,13 @@ var __require = /* @__PURE__ */ ((x) => typeof require !== "undefined" ? require
 import { existsSync as existsSync2, readFileSync as readFileSync2, writeSync } from "node:fs";
 import { join as join3 } from "node:path";
 import { Socket } from "node:net";
+
+// src/runner/model-setup.ts
 import {
-  DefaultResourceLoader as DefaultResourceLoader2,
-  ModelRuntime as ModelRuntime2,
-  SettingsManager as SettingsManager2,
-  resolveModelScopeWithDiagnostics as resolveModelScopeWithDiagnostics2
+  DefaultResourceLoader,
+  ModelRuntime,
+  SettingsManager,
+  resolveModelScopeWithDiagnostics
 } from "@earendil-works/pi-coding-agent";
 
 // src/runner/sessions.ts
@@ -350,6 +352,59 @@ async function findInitialAgentModel(settingsManager, modelRuntime, cli) {
   return {};
 }
 
+// src/runner/model-setup.ts
+async function setupRunnerModels(cwd, args2) {
+  const agentDir = getAgentDir();
+  const settingsManager = SettingsManager.create(cwd, agentDir);
+  const modelRuntime = await ModelRuntime.create();
+  const resourceLoader = new DefaultResourceLoader({ cwd, agentDir, settingsManager });
+  await resourceLoader.reload();
+  const extensionsResult = resourceLoader.getExtensions();
+  for (const { name, config } of extensionsResult.runtime.pendingProviderRegistrations) {
+    try {
+      modelRuntime.registerProvider(name, config);
+    } catch {
+    }
+  }
+  for (const { provider } of extensionsResult.runtime.pendingNativeProviderRegistrations) {
+    try {
+      modelRuntime.registerNativeProvider(provider);
+    } catch {
+    }
+  }
+  for (const { definition } of extensionsResult.runtime.pendingVirtualModelRegistrations) {
+    try {
+      modelRuntime.registerVirtualModel(definition);
+    } catch {
+    }
+  }
+  const availableModels = modelRuntime.getAvailableSnapshot();
+  const enabledPatterns = settingsManager.getEnabledModels();
+  const scopedScope = enabledPatterns && enabledPatterns.length > 0 ? await resolveModelScopeWithDiagnostics(enabledPatterns, modelRuntime) : void 0;
+  const scopedModelList = scopedScope && scopedScope.scopedModels.length > 0 ? scopedScope.scopedModels.map((sm) => sm.model) : availableModels;
+  const scopedModelIds = scopedModelList.map((m) => `${m.provider}/${m.id}`);
+  const initialAgent = await findInitialAgentModel(
+    settingsManager,
+    modelRuntime,
+    args2.model ? { provider: args2.provider, model: args2.model, thinking: args2.thinking } : void 0
+  );
+  const defaultModel = initialAgent.model ? modelRuntime.getModel(initialAgent.model.provider, initialAgent.model.modelId) ?? scopedModelList[0] : scopedModelList[0];
+  const defaultModelId = defaultModel ? `${defaultModel.provider}/${defaultModel.id}` : void 0;
+  const defaultThinkingLevel = initialAgent.thinkingLevel ?? "off";
+  const modelScope = {
+    scopedModelIds,
+    defaultModelId
+  };
+  return {
+    settingsManager,
+    modelRuntime,
+    scopedModelList,
+    defaultModel,
+    defaultThinkingLevel,
+    modelScope
+  };
+}
+
 // src/runner/jsonl.ts
 import { StringDecoder } from "node:string_decoder";
 function serializeJsonLine(value) {
@@ -397,10 +452,10 @@ import {
 } from "@earendil-works/pi-durable";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import {
-  DefaultResourceLoader,
-  ModelRuntime,
-  SettingsManager,
-  resolveModelScopeWithDiagnostics
+  DefaultResourceLoader as DefaultResourceLoader2,
+  ModelRuntime as ModelRuntime2,
+  SettingsManager as SettingsManager2,
+  resolveModelScopeWithDiagnostics as resolveModelScopeWithDiagnostics2
 } from "@earendil-works/pi-coding-agent";
 
 // src/runner/subagent.ts
@@ -474,10 +529,10 @@ async function openDurable(options = {}) {
   const envs = new ExecutionEnvs(location.cwd);
   let harness;
   try {
-    const modelRuntime = await ModelRuntime.create();
-    const settingsManager = SettingsManager.create(location.cwd);
+    const modelRuntime = await ModelRuntime2.create();
+    const settingsManager = SettingsManager2.create(location.cwd);
     const agentDir = getAgentDir();
-    const resourceLoader = new DefaultResourceLoader({ cwd: location.cwd, agentDir, settingsManager });
+    const resourceLoader = new DefaultResourceLoader2({ cwd: location.cwd, agentDir, settingsManager });
     await resourceLoader.reload();
     const extensionsResult = resourceLoader.getExtensions();
     for (const { name, config } of extensionsResult.runtime.pendingProviderRegistrations) {
@@ -558,7 +613,7 @@ async function openDurable(options = {}) {
     let current = root;
     let conversation = await root.viewState(context);
     const enabledPatterns = settingsManager.getEnabledModels();
-    const scopedScope = enabledPatterns && enabledPatterns.length > 0 ? await resolveModelScopeWithDiagnostics(enabledPatterns, modelRuntime) : void 0;
+    const scopedScope = enabledPatterns && enabledPatterns.length > 0 ? await resolveModelScopeWithDiagnostics2(enabledPatterns, modelRuntime) : void 0;
     const scopedModelList = scopedScope && scopedScope.scopedModels.length > 0 ? scopedScope.scopedModels.map((sm) => sm.model) : modelRuntime.getAvailableSnapshot();
     const models = () => scopedModelList.map((model) => ({
       provider: model.provider,
@@ -745,9 +800,8 @@ async function openDurable(options = {}) {
 }
 
 // src/runner/index.ts
-import { ROOT_CONVERSATION_ID as ROOT_CONVERSATION_ID2, watchEvents } from "@earendil-works/pi-durable";
-import { BACKGROUND_CONTEXT as BACKGROUND_CONTEXT2 } from "@earendil-works/chord/context";
-import { estimateContextTokens } from "@earendil-works/pi-ai/utils/estimate";
+import { ROOT_CONVERSATION_ID as ROOT_CONVERSATION_ID3, watchEvents } from "@earendil-works/pi-durable";
+import { BACKGROUND_CONTEXT as BACKGROUND_CONTEXT3 } from "@earendil-works/chord/context";
 
 // src/runner/bridge/assistant-message-builder.ts
 function buildFinalAssistantMessage(current, lastGenerationText, lastThinkingText) {
@@ -938,13 +992,14 @@ var BBEventAdapter = class {
   }
 };
 
-// src/runner/index.ts
+// src/runner/cli-args.ts
 function parseCliArgs(argv2) {
   const args2 = {};
   for (let i = 0; i < argv2.length; i++) {
     const arg = argv2[i];
     if (arg === "--mode" && i + 1 < argv2.length) args2.mode = argv2[++i];
     else if (arg === "--session" && i + 1 < argv2.length) args2.session = argv2[++i];
+    else if (arg === "--session-dir" && i + 1 < argv2.length) args2.sessionDir = argv2[++i];
     else if (arg === "--continue") args2.continueSession = true;
     else if (arg === "--no-session") args2.noSession = true;
     else if (arg === "--provider" && i + 1 < argv2.length) args2.provider = argv2[++i];
@@ -953,10 +1008,122 @@ function parseCliArgs(argv2) {
     else if (arg === "--system-prompt" && i + 1 < argv2.length) args2.systemPromptPath = argv2[++i];
     else if (arg === "--append-system-prompt" && i + 1 < argv2.length) args2.appendSystemPromptPath = argv2[++i];
     else if (arg === "--extension" && i + 1 < argv2.length) args2.extension = argv2[++i];
-    else if (!arg.startsWith("-") && !args2.cwd) args2.cwd = arg;
+    else if (arg.startsWith("-")) {
+      if (i + 1 < argv2.length && !argv2[i + 1].startsWith("-")) {
+        i++;
+      }
+    } else if (!args2.cwd) {
+      args2.cwd = arg;
+    }
   }
   return args2;
 }
+
+// src/runner/session-commands.ts
+import { ROOT_CONVERSATION_ID as ROOT_CONVERSATION_ID2 } from "@earendil-works/pi-durable";
+import { BACKGROUND_CONTEXT as BACKGROUND_CONTEXT2 } from "@earendil-works/chord/context";
+import { estimateContextTokens } from "@earendil-works/pi-ai/utils/estimate";
+async function handleActiveSessionCommand(cmd, durable, modelRuntime, args2, respond) {
+  switch (cmd.type) {
+    case "prompt": {
+      if (!cmd.message) {
+        respond.error(cmd.id, "prompt", "Missing message");
+        return;
+      }
+      respond.success(cmd.id, "prompt");
+      const behavior = cmd.streamingBehavior || "followUp";
+      await durable.controller.submit(cmd.message, behavior);
+      break;
+    }
+    case "steer": {
+      if (!cmd.message) {
+        respond.error(cmd.id, "steer", "Missing message");
+        return;
+      }
+      respond.success(cmd.id, "steer");
+      await durable.controller.submit(cmd.message, "steer");
+      break;
+    }
+    case "abort": {
+      await durable.controller.abort();
+      respond.success(cmd.id, "abort");
+      break;
+    }
+    case "compact": {
+      await durable.controller.compact(cmd.instructions);
+      respond.success(cmd.id, "compact");
+      break;
+    }
+    case "get_state": {
+      const current = durable.view.current();
+      const agentDoc = current.conversation.docs["pi.agent"] ?? {};
+      const modelObj = agentDoc.model ? {
+        provider: agentDoc.model.provider,
+        id: agentDoc.model.id ?? agentDoc.model.modelId,
+        modelId: agentDoc.model.modelId ?? agentDoc.model.id
+      } : null;
+      respond.success(cmd.id, "get_state", {
+        model: modelObj,
+        thinkingLevel: agentDoc.thinkingLevel ?? "none",
+        cwd: args2.cwd ?? process.cwd(),
+        sessionId: args2.session ?? "default"
+      });
+      break;
+    }
+    case "get_available_models": {
+      const currentModels = modelRuntime.getAvailableSnapshot();
+      respond.success(cmd.id, "get_available_models", { models: currentModels });
+      break;
+    }
+    case "set_model": {
+      if (!cmd.provider || !cmd.modelId) {
+        respond.error(cmd.id, "set_model", "Missing provider or modelId");
+        return;
+      }
+      await durable.controller.setModel({ provider: cmd.provider, modelId: cmd.modelId });
+      respond.success(cmd.id, "set_model");
+      break;
+    }
+    case "set_thinking_level": {
+      await durable.controller.setThinkingLevel(cmd.level);
+      respond.success(cmd.id, "set_thinking_level");
+      break;
+    }
+    case "get_session_stats": {
+      const current = durable.view.current();
+      const agentDoc = current.conversation.docs["pi.agent"] ?? {};
+      let contextWindow = 128e3;
+      if (agentDoc.model?.provider && agentDoc.model?.modelId) {
+        const m = modelRuntime.getModel(agentDoc.model.provider, agentDoc.model.modelId);
+        if (m?.contextWindow) contextWindow = m.contextWindow;
+      }
+      let tokens = null;
+      try {
+        const conv = await durable.harness.conversation(ROOT_CONVERSATION_ID2, BACKGROUND_CONTEXT2);
+        if (conv) {
+          const ctxView = await conv.context(BACKGROUND_CONTEXT2);
+          const estimate = estimateContextTokens(ctxView.messages);
+          tokens = estimate.tokens;
+        }
+      } catch (err) {
+        console.error(`Error estimating context tokens: ${err}`);
+      }
+      respond.success(cmd.id, "get_session_stats", {
+        contextUsage: {
+          tokens,
+          contextWindow
+        }
+      });
+      break;
+    }
+    default: {
+      respond.error(cmd.id, cmd.type, `Unknown command: ${cmd.type}`);
+      break;
+    }
+  }
+}
+
+// src/runner/index.ts
 function getPiDurableVersion() {
   try {
     const durablePkg = __require.resolve("@earendil-works/pi-durable/package.json");
@@ -1006,49 +1173,14 @@ async function main() {
   process.on("SIGINT", () => process.exit(0));
   process.stdin.on("end", () => process.exit(0));
   const cwd = args.cwd ?? process.cwd();
-  const agentDir = getAgentDir();
-  const settingsManager = SettingsManager2.create(cwd, agentDir);
-  const modelRuntime = await ModelRuntime2.create();
-  const resourceLoader = new DefaultResourceLoader2({ cwd, agentDir, settingsManager });
-  await resourceLoader.reload();
-  const extensionsResult = resourceLoader.getExtensions();
-  for (const { name, config } of extensionsResult.runtime.pendingProviderRegistrations) {
-    try {
-      modelRuntime.registerProvider(name, config);
-    } catch {
-    }
-  }
-  for (const { provider } of extensionsResult.runtime.pendingNativeProviderRegistrations) {
-    try {
-      modelRuntime.registerNativeProvider(provider);
-    } catch {
-    }
-  }
-  for (const { definition } of extensionsResult.runtime.pendingVirtualModelRegistrations) {
-    try {
-      modelRuntime.registerVirtualModel(definition);
-    } catch {
-    }
-  }
-  const availableModels = modelRuntime.getAvailableSnapshot();
-  const enabledPatterns = settingsManager.getEnabledModels();
-  const scopedScope = enabledPatterns && enabledPatterns.length > 0 ? await resolveModelScopeWithDiagnostics2(enabledPatterns, modelRuntime) : void 0;
-  const scopedModelList = scopedScope && scopedScope.scopedModels.length > 0 ? scopedScope.scopedModels.map((sm) => sm.model) : availableModels;
-  const scopedModelIds = scopedModelList.map((m) => `${m.provider}/${m.id}`);
-  const initialAgent = await findInitialAgentModel(
-    settingsManager,
+  const {
     modelRuntime,
-    args.model ? { provider: args.provider, model: args.model, thinking: args.thinking } : void 0
-  );
-  const defaultModel = initialAgent.model ? modelRuntime.getModel(initialAgent.model.provider, initialAgent.model.modelId) ?? scopedModelList[0] : scopedModelList[0];
-  const defaultModelId = defaultModel ? `${defaultModel.provider}/${defaultModel.id}` : void 0;
-  const defaultThinkingLevel = initialAgent.thinkingLevel ?? "off";
-  const modelScope = {
-    scopedModelIds,
-    defaultModelId
-  };
+    scopedModelList,
+    defaultModel,
+    defaultThinkingLevel,
+    modelScope
+  } = await setupRunnerModels(cwd, args);
   sendToBridge({ kind: "model-scope", ...modelScope });
-  sendToBridge({ ready: true, kind: "ready" });
   try {
     const bridgeIn = new Socket({ fd: BRIDGE_TO_CHILD_FD, readable: true, writable: false });
     bridgeIn.on("error", () => {
@@ -1083,6 +1215,7 @@ async function main() {
     output({ id, type: "response", command, success: false, error: message });
   };
   if (args.noSession) {
+    sendToBridge({ ready: true, kind: "ready" });
     attachJsonlLineReader(process.stdin, (line) => {
       if (!line.trim()) return;
       try {
@@ -1123,7 +1256,7 @@ async function main() {
   };
   const durable = await openDurable(durableOptions);
   const adapter = new BBEventAdapter((evt) => output(evt));
-  const stream = await watchEvents(durable.harness, ROOT_CONVERSATION_ID2, BACKGROUND_CONTEXT2);
+  const stream = await watchEvents(durable.harness, ROOT_CONVERSATION_ID3, BACKGROUND_CONTEXT3);
   stream.start(async (batch) => {
     try {
       for (const event of batch) {
@@ -1141,104 +1274,13 @@ async function main() {
       error(void 0, "parse", `Invalid JSON: ${e}`);
       return;
     }
-    switch (cmd.type) {
-      case "prompt": {
-        if (!cmd.message) {
-          error(cmd.id, "prompt", "Missing message");
-          return;
-        }
-        success(cmd.id, "prompt");
-        const behavior = cmd.streamingBehavior || "followUp";
-        await durable.controller.submit(cmd.message, behavior);
-        break;
-      }
-      case "steer": {
-        if (!cmd.message) {
-          error(cmd.id, "steer", "Missing message");
-          return;
-        }
-        success(cmd.id, "steer");
-        await durable.controller.submit(cmd.message, "steer");
-        break;
-      }
-      case "abort": {
-        await durable.controller.abort();
-        success(cmd.id, "abort");
-        break;
-      }
-      case "compact": {
-        await durable.controller.compact(cmd.instructions);
-        success(cmd.id, "compact");
-        break;
-      }
-      case "get_state": {
-        const current = durable.view.current();
-        const agentDoc = current.conversation.docs["pi.agent"] ?? {};
-        const modelObj = agentDoc.model ? {
-          provider: agentDoc.model.provider,
-          id: agentDoc.model.id ?? agentDoc.model.modelId,
-          modelId: agentDoc.model.modelId ?? agentDoc.model.id
-        } : null;
-        success(cmd.id, "get_state", {
-          model: modelObj,
-          thinkingLevel: agentDoc.thinkingLevel ?? "none",
-          cwd: args.cwd ?? process.cwd(),
-          sessionId: args.session ?? "default"
-        });
-        break;
-      }
-      case "get_available_models": {
-        const currentModels = modelRuntime.getAvailableSnapshot();
-        success(cmd.id, "get_available_models", { models: currentModels });
-        break;
-      }
-      case "set_model": {
-        if (!cmd.provider || !cmd.modelId) {
-          error(cmd.id, "set_model", "Missing provider or modelId");
-          return;
-        }
-        await durable.controller.setModel({ provider: cmd.provider, modelId: cmd.modelId });
-        success(cmd.id, "set_model");
-        break;
-      }
-      case "set_thinking_level": {
-        await durable.controller.setThinkingLevel(cmd.level);
-        success(cmd.id, "set_thinking_level");
-        break;
-      }
-      case "get_session_stats": {
-        const current = durable.view.current();
-        const agentDoc = current.conversation.docs["pi.agent"] ?? {};
-        let contextWindow = 128e3;
-        if (agentDoc.model?.provider && agentDoc.model?.modelId) {
-          const m = modelRuntime.getModel(agentDoc.model.provider, agentDoc.model.modelId);
-          if (m?.contextWindow) contextWindow = m.contextWindow;
-        }
-        let tokens = null;
-        try {
-          const conv = await durable.harness.conversation(ROOT_CONVERSATION_ID2, BACKGROUND_CONTEXT2);
-          if (conv) {
-            const ctxView = await conv.context(BACKGROUND_CONTEXT2);
-            const estimate = estimateContextTokens(ctxView.messages);
-            tokens = estimate.tokens;
-          }
-        } catch (err) {
-          console.error(`Error estimating context tokens: ${err}`);
-        }
-        success(cmd.id, "get_session_stats", {
-          contextUsage: {
-            tokens,
-            contextWindow
-          }
-        });
-        break;
-      }
-      default: {
-        error(cmd.id, cmd.type, `Unknown command: ${cmd.type}`);
-        break;
-      }
+    try {
+      await handleActiveSessionCommand(cmd, durable, modelRuntime, args, { success, error });
+    } catch (err) {
+      error(cmd.id, cmd.type, err instanceof Error ? err.message : String(err));
     }
   });
+  sendToBridge({ ready: true, kind: "ready" });
 }
 main().catch((err) => {
   console.error(`Runner fatal error: ${err instanceof Error ? err.stack : err}`);

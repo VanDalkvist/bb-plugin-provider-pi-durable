@@ -9,6 +9,8 @@ export class PiThreadSession {
 	public translator = new DeltaTranslator();
 	public readyPromise: Promise<void>;
 	private readyResolve!: () => void;
+	private readyReject!: (err: Error) => void;
+	private startupSettled = false;
 	public isProcessing = false;
 
 	constructor(
@@ -17,9 +19,22 @@ export class PiThreadSession {
 	) {
 		this.options = options;
 		this.sendNotification = sendNotification;
-		this.readyPromise = new Promise((resolve) => {
-			this.readyResolve = resolve;
+		this.readyPromise = new Promise((resolve, reject) => {
+			this.readyResolve = () => {
+				if (!this.startupSettled) {
+					this.startupSettled = true;
+					resolve();
+				}
+			};
+			this.readyReject = (err: Error) => {
+				if (!this.startupSettled) {
+					this.startupSettled = true;
+					reject(err);
+				}
+			};
 		});
+		// Prevent unhandledRejection if readyPromise rejects before caller awaits start()
+		this.readyPromise.catch(() => {});
 
 		const args = ["--mode", "rpc"];
 		if (options.noSession) {
@@ -27,7 +42,6 @@ export class PiThreadSession {
 		} else {
 			args.push("--session", options.sessionFilePath);
 		}
-		args.push("--session-dir", options.sessionDir);
 		args.push("--extension", options.extensionPath);
 
 		if (options.model) {
@@ -50,24 +64,31 @@ export class PiThreadSession {
 					this.readyResolve();
 				}
 			},
+			onError: (err) => {
+				this.readyReject(new Error(`Runner failed to launch: ${err.message}`));
+			},
+			onExit: (code, signal) => {
+				this.readyReject(new Error(`Runner exited before becoming ready (code ${code}, signal ${signal})`));
+			},
 		});
 	}
 
 	public async start(): Promise<void> {
+		let timer: NodeJS.Timeout | null = null;
 		try {
 			await Promise.race([
 				this.readyPromise,
-				new Promise((_, reject) => setTimeout(() => reject(new Error("Runner startup ready timed out")), 20000)),
+				new Promise<void>((_, reject) => {
+					timer = setTimeout(() => reject(new Error("Runner startup ready timed out")), 20000);
+				}),
 			]);
-		} catch (err) {
-			console.warn(`[PiThreadSession] Startup ready check timed out or failed: ${err}`);
+		} finally {
+			if (timer !== null) {
+				clearTimeout(timer);
+			}
 		}
 
-		try {
-			await this.refreshContextUsage();
-		} catch (err) {
-			console.warn(`[PiThreadSession] Initial context refresh failed: ${err}`);
-		}
+		await this.refreshContextUsage();
 	}
 
 	private async handleRunnerEvent(event: RunnerEvent) {

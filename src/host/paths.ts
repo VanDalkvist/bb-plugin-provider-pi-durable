@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -6,25 +6,60 @@ import { fileURLToPath } from "node:url";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-export function resolveRunnerPath(): string {
-	if (process.env.BB_PI_DURABLE_BRIDGE_COMMAND) {
-		const custom = resolve(process.env.BB_PI_DURABLE_BRIDGE_COMMAND);
+export interface ResolveRunnerOptions {
+	fromDir?: string;
+}
+
+export function resolveRunnerPath(options?: ResolveRunnerOptions): string {
+	const envCmd = process.env.BB_PI_DURABLE_BRIDGE_COMMAND?.trim() || process.env.PI_DURABLE_RUNNER_PATH?.trim();
+	if (envCmd) {
+		const custom = resolve(envCmd);
 		if (existsSync(custom)) return custom;
 	}
 
-	const candidates = [
-		resolve(__dirname, "runner", "index.js"),
-		resolve(__dirname, "..", "runner", "index.js"),
-		resolve(__dirname, "..", "dist", "runner", "index.js"),
-		resolve("/Users/vanya/Projects/bb-plugin-provider-pi-durable/dist/runner/index.js"),
+	const baseDir = options?.fromDir ? resolve(options.fromDir) : __dirname;
+
+	const directCandidates = [
+		resolve(baseDir, "runner", "index.js"),
+		resolve(baseDir, "..", "runner", "index.js"),
+		resolve(baseDir, "..", "dist", "runner", "index.js"),
+		resolve(baseDir, "..", "..", "dist", "runner", "index.js"),
 	];
 
-	for (const candidate of candidates) {
+	for (const candidate of directCandidates) {
 		if (existsSync(candidate)) return candidate;
 	}
 
+	const parentDir = dirname(baseDir);
+	try {
+		if (existsSync(parentDir)) {
+			const siblings = readdirSync(parentDir, { withFileTypes: true });
+			for (const sib of siblings) {
+				if (sib.isDirectory()) {
+					const sibRunner = resolve(parentDir, sib.name, "dist", "runner", "index.js");
+					if (existsSync(sibRunner)) return sibRunner;
+					const sibDirectRunner = resolve(parentDir, sib.name, "runner", "index.js");
+					if (existsSync(sibDirectRunner)) return sibDirectRunner;
+				}
+			}
+		}
+	} catch {
+		// intentionally ignored: filesystem permission error during directory walk
+	}
+
+	const bbPluginCandidates = [
+		join(homedir(), ".bb", "plugins", "provider-pi-durable", "dist", "runner", "index.js"),
+		join(homedir(), ".bb", "plugins", "bb-plugin-provider-pi-durable", "dist", "runner", "index.js"),
+	];
+
+	for (const candidate of bbPluginCandidates) {
+		if (existsSync(candidate)) return candidate;
+	}
+
+	const allSearched = [...directCandidates, `${parentDir}/*/dist/runner/index.js`, ...bbPluginCandidates];
+
 	throw new Error(
-		`Pi Durable internal runner bundle not found. Searched in: ${candidates.join(", ")}. Please run "npm run build" in the plugin directory.`,
+		`Pi Durable internal runner bundle not found. Searched in: ${allSearched.join(", ")}. Please build the plugin using "npm run build" or set PI_DURABLE_RUNNER_PATH.`,
 	);
 }
 

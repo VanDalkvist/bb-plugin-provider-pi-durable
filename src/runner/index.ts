@@ -1,55 +1,15 @@
 import { existsSync, readFileSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import { Socket } from "node:net";
-import {
-	DefaultResourceLoader,
-	ModelRuntime,
-	SettingsManager,
-	resolveModelScopeWithDiagnostics,
-} from "@earendil-works/pi-coding-agent";
-import { getAgentDir } from "./sessions.ts";
-import type { ModelThinkingLevel } from "./harness-setup.ts";
-import { findInitialAgentModel } from "./harness-setup.ts";
+import { setupRunnerModels } from "./model-setup.ts";
 import { attachJsonlLineReader, serializeJsonLine } from "./jsonl.ts";
 import { openDurable, type OpenDurableOptions } from "./runtime.ts";
 import { ROOT_CONVERSATION_ID, watchEvents } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import { estimateContextTokens } from "@earendil-works/pi-ai/utils/estimate";
 import { BBEventAdapter } from "./bridge/bb-event-adapter.ts";
 import type { BBWireEvent } from "./bridge/contracts.ts";
-
-export interface CliArgs {
-	mode?: string;
-	session?: string;
-	continueSession?: boolean;
-	noSession?: boolean;
-	provider?: string;
-	model?: string;
-	thinking?: ModelThinkingLevel;
-	cwd?: string;
-	systemPromptPath?: string;
-	appendSystemPromptPath?: string;
-	extension?: string;
-}
-
-function parseCliArgs(argv: string[]): CliArgs {
-	const args: CliArgs = {};
-	for (let i = 0; i < argv.length; i++) {
-		const arg = argv[i];
-		if (arg === "--mode" && i + 1 < argv.length) args.mode = argv[++i];
-		else if (arg === "--session" && i + 1 < argv.length) args.session = argv[++i];
-		else if (arg === "--continue") args.continueSession = true;
-		else if (arg === "--no-session") args.noSession = true;
-		else if (arg === "--provider" && i + 1 < argv.length) args.provider = argv[++i];
-		else if (arg === "--model" && i + 1 < argv.length) args.model = argv[++i];
-		else if (arg === "--thinking" && i + 1 < argv.length) args.thinking = argv[++i] as ModelThinkingLevel;
-		else if (arg === "--system-prompt" && i + 1 < argv.length) args.systemPromptPath = argv[++i];
-		else if (arg === "--append-system-prompt" && i + 1 < argv.length) args.appendSystemPromptPath = argv[++i];
-		else if (arg === "--extension" && i + 1 < argv.length) args.extension = argv[++i];
-		else if (!arg.startsWith("-") && !args.cwd) args.cwd = arg;
-	}
-	return args;
-}
+import { type CliArgs, parseCliArgs } from "./cli-args.ts";
+import { handleActiveSessionCommand } from "./session-commands.ts";
 
 function getPiDurableVersion(): string {
 	try {
@@ -110,67 +70,16 @@ async function main() {
 	process.stdin.on("end", () => process.exit(0));
 
 	const cwd = args.cwd ?? process.cwd();
-	const agentDir = getAgentDir();
-	const settingsManager = SettingsManager.create(cwd, agentDir);
-	const modelRuntime = await ModelRuntime.create();
-
-	// Load extensions and providers (Antigravity, OpenRouter, etc.)
-	const resourceLoader = new DefaultResourceLoader({ cwd, agentDir, settingsManager });
-	await resourceLoader.reload();
-	const extensionsResult = resourceLoader.getExtensions();
-	for (const { name, config } of extensionsResult.runtime.pendingProviderRegistrations) {
-		try {
-			modelRuntime.registerProvider(name, config);
-		} catch {
-			// intentionally ignored: provider registration may already exist or fail gracefully
-		}
-	}
-	for (const { provider } of extensionsResult.runtime.pendingNativeProviderRegistrations) {
-		try {
-			modelRuntime.registerNativeProvider(provider);
-		} catch {
-			// intentionally ignored: native provider may already be registered
-		}
-	}
-	for (const { definition } of extensionsResult.runtime.pendingVirtualModelRegistrations) {
-		try {
-			modelRuntime.registerVirtualModel(definition);
-		} catch {
-			// intentionally ignored: virtual model may already be registered
-		}
-	}
-
-	// Models discovery
-	const availableModels = modelRuntime.getAvailableSnapshot();
-	const enabledPatterns = settingsManager.getEnabledModels();
-	const scopedScope = enabledPatterns && enabledPatterns.length > 0
-		? await resolveModelScopeWithDiagnostics(enabledPatterns, modelRuntime)
-		: undefined;
-	const scopedModelList = scopedScope && scopedScope.scopedModels.length > 0
-		? scopedScope.scopedModels.map((sm) => sm.model)
-		: availableModels;
-	const scopedModelIds = scopedModelList.map((m) => `${m.provider}/${m.id}`);
-
-	const initialAgent = await findInitialAgentModel(
-		settingsManager,
+	const {
 		modelRuntime,
-		args.model ? { provider: args.provider, model: args.model, thinking: args.thinking } : undefined,
-	);
+		scopedModelList,
+		defaultModel,
+		defaultThinkingLevel,
+		modelScope,
+	} = await setupRunnerModels(cwd, args);
 
-	const defaultModel = initialAgent.model
-		? modelRuntime.getModel(initialAgent.model.provider, initialAgent.model.modelId) ?? scopedModelList[0]
-		: scopedModelList[0];
-	const defaultModelId = defaultModel ? `${defaultModel.provider}/${defaultModel.id}` : undefined;
-	const defaultThinkingLevel = initialAgent.thinkingLevel ?? "off";
-
-	const modelScope = {
-		scopedModelIds,
-		defaultModelId,
-	};
-
-	// Notify bridge of model scope and ready status over FD 3
+	// Notify bridge of model scope over FD 3
 	sendToBridge({ kind: "model-scope", ...modelScope });
-	sendToBridge({ ready: true, kind: "ready" });
 
 	// Inbound side channel on FD 4
 	try {
@@ -212,6 +121,7 @@ async function main() {
 
 	// Handle probe / catalog mode (--no-session)
 	if (args.noSession) {
+		sendToBridge({ ready: true, kind: "ready" });
 		attachJsonlLineReader(process.stdin, (line) => {
 			if (!line.trim()) return;
 			try {
@@ -278,106 +188,15 @@ async function main() {
 			return;
 		}
 
-		switch (cmd.type) {
-			case "prompt": {
-				if (!cmd.message) {
-					error(cmd.id, "prompt", "Missing message");
-					return;
-				}
-				success(cmd.id, "prompt");
-				const behavior = (cmd.streamingBehavior as "steer" | "followUp") || "followUp";
-				await durable.controller.submit(cmd.message, behavior);
-				break;
-			}
-			case "steer": {
-				if (!cmd.message) {
-					error(cmd.id, "steer", "Missing message");
-					return;
-				}
-				success(cmd.id, "steer");
-				await durable.controller.submit(cmd.message, "steer");
-				break;
-			}
-			case "abort": {
-				await durable.controller.abort();
-				success(cmd.id, "abort");
-				break;
-			}
-			case "compact": {
-				await durable.controller.compact(cmd.instructions);
-				success(cmd.id, "compact");
-				break;
-			}
-			case "get_state": {
-				const current = durable.view.current();
-				const agentDoc = (current.conversation.docs["pi.agent"] ?? {}) as any;
-				const modelObj = agentDoc.model
-					? {
-							provider: agentDoc.model.provider,
-							id: agentDoc.model.id ?? agentDoc.model.modelId,
-							modelId: agentDoc.model.modelId ?? agentDoc.model.id,
-						}
-					: null;
-				success(cmd.id, "get_state", {
-					model: modelObj,
-					thinkingLevel: agentDoc.thinkingLevel ?? "none",
-					cwd: args.cwd ?? process.cwd(),
-					sessionId: args.session ?? "default",
-				});
-				break;
-			}
-			case "get_available_models": {
-				const currentModels = modelRuntime.getAvailableSnapshot();
-				success(cmd.id, "get_available_models", { models: currentModels });
-				break;
-			}
-			case "set_model": {
-				if (!cmd.provider || !cmd.modelId) {
-					error(cmd.id, "set_model", "Missing provider or modelId");
-					return;
-				}
-				await durable.controller.setModel({ provider: cmd.provider, modelId: cmd.modelId });
-				success(cmd.id, "set_model");
-				break;
-			}
-			case "set_thinking_level": {
-				await durable.controller.setThinkingLevel(cmd.level);
-				success(cmd.id, "set_thinking_level");
-				break;
-			}
-			case "get_session_stats": {
-				const current = durable.view.current();
-				const agentDoc = (current.conversation.docs["pi.agent"] ?? {}) as any;
-				let contextWindow = 128000;
-				if (agentDoc.model?.provider && agentDoc.model?.modelId) {
-					const m = modelRuntime.getModel(agentDoc.model.provider, agentDoc.model.modelId);
-					if (m?.contextWindow) contextWindow = m.contextWindow;
-				}
-				let tokens: number | null = null;
-				try {
-					const conv = await durable.harness.conversation(ROOT_CONVERSATION_ID, BACKGROUND_CONTEXT);
-					if (conv) {
-						const ctxView = await conv.context(BACKGROUND_CONTEXT);
-						const estimate = estimateContextTokens(ctxView.messages);
-						tokens = estimate.tokens;
-					}
-				} catch (err) {
-					console.error(`Error estimating context tokens: ${err}`);
-				}
-				success(cmd.id, "get_session_stats", {
-					contextUsage: {
-						tokens,
-						contextWindow,
-					},
-				});
-				break;
-			}
-			default: {
-				error(cmd.id, cmd.type, `Unknown command: ${cmd.type}`);
-				break;
-			}
+		try {
+			await handleActiveSessionCommand(cmd, durable, modelRuntime, args, { success, error });
+		} catch (err) {
+			error(cmd.id, cmd.type, err instanceof Error ? err.message : String(err));
 		}
 	});
+
+	// Signal active session readiness only after SQLite store, event stream and stdin listener are active
+	sendToBridge({ ready: true, kind: "ready" });
 }
 
 main().catch((err) => {

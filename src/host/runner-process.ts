@@ -9,6 +9,8 @@ export interface RunnerProcessOptions {
 	env?: Record<string, string>;
 	onEvent?: (event: RunnerEvent) => void;
 	onChannelMessage?: (msg: unknown) => void;
+	onError?: (err: Error) => void;
+	onExit?: (code: number | null, signal: NodeJS.Signals | null) => void;
 }
 
 export class RunnerProcess {
@@ -84,6 +86,16 @@ export class RunnerProcess {
 	}
 
 	private setupLifecycle() {
+		this.child.on("error", (err) => {
+			this.exited = true;
+			for (const { reject, timer } of this.pendingRequests.values()) {
+				if (timer) clearTimeout(timer);
+				reject(err);
+			}
+			this.pendingRequests.clear();
+			this.options.onError?.(err);
+		});
+
 		this.child.on("exit", (code, signal) => {
 			this.exited = true;
 			for (const { reject, timer } of this.pendingRequests.values()) {
@@ -91,6 +103,7 @@ export class RunnerProcess {
 				reject(new Error(`Runner process exited (code ${code}, signal ${signal})`));
 			}
 			this.pendingRequests.clear();
+			this.options.onExit?.(code, signal);
 		});
 
 		this.child.stderr?.on("data", (chunk: Buffer) => {
