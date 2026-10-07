@@ -44,6 +44,7 @@ export class SessionRegistry {
 
 		const rawThinking = params.thinkingLevel ?? params.options?.reasoningLevel ?? params.options?.thinkingLevel;
 		const rawEnv = params.shellEnvOverrides ?? params.options?.envVars;
+		const providerOptions = params.options?.providerOptions ?? params.providerOptions;
 
 		const sessionDir = resolveSessionDir();
 		const sessionFilePath = resolveSessionFilePath(providerThreadId);
@@ -63,6 +64,7 @@ export class SessionRegistry {
 				thinkingLevel: rawThinking,
 				shellEnvOverrides: rawEnv,
 				appendSystemPrompt: params.appendSystemPrompt,
+				providerOptions,
 			},
 			this.sendNotification,
 		);

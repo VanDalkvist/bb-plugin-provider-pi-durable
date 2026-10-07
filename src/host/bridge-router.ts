@@ -71,6 +71,14 @@ export async function handleTurnSteer(
 		return;
 	}
 
+	const providerOptions = params?.options?.providerOptions ?? params?.providerOptions;
+	if (providerOptions && typeof providerOptions === "object") {
+		session.options.providerOptions = {
+			...session.options.providerOptions,
+			...providerOptions,
+		};
+	}
+
 	const text = extractInputText(params?.input);
 	if (!text) {
 		ctx.sendError(id, -32602, "Missing steer text");

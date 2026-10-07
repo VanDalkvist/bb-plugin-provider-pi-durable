@@ -67,6 +67,7 @@ export class PiThreadSession {
 		const deltas = this.translator.translate(event, {
 			threadId: this.options.threadId,
 			cwd: this.options.cwd,
+			providerOptions: this.options.providerOptions,
 		});
 		if (deltas.length > 0) {
 			this.sendNotification("thread/delta", { threadId: this.options.threadId, deltas });

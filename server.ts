@@ -1,8 +1,30 @@
 export default function plugin(bb: any) {
+  bb.settings?.define?.({
+    openThinkingByDefault: {
+      type: "boolean",
+      label: "Open thoughts by default",
+      description:
+        "Keep reasoning thoughts expanded by default in the chat timeline. Toggle off to collapse thoughts by default.",
+      default: true,
+    },
+    hideThinking: {
+      type: "boolean",
+      label: "Hide thoughts",
+      description: "Hide reasoning thought blocks from the timeline entirely.",
+      default: false,
+    },
+  });
+
   const provider = bb.providers.register({
     id: "pi-durable",
     displayName: "Pi Durable",
     icon: "./icons/pi-durable.svg",
+    deriveProviderOptions(ctx: any) {
+      return {
+        openThinkingByDefault: Boolean(ctx?.settings?.openThinkingByDefault ?? true),
+        hideThinking: Boolean(ctx?.settings?.hideThinking ?? false),
+      };
+    },
     strings: {
       signInHint: "Run `pi` on the machine to sign in.",
       expiredHint: "Your Pi session expired. Run `pi`, then reload.",

@@ -1,33 +1,77 @@
 import type { RunnerEvent, ThreadDelta } from "./types.ts";
 
+export const REASONING_PRESENTATION = {
+	label: { pending: "Thinking", completed: "Thought" },
+	icon: { glyph: "Brain" },
+};
+
 export interface MessageTranslationState {
 	currentThinkingIndex: number;
 	currentAgentText: string;
+	openThinkingChannels?: Set<string>;
 }
 
 export function translateMessageUpdate(
 	asst: Record<string, unknown> | undefined,
 	state: MessageTranslationState,
+	providerOptions?: Record<string, unknown>,
 ): ThreadDelta[] {
 	if (!asst) return [];
 	const deltas: ThreadDelta[] = [];
+	const hideThinking = Boolean(providerOptions?.hideThinking ?? false);
 
-	if (asst.type === "thinking_delta" && typeof asst.delta === "string") {
+	if (asst.type === "thinking_start") {
 		const idx = typeof asst.contentIndex === "number" ? asst.contentIndex : state.currentThinkingIndex;
+		const channel = `thinking-${idx}`;
+		if (!state.openThinkingChannels) {
+			state.openThinkingChannels = new Set<string>();
+		}
+		if (!state.openThinkingChannels.has(channel)) {
+			state.openThinkingChannels.add(channel);
+			deltas.push({
+				kind: "item.open",
+				key: { channel },
+				item: { type: "reasoning", summary: [], content: [] },
+				presentation: {
+					...REASONING_PRESENTATION,
+					...(hideThinking ? { suppress: true } : {}),
+				},
+			});
+		}
+	} else if (asst.type === "thinking_delta" && typeof asst.delta === "string") {
+		const idx = typeof asst.contentIndex === "number" ? asst.contentIndex : state.currentThinkingIndex;
+		const channel = `thinking-${idx}`;
+		if (!state.openThinkingChannels) {
+			state.openThinkingChannels = new Set<string>();
+		}
+		if (!state.openThinkingChannels.has(channel)) {
+			state.openThinkingChannels.add(channel);
+			deltas.push({
+				kind: "item.open",
+				key: { channel },
+				item: { type: "reasoning", summary: [], content: [] },
+				presentation: {
+					...REASONING_PRESENTATION,
+					...(hideThinking ? { suppress: true } : {}),
+				},
+			});
+		}
 		deltas.push({
 			kind: "item.textDelta",
-			key: { channel: `thinking-${idx}` },
+			key: { channel },
 			channel: "reasoningText",
 			text: asst.delta,
 		});
 	} else if (asst.type === "thinking_end") {
 		const idx = typeof asst.contentIndex === "number" ? asst.contentIndex : state.currentThinkingIndex;
+		const channel = `thinking-${idx}`;
 		deltas.push({
 			kind: "item.textClose",
-			key: { channel: `thinking-${idx}` },
+			key: { channel },
 			channel: "reasoningText",
 			text: (asst.content as string) ?? "",
 		});
+		state.openThinkingChannels?.delete(channel);
 		state.currentThinkingIndex++;
 	} else if (asst.type === "text_delta" && typeof asst.delta === "string") {
 		state.currentAgentText += asst.delta;

@@ -51,6 +51,7 @@ export interface SessionOptions {
 	dynamicTools?: unknown[];
 	noSession?: boolean;
 	onExtensionUiRequest?: (request: unknown) => void;
+	providerOptions?: Record<string, unknown>;
 }
 
 export interface RunnerEvent {

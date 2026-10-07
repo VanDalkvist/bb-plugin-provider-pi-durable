@@ -14,6 +14,7 @@ export interface DeltaTranslatorContext {
 	threadId: string;
 	cwd?: string;
 	clientRequestId?: string;
+	providerOptions?: Record<string, unknown>;
 }
 
 export class DeltaTranslator {
@@ -22,6 +23,7 @@ export class DeltaTranslator {
 	private currentAgentText = "";
 	private turnOpenSent = false;
 	private turnBoundarySent = false;
+	private openThinkingChannels = new Set<string>();
 
 	public reset(): void {
 		this.activeTools.clear();
@@ -29,6 +31,7 @@ export class DeltaTranslator {
 		this.currentAgentText = "";
 		this.turnOpenSent = false;
 		this.turnBoundarySent = false;
+		this.openThinkingChannels.clear();
 	}
 
 	public translate(event: RunnerEvent, ctx: DeltaTranslatorContext): ThreadDelta[] {
@@ -79,7 +82,7 @@ export class DeltaTranslator {
 
 			case "message_update": {
 				const asst = event.assistantMessageEvent as Record<string, unknown> | undefined;
-				deltas.push(...translateMessageUpdate(asst, this));
+				deltas.push(...translateMessageUpdate(asst, this, ctx.providerOptions));
 				break;
 			}
 

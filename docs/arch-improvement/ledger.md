@@ -350,6 +350,62 @@ Decompose bloated host layer files to maintain strict modularity, eliminate `as 
 - `grep -rn "as any" src/runner/bridge/`: 0 results.
 - `bb plugin reload provider-pi-durable`: Plugin reloaded cleanly to v0.2.7.
 
+---
+
+## Cycle 63: Brain-Icon Collapsible Thinking & Plugin Settings (2026-10-07)
+
+**Release:** `v0.2.8`  
+**Governing Standard:** `arch-rules.md` (AP-010 – AP-071)  
+**Prior Cycle:** Cycle 62 (`v0.2.7`, commit `85feaba`)  
+**Plan Reference:** `docs/superpowers/plans/2026-10-07-arch-improvement-cycle-63-collapsible-thinking-and-settings.md`
+
+### 1. Scope and Objective
+
+Bring reasoning/thinking timeline presentation to full parity with native BB provider UX:
+- Emit `item.open` for reasoning channels with canonical `REASONING_PRESENTATION` (`{ label: { pending: "Thinking", completed: "Thought" }, icon: { glyph: "Brain" } }`), making thoughts cleanly collapsible in the timeline.
+- Real-time streaming of tokens to `item.textDelta` on `channel: "reasoningText"` and channel close on `thinking_end` via `item.textClose`.
+- Declarative plugin settings (`bb.settings.define`): `openThinkingByDefault` (default: `true`) and `hideThinking` (default: `false`, suppresses thoughts from timeline via `suppress: true`).
+- Plumb `providerOptions` through `deriveProviderOptions`, `SessionOptions`, `DeltaTranslatorContext`, and `DeltaTranslator`.
+
+### 2. Changes Made
+
+- **Slice 1: Plugin Settings in `server.ts` & Provider Options:**
+  - Added declarative settings schema with `bb.settings.define`: `openThinkingByDefault` (boolean, default: true) and `hideThinking` (boolean, default: false).
+  - Implemented `deriveProviderOptions(ctx)` in `bb.providers.register` returning `{ openThinkingByDefault, hideThinking }`.
+- **Slice 2: Host Context & Plumbing:**
+  - Added `providerOptions?: Record<string, unknown>` to `SessionOptions` and `DeltaTranslatorContext` in `src/host/types.ts` and `src/host/delta-translator.ts`.
+  - Updated `src/host/bridge-router.ts` and `src/host/session-registry.ts` to capture and pass `providerOptions` upon session creation and steer updates.
+  - Forwarded `this.options.providerOptions` into `this.translator.translate(event, ctx)` in `src/host/session.ts`.
+- **Slice 3: Brain-Icon Reasoning Presentation:**
+  - In `src/host/message-delta-translator.ts`, exported canonical `REASONING_PRESENTATION`.
+  - Added `openThinkingChannels?: Set<string>` to `MessageTranslationState` to track active reasoning channels.
+  - Emitted `item.open` with `REASONING_PRESENTATION` and conditional `suppress: true` on `thinking_start` or first `thinking_delta`.
+  - Emitted `item.textDelta` on reasoning deltas and `item.textClose` on `thinking_end`.
+  - In `src/host/delta-translator.ts`, forwarded `ctx.providerOptions` into `translateMessageUpdate`.
+- **Slice 4: Non-Trivial Test Suite (AP-013, AP-028):**
+  - Created `tests/thinking-presentation.test.ts` with 5 non-trivial test assertions verifying presentation open, delta streaming, single emission per channel, closing, hiding via suppress, and server setting mappings.
+- **AP-019 (Modularity & File Limits):**
+  - Verified all `.ts` files in `src/host/`, `src/runner/`, and `server.ts` strictly conform to AP-019 (< 250 lines, max 194 lines).
+
+### 3. Verification Evidence
+
+- `npm test`: **59 / 59 passing assertions (0 failed, 0 skipped)** across 7 suites.
+  - `tests/bb-event-adapter.test.ts`: 2 passed
+  - `tests/bridge-error-handling.test.ts`: 6 passed
+  - `tests/compaction-settings.test.ts`: 3 passed
+  - `tests/context-window-usage.test.ts`: 6 passed
+  - `tests/cwd-isolation.test.ts`: 9 passed
+  - `tests/extension-bridge.test.ts`: 6 passed
+  - `tests/prompt-adapter.test.ts`: 5 passed
+  - `tests/runner-discovery.test.ts`: 8 passed
+  - `tests/startup-readiness.test.ts`: 6 passed
+  - `tests/thinking-presentation.test.ts`: 5 passed
+  - `tests/tool-delta-translator.test.ts`: 3 passed
+- `node scripts/build-runner.mjs && bb plugin build`: Clean build of runner (`dist/runner/index.js`) and plugin bundles (`dist/server.js`, `dist/host.js`).
+- `wc -l src/host/*.ts src/runner/*.ts src/runner/**/*.ts server.ts`: All files strictly under 200 lines.
+- `bb plugin reload provider-pi-durable`: Plugin reloaded cleanly to v0.2.8.
+
+
 
 
 
