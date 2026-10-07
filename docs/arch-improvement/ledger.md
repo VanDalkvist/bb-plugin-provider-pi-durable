@@ -609,6 +609,72 @@ Resolve findings F-65-1, F-65-2, and F-65-3:
 - **Residual Risk:**
   - None. Wire protocol backwards compatible; host delta translator preserves full Zod compliance with host BB IDE.
 
+---
+
+## Cycle 68: Checkpoint Extraction, Native Event Stream & turn.boundary Parity (2026-10-07)
+
+**Goal:** Resolve divergences D-11 (Missing `providerCheckpointId` in `turn.boundary`), D-10 (Dropped `snapshot` event on stream attachment), and D-3 (Dropped `auto_retry` events), guaranteeing full message editability and point-in-time rewind parity in Beyond Boundaries IDE core.  
+**Governing Standard:** `arch-rules.md` (AP-010 – AP-071), `arch-improvement-review`, `arch-rules-implementation-review`  
+**Plan Reference:** `docs/superpowers/plans/2026-10-07-arch-improvement-cycle-68-checkpoint-extraction-and-event-stream.md`  
+
+### 1. Triaged Findings & Dispositions
+
+| ID | Issue / Finding | Severity | Rule | Disposition | Root Cause & Resolution |
+|---|---|---|---|---|---|
+| **F-68-1** | Missing Checkpoint in `turn.boundary` (D-11) | **P1** | AP-013, AP-026 | `fix-now` | In BB IDE core (`start-server.js`), editing earlier turns requires `precedingCompletion.providerCheckpointId`. Without it, BB throws HTTP 409 Conflict: "This earlier provider turn has no editable history checkpoint". In `@earendil-works/pi-durable`, the conversation tail entry ID represents this checkpoint. **Fix:** Extracted tail entry ID in `BBEventAdapter` on `turn_end` and `run_end`, emitted `providerCheckpointId` over the wire, and attached `providerCheckpointId` to `turn.boundary` delta in `message-delta-translator.ts`. |
+| **F-68-2** | Dropped `snapshot` Event on Stream Connect (D-10) | **P1** | AP-013, AP-026 | `fix-now` | When `watchEvents` connects or recovers after backlog, it emits a `snapshot` event containing current entries. `BBEventAdapter` ignored `snapshot`, losing the prime checkpoint ID before turn ends. **Fix:** Added `case "snapshot"` handler in `BBEventAdapter` to inspect both `event.entries` and `event.view.conversation.entries` and initialize `lastCheckpointId`. |
+| **F-68-3** | Dropped Auto-Retry Wire Events (D-3) | **P2** | AP-026 | `fix-now` | When Pi Durable executes retry backoff on transient provider failures, it emits `auto_retry_start` and `auto_retry_end`. `BBEventAdapter` dropped these native events. **Fix:** Extended `contracts.ts` with `BBAutoRetryStartEvent` and `BBAutoRetryEndEvent`, forwarded in `BBEventAdapter`, and added explicit no-op handling in `delta-translator.ts`. |
+| **F-68-4** | File Size Limit Guardrail (AP-019) in `bb-event-adapter.ts` | **P2** | AP-019 | `fix-now` | Adding checkpoint tracking and retry handlers brought `bb-event-adapter.ts` close to the 250-line hard limit. **Fix:** Modularized tool result and execution event builders into `src/runner/bridge/tool-result-extractor.ts` (95 lines). `bb-event-adapter.ts` maintained at 232 lines (< 250 limit). |
+
+### 2. Implementation Changes
+
+- **Slice 1: Protocol Contracts Update (`src/runner/bridge/contracts.ts` & `src/host/types.ts`):**
+  - Extended `BBTurnEndEvent` with `providerCheckpointId?: string;`.
+  - Added `BBAutoRetryStartEvent` (`attempt`, `at?`, `errorMessage?`) and `BBAutoRetryEndEvent` (`attempt`, `success?`).
+  - Added auto-retry events to `BBWireEvent` union.
+  - Extended host `RunnerEvent` with `providerCheckpointId?: string;`.
+- **Slice 2: Checkpoint Tracking & Native Event Translation (`src/runner/bridge/bb-event-adapter.ts` & `tool-result-extractor.ts`):**
+  - Added `private lastCheckpointId?: string;` field.
+  - Added `case "snapshot"`: extracts tail entry ID from `event.view.conversation.entries`, `event.entries`, or `current.conversation.entries`.
+  - In `case "turn_end"` and `case "run_end"`: extracts tail entry ID from `current.conversation.entries` and forwards `providerCheckpointId`.
+  - Handled `case "auto_retry_start"` and `case "auto_retry_end"`.
+  - Refactored tool execution logic into `tool-result-extractor.ts` to strictly uphold AP-019.
+- **Slice 3: Host `turn.boundary` Delta Attachment (`src/host/message-delta-translator.ts` & `delta-translator.ts`):**
+  - In `translateAgentEnd`, attached `providerCheckpointId` to `turn.boundary` delta when present.
+  - Added explicit handling in `DeltaTranslator` for `auto_retry_start` and `auto_retry_end`.
+- **Slice 4: Non-Trivial Test Suite (`tests/checkpoints-and-snapshot.test.ts`):**
+  - Added 5 deterministic unit and integration tests covering:
+    1. Tail entry extraction for `turn_end` and `agent_end`.
+    2. `snapshot` event checkpoint initialization across entry array and view formats.
+    3. `auto_retry_start` and `auto_retry_end` wire emissions.
+    4. Attachment of `providerCheckpointId` to `turn.boundary` and strict validation against `@get-bb/plugin-sdk/provider-bridge` `threadDeltaSchema`.
+    5. End-to-end integration via `DeltaTranslator`.
+- **Slice 5: Verification, Release & Version Bump:**
+  - Bumped `package.json` to `0.2.13`.
+  - Verified `npm test`: **75 / 75 passing assertions (0 failed, 0 skipped)** across 6 suites.
+  - Verified AP-019 line limits across all files.
+  - Built bundles via `npm run build`.
+
+### 3. Verification Evidence & Architecture Verification
+
+- `npm test`: **75 / 75 passing assertions (0 failed, 0 skipped)**.
+- `wc -l src/**/*.ts`: All source files under 235 lines (strictly < 250, AP-019).
+- `npm run build`: Built `dist/runner/index.js`, `dist/host.js`, and `dist/server.js` cleanly.
+
+#### Architecture Verification
+- **Passed:**
+  - `AP-010`: Ports & Adapters separation preserved between native Pi Durable runtime, wire bridge, and host IDE translator.
+  - `AP-012`: Fail-fast checkpoint extraction and explicit retry contract.
+  - `AP-013`: Preserved user data integrity for rewindable edit-message support without fallback fakes.
+  - `AP-018`: Single responsibility per file; clean semantic splitting.
+  - `AP-019`: All source files strictly < 250 lines (`bb-event-adapter.ts` = 232, `contracts.ts` = 202, `tool-result-extractor.ts` = 95).
+  - `AP-026`: DTO boundaries and contract schemas verified with Zod `threadDeltaSchema`.
+  - `AP-028`: Deterministic testing strategy with genuine assertions.
+  - `AP-029`: Strict TypeScript typing with zero `as any` casts introduced.
+- **Residual Risk:**
+  - None. Full backward compatibility maintained when checkpoints are absent; seamless compatibility with BB IDE history checkpoint resolver.
+
+
 
 
 

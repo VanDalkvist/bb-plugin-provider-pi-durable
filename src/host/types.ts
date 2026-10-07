@@ -56,6 +56,7 @@ export interface SessionOptions {
 
 export interface RunnerEvent {
 	type: string;
+	providerCheckpointId?: string;
 	[key: string]: unknown;
 }
 

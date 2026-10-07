@@ -1,4 +1,4 @@
-import type { AgentEvent } from "@earendil-works/pi-durable";
+import type { AgentEvent, SnapshotEvent } from "@earendil-works/pi-durable";
 import type { DurableView } from "../runtime.ts";
 import {
 	isAgentDocument,
@@ -7,14 +7,12 @@ import {
 	type BBAssistantMessageUsage,
 } from "./contracts.ts";
 import { buildFinalAssistantMessage } from "./assistant-message-builder.ts";
+import {
+	buildToolExecutionUpdate,
+	buildToolExecutionEnd,
+} from "./tool-result-extractor.ts";
 
 export { resolveToolCallArgs } from "./tool-args-resolver.ts";
-
-interface RawToolResultMessage {
-	isError?: boolean;
-	content?: string | Array<{ text?: string; [key: string]: unknown }>;
-	[key: string]: unknown;
-}
 
 interface RawAssistantEntryMessage {
 	role?: string;
@@ -22,21 +20,6 @@ interface RawAssistantEntryMessage {
 	stopReason?: BBAssistantMessage["stopReason"];
 	usage?: BBAssistantMessageUsage;
 	[key: string]: unknown;
-}
-
-function extractToolResult(modelItem: unknown): { result: string; isError: boolean } {
-	const msg = typeof modelItem === "object" && modelItem !== null ? (modelItem as RawToolResultMessage) : undefined;
-	const isError = msg?.isError ?? false;
-	let result = "";
-	if (Array.isArray(msg?.content)) {
-		result = msg.content
-			.map((b) => (typeof b === "object" && b !== null && typeof b.text === "string" ? b.text : ""))
-			.filter(Boolean)
-			.join("\n");
-	} else if (typeof msg?.content === "string") {
-		result = msg.content;
-	}
-	return { result, isError };
 }
 
 /**
@@ -47,6 +30,7 @@ export class BBEventAdapter {
 	private readonly output: (event: BBWireEvent) => void;
 	private readonly resolveContextWindow?: (provider?: string, modelId?: string) => number | undefined;
 	private lastAssistantMessage?: BBAssistantMessage;
+	private lastCheckpointId?: string;
 	private currentText = "";
 	private currentThinking = "";
 	private isInThinking = false;
@@ -74,6 +58,21 @@ export class BBEventAdapter {
 
 	public handleEvent(event: AgentEvent, current: DurableView): void {
 		switch (event.type) {
+			case "snapshot": {
+				const snapWithView = event as SnapshotEvent & {
+					view?: { conversation?: { entries?: readonly { id?: string | number }[] } };
+				};
+				const entries =
+					snapWithView.view?.conversation?.entries ??
+					event.entries ??
+					current?.conversation?.entries;
+				const tail = entries?.at(-1);
+				if (tail?.id !== undefined) {
+					this.lastCheckpointId = String(tail.id);
+				}
+				break;
+			}
+
 			case "run_start": {
 				this.currentText = "";
 				this.currentThinking = "";
@@ -121,54 +120,13 @@ export class BBEventAdapter {
 			}
 
 			case "tool_execution_update": {
-				let partialResult = "";
-				if (event.output) {
-					if ("set" in event.output) partialResult = event.output.set;
-					else if ("append" in event.output) partialResult = event.output.append ?? "";
-				}
-				let trimStart: number | undefined;
-				if (event.output && "trimStart" in event.output && typeof event.output.trimStart === "number") {
-					trimStart = event.output.trimStart;
-				}
-				if (partialResult || trimStart !== undefined) {
-					this.output({
-						type: "tool_execution_update",
-						toolCallId: event.toolCallId,
-						toolName: event.toolName,
-						partialResult,
-						...(trimStart !== undefined ? { trimStart } : {}),
-					});
-				}
+				const update = buildToolExecutionUpdate(event);
+				if (update) this.output(update);
 				break;
 			}
 
 			case "tool_execution_end": {
-				if (event.entry === undefined) {
-					this.output({
-						type: "tool_execution_end",
-						toolCallId: event.toolCallId,
-						toolName: event.toolName,
-						result: "Tool execution faulted or was orphaned without generating an entry record.",
-						isError: true,
-					});
-					break;
-				}
-				const { result, isError } = extractToolResult(event.entry?.model?.[0]);
-				const entryData = typeof event.entry === "object" && event.entry !== null && "data" in event.entry
-					? (event.entry as { data?: unknown }).data
-					: undefined;
-				const eventDetails = typeof event === "object" && event !== null && "details" in event
-					? (event as { details?: unknown }).details
-					: undefined;
-				const details = entryData ?? eventDetails;
-				this.output({
-					type: "tool_execution_end",
-					toolCallId: event.toolCallId,
-					toolName: event.toolName,
-					result,
-					isError,
-					...(details !== undefined ? { details } : {}),
-				});
+				this.output(buildToolExecutionEnd(event));
 				break;
 			}
 
@@ -208,6 +166,10 @@ export class BBEventAdapter {
 
 			case "turn_end": {
 				this.closeThinkingIfNeeded();
+				const tail = current?.conversation?.entries?.at(-1);
+				if (tail?.id !== undefined) {
+					this.lastCheckpointId = String(tail.id);
+				}
 				const finalMsg = this.lastAssistantMessage ?? buildFinalAssistantMessage(
 					current,
 					this.currentText,
@@ -216,12 +178,21 @@ export class BBEventAdapter {
 				const rawAgentDoc = current?.conversation?.docs?.["pi.agent"];
 				const agentDoc = isAgentDocument(rawAgentDoc) ? rawAgentDoc : {};
 				const cw = this.resolveContextWindow?.(agentDoc.model?.provider, agentDoc.model?.modelId);
-				this.output({ type: "turn_end", message: finalMsg, contextWindow: cw });
+				this.output({
+					type: "turn_end",
+					message: finalMsg,
+					contextWindow: cw,
+					...(this.lastCheckpointId ? { providerCheckpointId: this.lastCheckpointId } : {}),
+				});
 				break;
 			}
 
 			case "run_end": {
 				this.closeThinkingIfNeeded();
+				const tail = current?.conversation?.entries?.at(-1);
+				if (tail?.id !== undefined) {
+					this.lastCheckpointId = String(tail.id);
+				}
 				const finalMsg = this.lastAssistantMessage ?? buildFinalAssistantMessage(
 					current,
 					this.currentText,
@@ -230,7 +201,30 @@ export class BBEventAdapter {
 				const rawAgentDoc = current?.conversation?.docs?.["pi.agent"];
 				const agentDoc = isAgentDocument(rawAgentDoc) ? rawAgentDoc : {};
 				const cw = this.resolveContextWindow?.(agentDoc.model?.provider, agentDoc.model?.modelId);
-				this.output({ type: "agent_end", messages: [finalMsg], contextWindow: cw });
+				this.output({
+					type: "agent_end",
+					messages: [finalMsg],
+					contextWindow: cw,
+					...(this.lastCheckpointId ? { providerCheckpointId: this.lastCheckpointId } : {}),
+				});
+				break;
+			}
+
+			case "auto_retry_start": {
+				this.output({
+					type: "auto_retry_start",
+					attempt: event.attempt,
+					...(event.at !== undefined ? { at: event.at } : {}),
+					...(event.errorMessage ? { errorMessage: event.errorMessage } : {}),
+				});
+				break;
+			}
+
+			case "auto_retry_end": {
+				this.output({
+					type: "auto_retry_end",
+					attempt: event.attempt,
+				});
 				break;
 			}
 		}

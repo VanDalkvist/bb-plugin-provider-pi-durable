@@ -115,6 +115,8 @@ export class DeltaTranslator {
 				break;
 			}
 
+			case "auto_retry_start":
+			case "auto_retry_end":
 			case "turn_end":
 				break;
 

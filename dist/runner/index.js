@@ -1054,7 +1054,7 @@ function buildFinalAssistantMessage(current, lastGenerationText, lastThinkingTex
   };
 }
 
-// src/runner/bridge/bb-event-adapter.ts
+// src/runner/bridge/tool-result-extractor.ts
 function extractToolResult(modelItem) {
   const msg = typeof modelItem === "object" && modelItem !== null ? modelItem : void 0;
   const isError = msg?.isError ?? false;
@@ -1066,10 +1066,56 @@ function extractToolResult(modelItem) {
   }
   return { result, isError };
 }
+function buildToolExecutionUpdate(event) {
+  let partialResult = "";
+  if (event.output) {
+    if ("set" in event.output) partialResult = event.output.set;
+    else if ("append" in event.output) partialResult = event.output.append ?? "";
+  }
+  let trimStart;
+  if (event.output && "trimStart" in event.output && typeof event.output.trimStart === "number") {
+    trimStart = event.output.trimStart;
+  }
+  if (partialResult || trimStart !== void 0) {
+    return {
+      type: "tool_execution_update",
+      toolCallId: event.toolCallId,
+      toolName: event.toolName,
+      partialResult,
+      ...trimStart !== void 0 ? { trimStart } : {}
+    };
+  }
+  return void 0;
+}
+function buildToolExecutionEnd(event) {
+  if (event.entry === void 0) {
+    return {
+      type: "tool_execution_end",
+      toolCallId: event.toolCallId,
+      toolName: event.toolName,
+      result: "Tool execution faulted or was orphaned without generating an entry record.",
+      isError: true
+    };
+  }
+  const { result, isError } = extractToolResult(event.entry?.model?.[0]);
+  const entryData = typeof event.entry === "object" && event.entry !== null && "data" in event.entry ? event.entry.data : void 0;
+  const details = entryData ?? event.details;
+  return {
+    type: "tool_execution_end",
+    toolCallId: event.toolCallId,
+    toolName: event.toolName,
+    result,
+    isError,
+    ...details !== void 0 ? { details } : {}
+  };
+}
+
+// src/runner/bridge/bb-event-adapter.ts
 var BBEventAdapter = class {
   output;
   resolveContextWindow;
   lastAssistantMessage;
+  lastCheckpointId;
   currentText = "";
   currentThinking = "";
   isInThinking = false;
@@ -1091,6 +1137,15 @@ var BBEventAdapter = class {
   }
   handleEvent(event, current) {
     switch (event.type) {
+      case "snapshot": {
+        const snapWithView = event;
+        const entries = snapWithView.view?.conversation?.entries ?? event.entries ?? current?.conversation?.entries;
+        const tail = entries?.at(-1);
+        if (tail?.id !== void 0) {
+          this.lastCheckpointId = String(tail.id);
+        }
+        break;
+      }
       case "run_start": {
         this.currentText = "";
         this.currentThinking = "";
@@ -1134,49 +1189,12 @@ var BBEventAdapter = class {
         break;
       }
       case "tool_execution_update": {
-        let partialResult = "";
-        if (event.output) {
-          if ("set" in event.output) partialResult = event.output.set;
-          else if ("append" in event.output) partialResult = event.output.append ?? "";
-        }
-        let trimStart;
-        if (event.output && "trimStart" in event.output && typeof event.output.trimStart === "number") {
-          trimStart = event.output.trimStart;
-        }
-        if (partialResult || trimStart !== void 0) {
-          this.output({
-            type: "tool_execution_update",
-            toolCallId: event.toolCallId,
-            toolName: event.toolName,
-            partialResult,
-            ...trimStart !== void 0 ? { trimStart } : {}
-          });
-        }
+        const update = buildToolExecutionUpdate(event);
+        if (update) this.output(update);
         break;
       }
       case "tool_execution_end": {
-        if (event.entry === void 0) {
-          this.output({
-            type: "tool_execution_end",
-            toolCallId: event.toolCallId,
-            toolName: event.toolName,
-            result: "Tool execution faulted or was orphaned without generating an entry record.",
-            isError: true
-          });
-          break;
-        }
-        const { result, isError } = extractToolResult(event.entry?.model?.[0]);
-        const entryData = typeof event.entry === "object" && event.entry !== null && "data" in event.entry ? event.entry.data : void 0;
-        const eventDetails = typeof event === "object" && event !== null && "details" in event ? event.details : void 0;
-        const details = entryData ?? eventDetails;
-        this.output({
-          type: "tool_execution_end",
-          toolCallId: event.toolCallId,
-          toolName: event.toolName,
-          result,
-          isError,
-          ...details !== void 0 ? { details } : {}
-        });
+        this.output(buildToolExecutionEnd(event));
         break;
       }
       case "message_end": {
@@ -1211,6 +1229,10 @@ var BBEventAdapter = class {
       }
       case "turn_end": {
         this.closeThinkingIfNeeded();
+        const tail = current?.conversation?.entries?.at(-1);
+        if (tail?.id !== void 0) {
+          this.lastCheckpointId = String(tail.id);
+        }
         const finalMsg = this.lastAssistantMessage ?? buildFinalAssistantMessage(
           current,
           this.currentText,
@@ -1219,11 +1241,20 @@ var BBEventAdapter = class {
         const rawAgentDoc = current?.conversation?.docs?.["pi.agent"];
         const agentDoc = isAgentDocument(rawAgentDoc) ? rawAgentDoc : {};
         const cw = this.resolveContextWindow?.(agentDoc.model?.provider, agentDoc.model?.modelId);
-        this.output({ type: "turn_end", message: finalMsg, contextWindow: cw });
+        this.output({
+          type: "turn_end",
+          message: finalMsg,
+          contextWindow: cw,
+          ...this.lastCheckpointId ? { providerCheckpointId: this.lastCheckpointId } : {}
+        });
         break;
       }
       case "run_end": {
         this.closeThinkingIfNeeded();
+        const tail = current?.conversation?.entries?.at(-1);
+        if (tail?.id !== void 0) {
+          this.lastCheckpointId = String(tail.id);
+        }
         const finalMsg = this.lastAssistantMessage ?? buildFinalAssistantMessage(
           current,
           this.currentText,
@@ -1232,7 +1263,28 @@ var BBEventAdapter = class {
         const rawAgentDoc = current?.conversation?.docs?.["pi.agent"];
         const agentDoc = isAgentDocument(rawAgentDoc) ? rawAgentDoc : {};
         const cw = this.resolveContextWindow?.(agentDoc.model?.provider, agentDoc.model?.modelId);
-        this.output({ type: "agent_end", messages: [finalMsg], contextWindow: cw });
+        this.output({
+          type: "agent_end",
+          messages: [finalMsg],
+          contextWindow: cw,
+          ...this.lastCheckpointId ? { providerCheckpointId: this.lastCheckpointId } : {}
+        });
+        break;
+      }
+      case "auto_retry_start": {
+        this.output({
+          type: "auto_retry_start",
+          attempt: event.attempt,
+          ...event.at !== void 0 ? { at: event.at } : {},
+          ...event.errorMessage ? { errorMessage: event.errorMessage } : {}
+        });
+        break;
+      }
+      case "auto_retry_end": {
+        this.output({
+          type: "auto_retry_end",
+          attempt: event.attempt
+        });
         break;
       }
     }

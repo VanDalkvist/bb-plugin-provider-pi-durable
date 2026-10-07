@@ -72,6 +72,7 @@ export interface BBTurnEndEvent {
 	type: "turn_end";
 	message?: BBAssistantMessage;
 	contextWindow?: number;
+	providerCheckpointId?: string;
 }
 
 export interface BBMessageEndEvent {
@@ -97,6 +98,19 @@ export interface BBCompactionEndEvent {
 	aborted: boolean;
 }
 
+export interface BBAutoRetryStartEvent {
+	type: "auto_retry_start";
+	attempt: number;
+	at?: number;
+	errorMessage?: string;
+}
+
+export interface BBAutoRetryEndEvent {
+	type: "auto_retry_end";
+	attempt: number;
+	success?: boolean;
+}
+
 export interface BBSessionStatsData {
 	contextUsage: { tokens: number; contextWindow: number };
 }
@@ -112,7 +126,9 @@ export type BBWireEvent =
 	| BBTurnEndEvent
 	| BBAgentEndEvent
 	| BBCompactionStartEvent
-	| BBCompactionEndEvent;
+	| BBCompactionEndEvent
+	| BBAutoRetryStartEvent
+	| BBAutoRetryEndEvent;
 
 // Durable SQLite Document Schemas & Type Guards (AP-026, AP-029)
 

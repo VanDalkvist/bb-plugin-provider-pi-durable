@@ -162,6 +162,7 @@ export function translateAgentEnd(
 			kind: "turn.boundary",
 			status: "completed",
 			claimIfIdle: true,
+			...(event.providerCheckpointId ? { providerCheckpointId: event.providerCheckpointId } : {}),
 		});
 	}
 
