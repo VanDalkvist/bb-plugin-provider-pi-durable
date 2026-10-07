@@ -4,7 +4,7 @@ import {
 	SettingsManager,
 	resolveModelScopeWithDiagnostics,
 } from "@earendil-works/pi-coding-agent";
-import { getAgentDir } from "./sessions.ts";
+import { getAgentDir } from "./upstream/session-storage.ts";
 import { findInitialAgentModel, type ModelThinkingLevel } from "./harness-setup.ts";
 import type { CliArgs } from "./cli-args.ts";
 

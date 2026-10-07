@@ -9,7 +9,7 @@ import type {
 } from "@earendil-works/pi-durable";
 import { resolveModelScopeWithDiagnostics } from "@earendil-works/pi-coding-agent";
 import { ExecutionEnvs, findInitialAgentModel } from "./harness-setup.ts";
-import { selectSession } from "./sessions.ts";
+import { selectSession } from "./upstream/session-storage.ts";
 import {
 	agentOf,
 	firstInput,
@@ -28,6 +28,18 @@ import { loadHarnessEnvironment } from "./runtime-loader.ts";
 export * from "./runtime-types.ts";
 export * from "./runtime-controller.ts";
 
+async function loadSummaries(harness: Harness, rootId: ConversationId): Promise<ConversationSummary[]> {
+	const label = (id: ConversationId): string => (id === rootId ? "main" : `subagent ${id}`);
+	const summaries: ConversationSummary[] = [];
+	let cursor: Cursor | undefined;
+	do {
+		const page = await harness.commit((tx) => tx.scanConversations({}, 256, cursor), runtimeContext);
+		for (const { id } of page.items) summaries.push({ id, label: label(id), ...(await firstInput(harness, id)) });
+		cursor = page.next;
+	} while (cursor !== undefined);
+	return summaries;
+}
+
 export async function openDurable(options: OpenDurableOptions = {}): Promise<OpenDurableResult> {
 	const location = await selectSession(options.cwd ?? process.cwd(), options.continueSession ?? false, options.session);
 	const envs = new ExecutionEnvs(location.cwd);
@@ -39,55 +51,30 @@ export async function openDurable(options: OpenDurableOptions = {}): Promise<Ope
 		harness = envState.harness;
 
 		const root = await harness.root(runtimeContext, {
-			agent: {
-				cwd: location.cwd,
-				...(envState.initialModelRef === undefined ? {} : { model: envState.initialModelRef }),
-			},
+			agent: { cwd: location.cwd, ...(envState.initialModelRef ? { model: envState.initialModelRef } : {}) },
 		});
 
 		if (!location.created) {
 			const rootAgent = await root.agent(runtimeContext);
-			if (rootAgent.model) {
-				envState.setActiveModelRef(rootAgent.model);
+			if (rootAgent.model) envState.setActiveModelRef(rootAgent.model);
+			if (options.cli !== undefined) {
+				const cli = await findInitialAgentModel(settingsManager, modelRuntime, options.cli);
+				if (cli.model) {
+					envState.setActiveModelRef(cli.model);
+					await root.configure({ model: cli.model, thinkingLevel: cli.thinkingLevel }, runtimeContext);
+				}
 			}
 		}
 
-		if (!location.created && options.cli !== undefined) {
-			const cliModel = await findInitialAgentModel(settingsManager, modelRuntime, options.cli);
-			if (cliModel.model !== undefined) {
-				envState.setActiveModelRef(cliModel.model);
-				await root.configure({ model: cliModel.model, thinkingLevel: cliModel.thinkingLevel }, runtimeContext);
-			}
-		}
-
-		const label = (id: ConversationId): string => (id === root.id ? "main" : `subagent ${id}`);
-		const opened = harness;
-		const summaries: ConversationSummary[] = [];
-		let cursor: Cursor | undefined;
-		do {
-			const page = await opened.commit((tx) => tx.scanConversations({}, 256, cursor), runtimeContext);
-			for (const { id } of page.items) summaries.push({ id, label: label(id), ...(await firstInput(opened, id)) });
-			cursor = page.next;
-		} while (cursor !== undefined);
-
+		const summaries = await loadSummaries(harness, root.id);
 		let current: Conversation = root;
 		let conversation: AttachedReplicatedState<ConversationView> = await root.viewState(runtimeContext);
 
-		const enabledPatterns = settingsManager.getEnabledModels();
-		const scopedScope = enabledPatterns && enabledPatterns.length > 0
-			? await resolveModelScopeWithDiagnostics(enabledPatterns, modelRuntime)
-			: undefined;
-		const scopedModelList = scopedScope && scopedScope.scopedModels.length > 0
-			? scopedScope.scopedModels.map((sm) => sm.model)
-			: modelRuntime.getAvailableSnapshot();
-
+		const enabled = settingsManager.getEnabledModels();
+		const scoped = enabled?.length ? await resolveModelScopeWithDiagnostics(enabled, modelRuntime) : undefined;
+		const scopedList = scoped?.scopedModels?.length ? scoped.scopedModels.map((sm) => sm.model) : modelRuntime.getAvailableSnapshot();
 		const models = (): ModelSummary[] =>
-			scopedModelList.map((model) => ({
-				provider: model.provider,
-				modelId: model.id,
-				name: model.name,
-				contextWindow: model.contextWindow,
-			}));
+			scopedList.map((m) => ({ provider: m.provider, modelId: m.id, name: m.name, contextWindow: m.contextWindow }));
 
 		let state: DurableView = {
 			session: { id: location.id, directory: location.directory, cwd: location.cwd },
@@ -113,35 +100,28 @@ export async function openDurable(options: OpenDurableOptions = {}): Promise<Ope
 		const notice = (level: Notice["level"], message: string): void => {
 			update({ notices: [...state.notices, { id: nextNotice++, level, message }].slice(-20) });
 		};
-		const fail = (error: unknown): void => notice("error", error instanceof Error ? error.message : String(error));
-		for (const error of envState.pendingReports) {
-			notice("warning", error instanceof Error ? error.message : String(error));
-		}
+		const fail = (err: unknown): void => notice("error", err instanceof Error ? err.message : String(err));
+		for (const err of envState.pendingReports) notice("warning", err instanceof Error ? err.message : String(err));
 
-		let unsubscribeConversation = conversation.subscribe((value) => update({ conversation: value }));
-		const unsubscribeCommits = harness.subscribeCommits((publication) => {
-			let conversations = state.conversations;
-			for (const change of publication.changes) {
-				if (change.type === "conversation") {
-					conversations = [...conversations, { id: change.value.id, label: label(change.value.id) }];
-				} else if (change.type === "entry" && change.value.kind === "pi.user") {
-					const id = change.value.conversationId;
-					conversations = conversations.map((summary) =>
-						summary.id === id && summary.title === undefined ? { ...summary, ...titleOf(change.value) } : summary,
-					);
+		let unsubscribeConversation = conversation.subscribe((val) => update({ conversation: val }));
+		const unsubscribeCommits = harness.subscribeCommits((pub) => {
+			let convs = state.conversations;
+			for (const ch of pub.changes) {
+				if (ch.type === "conversation") {
+					convs = [...convs, { id: ch.value.id, label: ch.value.id === root.id ? "main" : `subagent ${ch.value.id}` }];
+				} else if (ch.type === "entry" && ch.value.kind === "pi.user") {
+					const id = ch.value.conversationId;
+					convs = convs.map((s) => s.id === id && !s.title ? { ...s, ...titleOf(ch.value) } : s);
 				}
 			}
-			if (conversations !== state.conversations) update({ conversations });
+			if (convs !== state.conversations) update({ conversations: convs });
 		});
 
 		let tasks: AttachedReplicatedState<TaskGraph> | undefined;
 		let unsubscribeTasks = (): void => {};
-		const closeTasks = (): void => {
-			unsubscribeTasks();
-			tasks?.dispose();
-			tasks = undefined;
-		};
+		const closeTasks = (): void => { unsubscribeTasks(); tasks?.dispose(); tasks = undefined; };
 
+		const opened = harness;
 		const controller = createDurableController({
 			getCurrent: () => current,
 			setCurrent: (c) => { current = c; },
@@ -163,11 +143,11 @@ export async function openDurable(options: OpenDurableOptions = {}): Promise<Ope
 		});
 
 		const saved = agentOf(state.conversation).model;
-		if (saved === undefined) notice("warning", "No model configured; select one with /model.");
-		else if (modelRuntime.getModel(saved.provider, saved.modelId) === undefined) {
+		if (!saved) notice("warning", "No model configured; select one with /model.");
+		else if (!modelRuntime.getModel(saved.provider, saved.modelId)) {
 			notice("warning", `Saved model is unavailable: ${saved.provider}/${saved.modelId}`);
 		}
-		if (envState.fallbackMessage !== undefined) notice("info", envState.fallbackMessage);
+		if (envState.fallbackMessage) notice("info", envState.fallbackMessage);
 
 		await controller.toggleTasks();
 		harness.resume();
@@ -176,17 +156,14 @@ export async function openDurable(options: OpenDurableOptions = {}): Promise<Ope
 		return {
 			view: {
 				current: () => state,
-				subscribe: (listener) => {
-					listeners.add(listener);
-					return () => listeners.delete(listener);
-				},
+				subscribe: (listener) => { listeners.add(listener); return () => listeners.delete(listener); },
 			},
 			controller,
 			settings: settingsManager,
 			modelRuntime,
 			harness,
 			close() {
-				closing ??= (async () => {
+				return closing ??= (async () => {
 					unsubscribeConversation();
 					unsubscribeCommits();
 					conversation.dispose();
@@ -199,19 +176,12 @@ export async function openDurable(options: OpenDurableOptions = {}): Promise<Ope
 						await location.release();
 					}
 				})();
-				return closing;
 			},
 		};
 	} catch (error) {
-		await envState?.cleanup?.().catch((err) => {
-			console.warn("[DurableRuntime] Cleanup extension runner failed:", err);
-		});
-		await harness?.close(runtimeContext).catch((err) => {
-			console.warn("[DurableRuntime] Cleanup harness close failed:", err);
-		});
-		await location.release().catch((err) => {
-			console.warn("[DurableRuntime] Cleanup location release failed:", err);
-		});
+		await envState?.cleanup?.().catch((err) => console.warn("[DurableRuntime] Cleanup extension runner:", err));
+		await harness?.close(runtimeContext).catch((err) => console.warn("[DurableRuntime] Cleanup harness:", err));
+		await location.release().catch((err) => console.warn("[DurableRuntime] Cleanup location:", err));
 		throw error;
 	}
 }

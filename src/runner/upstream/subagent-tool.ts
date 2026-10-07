@@ -1,3 +1,11 @@
+/**
+ * Upstream Shim: Imported from @earendil-works/pi-coding-agent
+ * Source: packages/coding-agent/src/experimental/durable/subagent.ts
+ *
+ * Prototype foreground subagent tool for Durable SQLite Harness.
+ * Quarantined in upstream/ until packaged natively in @earendil-works/pi-durable.
+ */
+
 import type { Context } from "@earendil-works/chord";
 import { type AssistantMessage, Type } from "@earendil-works/pi-ai";
 import {

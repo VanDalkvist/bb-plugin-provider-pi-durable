@@ -2,6 +2,7 @@ import {
 	DefaultResourceLoader,
 	ModelRuntime,
 	SettingsManager,
+	type ExtensionRuntime,
 } from "@earendil-works/pi-coding-agent";
 import {
 	configureHarnessHttp,
@@ -10,15 +11,10 @@ import {
 	findInitialAgentModel,
 	type ExecutionEnvs,
 } from "./harness-setup.ts";
-import {
-	createStandardExtensionFactories,
-	setupExtensionRunner,
-	adaptExtensionTool,
-	installExtensionTools,
-	type NestedToolExecutor,
-} from "./extension-bridge.ts";
-import { getAgentDir, type SessionLocation } from "./sessions.ts";
-import { Subagent } from "./subagent.ts";
+import { createStandardExtensionFactories } from "./extension-bridge.ts";
+import { createNestedToolExecutor, mountExtensionBridge } from "./extension-mount.ts";
+import { getAgentDir, type SessionLocation } from "./upstream/session-storage.ts";
+import { Subagent } from "./upstream/subagent-tool.ts";
 import { Harness, type ModelRef } from "@earendil-works/pi-durable";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { type OpenDurableOptions, runtimeContext } from "./runtime-types.ts";
@@ -35,6 +31,18 @@ export interface LoadedHarnessEnvironment {
 	cleanup?: () => Promise<void>;
 }
 
+function registerPendingProviders(modelRuntime: ModelRuntime, runtime: ExtensionRuntime): void {
+	for (const { name, config } of runtime.pendingProviderRegistrations) {
+		try { modelRuntime.registerProvider(name, config); } catch { /* ignore duplicate */ }
+	}
+	for (const { provider } of runtime.pendingNativeProviderRegistrations) {
+		try { modelRuntime.registerNativeProvider(provider); } catch { /* ignore duplicate */ }
+	}
+	for (const { definition } of runtime.pendingVirtualModelRegistrations) {
+		try { modelRuntime.registerVirtualModel(definition); } catch { /* ignore duplicate */ }
+	}
+}
+
 export async function loadHarnessEnvironment(
 	location: SessionLocation,
 	options: OpenDurableOptions,
@@ -42,40 +50,19 @@ export async function loadHarnessEnvironment(
 ): Promise<LoadedHarnessEnvironment> {
 	const modelRuntime = await ModelRuntime.create();
 	const settingsManager = SettingsManager.create(location.cwd);
-	const agentDir = getAgentDir();
 	const resourceLoader = new DefaultResourceLoader({
 		cwd: location.cwd,
-		agentDir,
+		agentDir: getAgentDir(),
 		settingsManager,
 		extensionFactories: createStandardExtensionFactories(),
 	});
 	await resourceLoader.reload();
 	const extensionsResult = resourceLoader.getExtensions();
 
-	for (const { name, config } of extensionsResult.runtime.pendingProviderRegistrations) {
-		try {
-			modelRuntime.registerProvider(name, config);
-		} catch {
-			// intentionally ignored: provider registration may already exist or be non-critical
-		}
-	}
-	for (const { provider } of extensionsResult.runtime.pendingNativeProviderRegistrations) {
-		try {
-			modelRuntime.registerNativeProvider(provider);
-		} catch {
-			// intentionally ignored: native provider may already be registered
-		}
-	}
-	for (const { definition } of extensionsResult.runtime.pendingVirtualModelRegistrations) {
-		try {
-			modelRuntime.registerVirtualModel(definition);
-		} catch {
-			// intentionally ignored: virtual model may already be registered
-		}
-	}
-
+	registerPendingProviders(modelRuntime, extensionsResult.runtime);
 	configureHarnessHttp(settingsManager);
-	let activeModelRef: ModelRef | undefined = undefined;
+
+	let activeModelRef: ModelRef | undefined;
 	const getActiveModel = () => {
 		if (activeModelRef) return activeModelRef;
 		const p = settingsManager.getDefaultProvider();
@@ -84,112 +71,35 @@ export async function loadHarnessEnvironment(
 	};
 
 	const settings = createHarnessSettings(settingsManager, getActiveModel);
-	const registry = createCodingRegistry(settingsManager, location.cwd, options.prompt);
+	const registry = createCodingRegistry(settingsManager, location.cwd, {
+		...options.prompt,
+		resourceLoader,
+	});
 	registry.install(Subagent);
 
 	const pendingReports: unknown[] = [];
 	const report = (error: unknown) => pendingReports.push(error);
 
-	const executeToolFn: NestedToolExecutor = async (callerId, name, args) => {
-		const target = registry.snapshot().tools().find((t) => t.tool.name === name);
-		if (!target) {
-			return {
-				toolCall: { type: "toolCall", id: `${callerId}/nested`, name, arguments: args },
-				result: { content: [{ type: "text", text: `Tool ${name} not found` }], details: {} },
-				isError: true,
-			};
-		}
-		try {
-			const res = await target.tool.execute(
-				args as any,
-				{
-					callId: `${callerId}/nested`,
-					output: () => {},
-				} as any,
-				runtimeContext as any,
-			);
-			const rawContent = res.content;
-			const content = Array.isArray(rawContent)
-				? (rawContent as Array<{ type: "text"; text: string }>)
-				: [{ type: "text" as const, text: String(rawContent ?? "") }];
-			return {
-				toolCall: { type: "toolCall", id: `${callerId}/nested`, name, arguments: args },
-				result: { content, details: res.details },
-				isError: !!res.isError,
-			};
-		} catch (err: unknown) {
-			const message = err instanceof Error ? err.message : String(err);
-			return {
-				toolCall: { type: "toolCall", id: `${callerId}/nested`, name, arguments: args },
-				result: { content: [{ type: "text", text: message }], details: {} },
-				isError: true,
-			};
-		}
-	};
-
-	let extensionRunner: import("@earendil-works/pi-coding-agent").ExtensionRunner | undefined;
-	try {
-		const syncToolsToRegistry = () => {
-			if (!extensionRunner) return;
-			const createToolContext = (callId: string) => extensionRunner!.createToolContext(callId, undefined);
-			const registeredTools = extensionRunner.getAllRegisteredTools();
-			const adaptedTools = registeredTools.map((t) =>
-				adaptExtensionTool(t.definition, executeToolFn, createToolContext),
-			);
-			installExtensionTools(registry, adaptedTools);
-		};
-
-		const getCallableTools = () => {
-			return registry.snapshot().tools().map((t) => ({
-				name: t.tool.name,
-				description: (t.tool as any).description ?? "",
-				parameters: t.tool.parameters,
-			}));
-		};
-
-		extensionRunner = await setupExtensionRunner({
-			extensions: extensionsResult.extensions,
-			runtime: extensionsResult.runtime,
-			cwd: location.cwd,
-			modelRuntime,
-			executeToolFn,
-			getCallableTools,
-			onToolsChanged: syncToolsToRegistry,
-		});
-
-		syncToolsToRegistry();
-	} catch (error) {
-		report(error);
-	}
-
-	const cleanup = async () => {
-		if (extensionRunner) {
-			try {
-				await extensionRunner.emit({ type: "session_shutdown", reason: "shutdown" });
-			} catch (err) {
-				console.warn("[ExtensionBridge] Cleanup session_shutdown failed:", err);
-			}
-		}
-	};
+	const executeToolFn = createNestedToolExecutor(registry);
+	const cleanup = await mountExtensionBridge(
+		location,
+		modelRuntime,
+		extensionsResult,
+		registry,
+		executeToolFn,
+		report,
+	);
 
 	const harness = await Harness.open(
 		await openNodeSqliteStorage(location.database),
-		{
-			models: modelRuntime,
-			registry,
-			settings,
-			env: envs.env,
-			onReport: (error) => report(error),
-		},
+		{ models: modelRuntime, registry, settings, env: envs.env, onReport: report },
 		runtimeContext,
 	);
 
 	const initial = location.created
 		? await findInitialAgentModel(settingsManager, modelRuntime, options.cli)
 		: undefined;
-	if (initial?.model) {
-		activeModelRef = initial.model;
-	}
+	if (initial?.model) activeModelRef = initial.model;
 
 	return {
 		modelRuntime,
@@ -199,9 +109,7 @@ export async function loadHarnessEnvironment(
 		fallbackMessage: initial?.fallbackMessage,
 		pendingReports,
 		getActiveModel,
-		setActiveModelRef: (ref) => {
-			activeModelRef = ref;
-		},
+		setActiveModelRef: (ref) => { activeModelRef = ref; },
 		cleanup,
 	};
 }

@@ -1,6 +1,3 @@
-import { existsSync, readFileSync, writeSync } from "node:fs";
-import { join } from "node:path";
-import { Socket } from "node:net";
 import { setupRunnerModels } from "./model-setup.ts";
 import { attachJsonlLineReader, serializeJsonLine } from "./jsonl.ts";
 import { openDurable, type OpenDurableOptions, type OpenDurableResult } from "./runtime.ts";
@@ -8,31 +5,10 @@ import { ROOT_CONVERSATION_ID, watchEvents } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { BBEventAdapter } from "./bridge/bb-event-adapter.ts";
 import type { BBWireEvent } from "./bridge/contracts.ts";
-import { type CliArgs, parseCliArgs } from "./cli-args.ts";
+import { parseCliArgs } from "./cli-args.ts";
 import { handleActiveSessionCommand } from "./session-commands.ts";
-
-function getPiDurableVersion(): string {
-	try {
-		const durablePkg = require.resolve("@earendil-works/pi-durable/package.json");
-		if (existsSync(durablePkg)) {
-			const parsed = JSON.parse(readFileSync(durablePkg, "utf8"));
-			if (parsed.version) return parsed.version;
-		}
-	} catch {
-		// intentionally ignored: package resolution fallback
-	}
-	try {
-		const pluginPkg = join(__dirname, "..", "..", "package.json");
-		if (existsSync(pluginPkg)) {
-			const parsed = JSON.parse(readFileSync(pluginPkg, "utf8"));
-			const dep = parsed.dependencies?.["@earendil-works/pi-durable"]?.replace(/^[\^~]/, "");
-			if (dep) return dep;
-		}
-	} catch {
-		// intentionally ignored: package resolution fallback
-	}
-	return "1.0.0";
-}
+import { getPiDurableVersion } from "./version.ts";
+import { createBridgeSender, initBridgeInboundChannel } from "./bridge-channel.ts";
 
 const argv = process.argv.slice(2);
 
@@ -44,27 +20,11 @@ if (argv.includes("--version") || argv.includes("-v")) {
 
 const args = parseCliArgs(argv);
 
-// Write to stdout helper
 function output(data: unknown): void {
 	process.stdout.write(serializeJsonLine(data));
 }
 
-const CHILD_TO_BRIDGE_FD = 3;
-const BRIDGE_TO_CHILD_FD = 4;
-
-let sendToBridge = (_msg: unknown) => {};
-try {
-	sendToBridge = (msg: unknown) => {
-		const str = `${JSON.stringify(msg)}\n`;
-		try {
-			writeSync(CHILD_TO_BRIDGE_FD, Buffer.from(str, "utf8"));
-		} catch {
-			// intentionally ignored: FD 3 is not open or not writable
-		}
-	};
-} catch {
-	// intentionally ignored: bridge channel descriptor setup is optional
-}
+const sendToBridge = createBridgeSender();
 
 async function main() {
 	let activeDurable: OpenDurableResult | null = null;
@@ -98,36 +58,7 @@ async function main() {
 
 	// Notify bridge of model scope over FD 3
 	sendToBridge({ kind: "model-scope", ...modelScope });
-
-	// Inbound side channel on FD 4
-	try {
-		const bridgeIn = new Socket({ fd: BRIDGE_TO_CHILD_FD, readable: true, writable: false });
-		bridgeIn.on("error", () => {});
-		bridgeIn.unref();
-
-		attachJsonlLineReader(bridgeIn, (line) => {
-			const trimmed = line.trim();
-			if (!trimmed) return;
-			try {
-				const req = JSON.parse(trimmed);
-				if (req.kind === "request") {
-					if (req.method === "model-scope") {
-						sendToBridge({ kind: "reply", id: req.id, result: modelScope });
-					} else if (req.method === "refresh-models") {
-						sendToBridge({ kind: "reply", id: req.id, result: { refreshed: true } });
-					} else if (req.method === "leaf") {
-						sendToBridge({ kind: "reply", id: req.id, result: { leafId: null } });
-					} else {
-						sendToBridge({ kind: "reply", id: req.id, result: {} });
-					}
-				}
-			} catch (err) {
-				console.error("[Runner] Failed to parse or process bridge channel message:", err);
-			}
-		});
-	} catch {
-		// intentionally ignored: FD 4 is not open when running without parent bridge channel
-	}
+	initBridgeInboundChannel(modelScope, sendToBridge);
 
 	const success = (id: string | undefined, command: string, data?: unknown) => {
 		output({ id, type: "response", command, success: true, data });

@@ -1,3 +1,11 @@
+/**
+ * Upstream Shim: Imported from @earendil-works/pi-coding-agent
+ * Source: packages/coding-agent/src/experimental/durable/sessions.ts
+ *
+ * Prototype session directory management and lockfile locking.
+ * Quarantined in upstream/ until packaged natively in @earendil-works/pi-durable.
+ */
+
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readdir, realpath } from "node:fs/promises";
 import { homedir } from "node:os";

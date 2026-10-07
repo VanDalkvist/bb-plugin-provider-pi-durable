@@ -6,6 +6,7 @@ import {
 	createStandardExtensionFactories,
 	adaptExtensionTool,
 	installExtensionTools,
+	hasOutput,
 } from "../src/runner/extension-bridge.ts";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 
@@ -121,5 +122,58 @@ describe("Extension Bridge (Cycle 60)", () => {
 		assert.ok(runner);
 		await runner.emit({ type: "session_shutdown", reason: "shutdown" });
 		assert.equal(shutdownEmitted, true, "session_shutdown event must trigger extension handlers");
+	});
+
+	it("hasOutput accurately identifies objects with output method (AP-029)", () => {
+		assert.equal(hasOutput(null), false);
+		assert.equal(hasOutput(undefined), false);
+		assert.equal(hasOutput("string"), false);
+		assert.equal(hasOutput(123), false);
+		assert.equal(hasOutput({}), false);
+		assert.equal(hasOutput({ output: "not a function" }), false);
+		assert.equal(hasOutput({ output: () => {} }), true);
+	});
+
+	it("streams output to api.output when present and ignores when absent", async () => {
+		const streamingToolDef: ToolDefinition = {
+			name: "streaming_tool",
+			label: "Streaming Tool",
+			description: "Streams progress updates",
+			parameters: Type.Object({}),
+			execute: async (_callId, _params, _signal, onUpdate) => {
+				onUpdate?.({ content: [{ type: "text", text: "step 1... " }] });
+				onUpdate?.({ content: [{ type: "text", text: "step 2... done!" }] });
+				return { content: [{ type: "text", text: "completed" }] };
+			},
+		};
+
+		const durableTool = adaptExtensionTool(streamingToolDef, () => {
+			throw new Error("No nested executeTool");
+		});
+
+		// Case 1: api.output is present
+		const outputChunks: string[] = [];
+		const resultWithOutput = await durableTool.execute(
+			{} as any,
+			{
+				callId: "call_stream_1",
+				output: (text: string) => outputChunks.push(text),
+			} as any,
+			{} as any,
+		);
+
+		assert.deepEqual(outputChunks, ["step 1... ", "step 2... done!"]);
+		assert.deepEqual(resultWithOutput.content, [{ type: "text", text: "completed" }]);
+
+		// Case 2: api.output is absent
+		const resultWithoutOutput = await durableTool.execute(
+			{} as any,
+			{
+				callId: "call_stream_2",
+			} as any,
+			{} as any,
+		);
+
+		assert.deepEqual(resultWithoutOutput.content, [{ type: "text", text: "completed" }]);
 	});
 });

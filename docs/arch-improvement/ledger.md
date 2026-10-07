@@ -245,5 +245,65 @@
   - User extensions active (`google_search`, `generate_image`, `web_search_exa`, `deep_search_exa`).
   - External MCP servers loaded and mounted into session (`mcp__telegram__*`, 33 tools total).
 
+---
+
+## Cycle 61: Territory Realignment & Decoupling (2026-10-07)
+
+**Goal:** Realign architecture boundaries according to Ports and Adapters (Clean Architecture). Eliminate domain pollution, leaky boundaries, and foreign ownership: dynamic extraction of prompt snippets from `@earendil-works/pi-coding-agent`, quarantine of unreleased upstream prototypes in `src/runner/upstream/`, safe typing and output streaming in `extension-bridge.ts`, and modular decomposition of `runtime-loader.ts`.  
+**Governing Standard:** `arch-rules.md` (AP-010 – AP-071) & `arch-improvement-loop`  
+**PRD Reference:** `docs/superpowers/specs/2026-10-07-prd-pi-durable-territory-ownership-and-decoupling.md`  
+**Plan Reference:** `docs/superpowers/plans/2026-10-07-arch-improvement-cycle-61-territory-realignment.md`  
+
+### 1. Triaged Findings & Dispositions
+
+| ID | Issue | Severity | Rule | Disposition | Root Cause & Resolution |
+|---|---|---|---|---|---|
+| **F-61-1** | Hardcoded Prompt Snippets & Manual `AGENTS.md` File Crawling | **P1** | AP-010, AP-018 | `fix-now` | `src/runner/prompt.ts` hardcoded descriptions and guidelines for `read`, `bash`, `edit`, `write` tools and crawled disk for `AGENTS.md` instead of consuming Pi's canonical APIs. **Fix:** Replaced hardcoded `CONTRIBUTIONS` and `loadContextFiles` with dynamic extraction via `create*ToolDefinition()` and `resourceLoader.getAgentsFiles()` / `getSkills()`. |
+| **F-61-2** | Domain Pollution: Unreleased Upstream Prototypes in Plugin Root | **P1** | AP-010, AP-011 | `fix-now` | `subagent.ts` and `sessions.ts` were vendored prototypes copied from `@earendil-works/pi-coding-agent` (`experimental/durable/`), creating false domain ownership. **Fix:** Quarantined prototypes into `src/runner/upstream/subagent-tool.ts` and `src/runner/upstream/session-storage.ts` with explicit provenance documentation headers. |
+| **F-61-3** | Inappropriate Intimacy & Untyped Output In `extension-bridge.ts` | **P2** | AP-011, AP-029 | `fix-now` | `extension-bridge.ts` used `(api as any).output` and untyped details casts. **Fix:** Implemented safe `hasOutput` type guard, strict TypeScript typing, and zero `as any` casts. |
+| **F-61-4** | God Method In `runtime-loader.ts` & AP-019 Violations | **P2** | AP-018, AP-019, AP-020 | `fix-now` | `runtime-loader.ts` exceeded 200 lines and handled configuration, provider registration, extension runner mounting, and SQLite opening monolithically. `index.ts` and `runtime.ts` also exceeded 200 lines. **Fix:** Decomposed `runtime-loader.ts` into clean helper modules (`extension-mount.ts`, `bridge-channel.ts`, `version.ts`); brought all files in `src/runner/` strictly < 200 lines. |
+
+### 2. Architecture Rule Verifications
+
+- **AP-010 (Modular Monolith & Boundary Integrity):** Upstream prototypes quarantined in `src/runner/upstream/`; prompts dynamically built from Pi canonical APIs.
+- **AP-013 (No Fake Tests):** 54/54 genuine tests with deterministic contract assertions.
+- **AP-018 (Single Responsibility Principle):** `runtime-loader.ts` decomposed; side-channel socket extracted to `bridge-channel.ts`, version resolution to `version.ts`, tool execution & mounting to `extension-mount.ts`.
+- **AP-019 (File Size Limits):** All `.ts` files in `src/runner/` strictly < 200 lines:
+  - `bridge-channel.ts`: 51 lines
+  - `cli-args.ts`: 44 lines
+  - `extension-bridge.ts`: 136 lines (< 160)
+  - `extension-mount.ts`: 96 lines (< 150)
+  - `harness-setup.ts`: 146 lines (< 150)
+  - `index.ts`: 162 lines (< 200)
+  - `jsonl.ts`: 52 lines (< 100)
+  - `model-setup.ts`: 90 lines (< 100)
+  - `prompt.ts`: 152 lines (< 160)
+  - `runtime-controller.ts`: 147 lines (< 150)
+  - `runtime-loader.ts`: 115 lines (< 150)
+  - `runtime-types.ts`: 104 lines (< 150)
+  - `runtime.ts`: 187 lines (< 200)
+  - `session-commands.ts`: 121 lines (< 150)
+  - `version.ts`: 25 lines (< 50)
+  - `upstream/session-storage.ts`: 111 lines (< 150)
+  - `upstream/subagent-tool.ts`: 60 lines (< 100)
+- **AP-029 (Strict TypeScript):** Zero `as any` casts in `src/runner/extension-bridge.ts`. Safe `hasOutput` type guard implemented.
+
+### 3. Verification Evidence
+
+- `npm test`: **54 / 54 passing assertions (0 failed, 0 skipped)** across 6 suites.
+  - `tests/bb-event-adapter.test.ts`: 2 passed
+  - `tests/bridge-error-handling.test.ts`: 6 passed
+  - `tests/compaction-settings.test.ts`: 3 passed
+  - `tests/context-telemetry.test.ts`: 6 passed
+  - `tests/cwd-isolation.test.ts`: 9 passed
+  - `tests/extension-bridge.test.ts`: 6 passed
+  - `tests/prompt-adapter.test.ts`: 5 passed
+  - `tests/runner-discovery.test.ts`: 8 passed
+  - `tests/startup-readiness.test.ts`: 6 passed
+  - `tests/tool-delta-translator.test.ts`: 3 passed
+- `node scripts/build-runner.mjs && bb plugin build`: Clean build of both runner bundle (`dist/runner/index.js`) and plugin host/server bundles.
+- `bb plugin reload provider-pi-durable`: Plugin reloaded cleanly to v0.3.0.
+
+
 
 

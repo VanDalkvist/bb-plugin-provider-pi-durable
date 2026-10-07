@@ -1,3 +1,4 @@
+import type { JsonValue } from "@earendil-works/chord";
 import {
 	createCodemodeExtension,
 	createMcpExtension,
@@ -12,12 +13,7 @@ import {
 	type ModelRuntime,
 	type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import {
-	defineExtension,
-	defineTool,
-	type Registry,
-	type ToolRegistration,
-} from "@earendil-works/pi-durable";
+import { defineExtension, defineTool, type Registry, type ToolRegistration } from "@earendil-works/pi-durable";
 
 export type NestedToolExecutor = (
 	callerId: string,
@@ -30,16 +26,22 @@ export type NestedToolExecutor = (
 	isError: boolean;
 }>;
 
-/** Returns the standard built-in extension factories provided by Pi. */
-export function createStandardExtensionFactories(): ExtensionFactory[] {
-	return [
-		createCodemodeExtension({ mode: "auto" }),
-		createToolSearchExtension(),
-		createMcpExtension(),
-	];
+/** Safe type guard checking whether an object has an output stream function. */
+export function hasOutput(api: unknown): api is { output(text: string): void } {
+	return (
+		typeof api === "object" &&
+		api !== null &&
+		"output" in api &&
+		typeof (api as { output: unknown }).output === "function"
+	);
 }
 
-/** Adapts an extension ToolDefinition to a Durable ToolRegistration. */
+/** Returns the standard built-in extension factories provided by Pi. */
+export function createStandardExtensionFactories(): ExtensionFactory[] {
+	return [createCodemodeExtension({ mode: "auto" }), createToolSearchExtension(), createMcpExtension()];
+}
+
+/** Adapts an extension ToolDefinition to a Durable ToolRegistration without type escape hatches. */
 export function adaptExtensionTool(
 	toolDef: ToolDefinition,
 	executeToolFn: NestedToolExecutor,
@@ -54,9 +56,8 @@ export function adaptExtensionTool(
 				? createToolContext(api.callId)
 				: ({
 						tools: [],
-						executeTool: async (name: string, nestedArgs: unknown, options?: { signal?: AbortSignal }) => {
-							return executeToolFn(api.callId, name, nestedArgs, options);
-						},
+						executeTool: async (name: string, nestedArgs: unknown, options?: { signal?: AbortSignal }) =>
+							executeToolFn(api.callId, name, nestedArgs, options),
 					} as ExtensionToolContext);
 
 			const result = await toolDef.execute(
@@ -64,14 +65,12 @@ export function adaptExtensionTool(
 				args,
 				undefined,
 				(update) => {
-					if (update?.content && typeof (api as any).output === "function") {
+					if (update?.content && hasOutput(api)) {
 						const textChunks = update.content
 							.filter((c): c is { type: "text"; text: string } => c.type === "text")
 							.map((c) => c.text)
 							.join("");
-						if (textChunks.length > 0) {
-							(api as any).output(textChunks);
-						}
+						if (textChunks.length > 0) api.output(textChunks);
 					}
 				},
 				ctx,
@@ -80,7 +79,7 @@ export function adaptExtensionTool(
 			return {
 				content: result.content,
 				isError: result.isError,
-				details: result.details as any,
+				details: (result.details ?? undefined) as JsonValue | undefined,
 			};
 		},
 	});
@@ -89,12 +88,7 @@ export function adaptExtensionTool(
 /** Installs adapted tools as a dynamic extension into the Durable Registry. */
 export function installExtensionTools(registry: Registry, tools: ToolRegistration[]): void {
 	if (tools.length === 0) return;
-	registry.install(
-		defineExtension({
-			name: "extension-tools",
-			tools,
-		}),
-	);
+	registry.install(defineExtension({ name: "extension-tools", tools }));
 }
 
 export interface SetupExtensionRunnerOptions {
@@ -107,23 +101,11 @@ export interface SetupExtensionRunnerOptions {
 	onToolsChanged?: () => void;
 }
 
-/**
- * Initializes ExtensionRunner, binds actions and nested tool execution,
- * and emits the session_start event to trigger MCP connections and tool registration.
- */
-export async function setupExtensionRunner(
-	options: SetupExtensionRunnerOptions,
-): Promise<ExtensionRunner> {
+/** Initializes ExtensionRunner and binds actions and nested tool execution. */
+export async function setupExtensionRunner(options: SetupExtensionRunnerOptions): Promise<ExtensionRunner> {
 	const sessionManager = SessionManager.create(options.cwd);
 	const modelRegistry = new ModelRegistry(options.modelRuntime);
-
-	const runner = new ExtensionRunner(
-		options.extensions,
-		options.runtime,
-		options.cwd,
-		sessionManager,
-		modelRegistry,
-	);
+	const runner = new ExtensionRunner(options.extensions, options.runtime, options.cwd, sessionManager, modelRegistry);
 
 	runner.bindCore(
 		{
@@ -137,15 +119,14 @@ export async function setupExtensionRunner(
 		{
 			isProjectTrusted: () => true,
 			executeTool: (callerId, name, args, opts) => options.executeToolFn(callerId, name, args, opts),
-			getCallableTools: () => {
-				return options.getCallableTools
+			getCallableTools: () =>
+				options.getCallableTools
 					? options.getCallableTools()
 					: runner.getAllRegisteredTools().map((t) => ({
 							name: t.definition.name,
 							description: t.definition.description,
 							parameters: t.definition.parameters,
-						}));
-			},
+						})),
 			getSystemPrompt: () => "",
 		},
 	);

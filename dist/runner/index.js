@@ -7,11 +7,6 @@ var __require = /* @__PURE__ */ ((x) => typeof require !== "undefined" ? require
   throw Error('Dynamic require of "' + x + '" is not supported');
 });
 
-// src/runner/index.ts
-import { existsSync as existsSync2, readFileSync as readFileSync2, writeSync } from "node:fs";
-import { join as join3 } from "node:path";
-import { Socket } from "node:net";
-
 // src/runner/model-setup.ts
 import {
   DefaultResourceLoader,
@@ -20,7 +15,7 @@ import {
   resolveModelScopeWithDiagnostics
 } from "@earendil-works/pi-coding-agent";
 
-// src/runner/sessions.ts
+// src/runner/upstream/session-storage.ts
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readdir, realpath } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -112,55 +107,35 @@ import {
 
 // src/runner/prompt.ts
 import { existsSync, readFileSync } from "node:fs";
-import { join as join2 } from "node:path";
 import { defineExtension, section } from "@earendil-works/pi-durable";
-import { formatSkillsForPrompt } from "@earendil-works/pi-coding-agent";
-var CONTRIBUTIONS = {
-  read: {
-    snippet: "Read file contents",
-    guidelines: ["Use read to examine files instead of cat or sed."]
-  },
-  bash: {
-    snippet: "Execute bash commands (ls, grep, find, etc.)",
-    guidelines: [
-      "Use bash for file operations like ls, rg, find",
-      "You can inspect PI_* environment variables for current model and session details."
-    ]
-  },
-  edit: {
-    snippet: "Make precise file edits with exact text replacement, including multiple disjoint edits in one call",
-    guidelines: [
-      "Use edit for precise changes (edits[].oldText must match exactly)",
-      "When changing multiple separate locations in one file, use one edit call with multiple entries in edits[] instead of multiple edit calls",
-      "Each edits[].oldText is matched against the original file, not after earlier edits are applied. Do not emit overlapping or nested edits. Merge nearby changes into one edit.",
-      "Keep edits[].oldText as small as possible while still being unique in the file. Do not pad with large unchanged regions."
-    ]
-  },
-  write: {
-    snippet: "Create or overwrite files",
-    guidelines: ["Use write only for new files or complete rewrites."]
-  }
+import {
+  createBashToolDefinition,
+  createEditToolDefinition,
+  createReadToolDefinition,
+  createWriteToolDefinition,
+  formatSkillsForPrompt
+} from "@earendil-works/pi-coding-agent";
+var CANONICAL_TOOL_DEFS = {
+  read: createReadToolDefinition(),
+  write: createWriteToolDefinition(),
+  edit: createEditToolDefinition(),
+  bash: createBashToolDefinition()
 };
 var KEYS = ["preamble", "tools", "rules", "docs", "addendum", "project_context", "skills", "cwd"];
-function loadContextFiles(cwd) {
-  const files = [];
-  const candidates = [
-    join2(cwd, "AGENTS.md"),
-    join2(cwd, ".bb", "AGENTS.md"),
-    join2(cwd, ".github", "copilot-instructions.md")
-  ];
-  for (const candidate of candidates) {
-    if (existsSync(candidate)) {
-      try {
-        const content = readFileSync(candidate, "utf8").trim();
-        if (content) {
-          files.push({ path: candidate, content });
-        }
-      } catch {
-      }
-    }
+function resolveContextFiles(options) {
+  if (options.contextFiles && options.contextFiles.length > 0) {
+    return options.contextFiles;
   }
-  return files;
+  if (options.resourceLoader?.getAgentsFiles) {
+    return options.resourceLoader.getAgentsFiles()?.agentsFiles ?? [];
+  }
+  return [];
+}
+function resolveSkills(options) {
+  if (options.resourceLoader?.getSkills) {
+    return options.resourceLoader.getSkills() ?? [];
+  }
+  return [];
 }
 function buildRules(selectedTools) {
   const rules = [];
@@ -175,9 +150,9 @@ function buildRules(selectedTools) {
     addRule("Use bash for file operations like ls, rg, find");
   }
   for (const name of selectedTools) {
-    const contrib = CONTRIBUTIONS[name];
-    if (contrib) {
-      for (const guideline of contrib.guidelines) {
+    const def = CANONICAL_TOOL_DEFS[name];
+    if (def?.promptGuidelines) {
+      for (const guideline of def.promptGuidelines) {
         addRule(guideline);
       }
     }
@@ -186,54 +161,29 @@ function buildRules(selectedTools) {
   addRule("Show file paths clearly when working with files");
   return rules.map((r) => `- ${r}`).join("\n");
 }
-function createPiPrompt(settings, fallbackCwd, options = {}) {
-  let systemPromptOverride;
-  if (options.systemPromptPath && existsSync(options.systemPromptPath)) {
-    try {
-      systemPromptOverride = readFileSync(options.systemPromptPath, "utf8").trim();
-    } catch (err) {
-      console.error(`Warning: failed to read system-prompt: ${err}`);
-    }
+function tryReadPromptFile(path, label) {
+  if (!path || !existsSync(path)) return void 0;
+  try {
+    return readFileSync(path, "utf8").trim();
+  } catch (err) {
+    console.error(`Warning: failed to read ${label ?? "prompt"}: ${err}`);
+    return void 0;
   }
-  let appendPrompt;
-  if (options.appendSystemPromptPath && existsSync(options.appendSystemPromptPath)) {
-    try {
-      appendPrompt = readFileSync(options.appendSystemPromptPath, "utf8").trim();
-    } catch (err) {
-      console.error(`Warning: failed to read append-system-prompt: ${err}`);
-    }
-  }
-  const resources = /* @__PURE__ */ new Map();
-  const load = (cwd) => {
-    let found = resources.get(cwd);
-    if (found === void 0) {
-      found = {
-        contextFiles: loadContextFiles(cwd),
-        skills: []
-      };
-      resources.set(cwd, found);
-    }
-    return found;
-  };
-  const built = /* @__PURE__ */ new WeakMap();
-  const build = (input) => {
-    let sections = built.get(input);
-    if (sections === void 0) {
-      sections = buildSections(input);
-      built.set(input, sections);
-    }
-    return sections;
-  };
+}
+function createPiPrompt(_settings, fallbackCwd, options = {}) {
+  const systemPromptOverride = tryReadPromptFile(options.systemPromptPath, "system-prompt");
+  const appendPrompt = tryReadPromptFile(options.appendSystemPromptPath, "append-system-prompt");
   const buildSections = (input) => {
     const cwd = input.env?.cwd ?? input.agent.cwd ?? fallbackCwd;
-    const { contextFiles, skills } = load(cwd);
+    const contextFiles = resolveContextFiles(options);
+    const skills = resolveSkills(options);
     const selectedTools = input.agent.tools.map((t) => t.name);
     const sections = {};
     if (systemPromptOverride) {
       sections.preamble = systemPromptOverride;
     } else {
       sections.preamble = "You are an expert coding assistant operating inside pi, a coding agent harness. You help users by reading files, executing commands, editing code, and writing new files.";
-      const visibleTools = selectedTools.filter((name) => !!CONTRIBUTIONS[name]).map((name) => `- ${name}: ${CONTRIBUTIONS[name].snippet}`);
+      const visibleTools = selectedTools.filter((name) => name in CANONICAL_TOOL_DEFS).map((name) => `- ${name}: ${CANONICAL_TOOL_DEFS[name].promptSnippet}`);
       sections.tools = `<tools>
 ${visibleTools.join("\n")}
 
@@ -248,7 +198,7 @@ ${buildRules(selectedTools)}
 ${appendPrompt}
 </addendum>`;
     }
-    if (contextFiles && contextFiles.length > 0) {
+    if (contextFiles.length > 0) {
       const rendered = contextFiles.map((cf) => `<project_instructions path="${cf.path}">
 ${cf.content}
 </project_instructions>`).join("\n\n");
@@ -258,7 +208,7 @@ Project-specific instructions and guidelines:
 ${rendered}
 </project_context>`;
     }
-    if (skills && skills.length > 0) {
+    if (skills.length > 0) {
       sections.skills = `<skills>
 ${formatSkillsForPrompt(skills, "read")}
 </skills>`;
@@ -268,9 +218,18 @@ ${cwd.replace(/\\/g, "/")}
 </cwd>`;
     return sections;
   };
+  const built = /* @__PURE__ */ new WeakMap();
+  const getOrBuild = (input) => {
+    let sections = built.get(input);
+    if (sections === void 0) {
+      sections = buildSections(input);
+      built.set(input, sections);
+    }
+    return sections;
+  };
   return defineExtension({
     name: "pi-prompt",
-    sections: KEYS.map((key) => section(key, (input) => build(input)[key], { tag: false }))
+    sections: KEYS.map((key) => section(key, (input) => getOrBuild(input)[key], { tag: false }))
   });
 }
 
@@ -601,16 +560,12 @@ import {
   ModelRegistry,
   SessionManager
 } from "@earendil-works/pi-coding-agent";
-import {
-  defineExtension as defineExtension2,
-  defineTool
-} from "@earendil-works/pi-durable";
+import { defineExtension as defineExtension2, defineTool } from "@earendil-works/pi-durable";
+function hasOutput(api) {
+  return typeof api === "object" && api !== null && "output" in api && typeof api.output === "function";
+}
 function createStandardExtensionFactories() {
-  return [
-    createCodemodeExtension({ mode: "auto" }),
-    createToolSearchExtension(),
-    createMcpExtension()
-  ];
+  return [createCodemodeExtension({ mode: "auto" }), createToolSearchExtension(), createMcpExtension()];
 }
 function adaptExtensionTool(toolDef, executeToolFn, createToolContext) {
   return defineTool({
@@ -620,20 +575,16 @@ function adaptExtensionTool(toolDef, executeToolFn, createToolContext) {
     async execute(args2, api) {
       const ctx = createToolContext ? createToolContext(api.callId) : {
         tools: [],
-        executeTool: async (name, nestedArgs, options) => {
-          return executeToolFn(api.callId, name, nestedArgs, options);
-        }
+        executeTool: async (name, nestedArgs, options) => executeToolFn(api.callId, name, nestedArgs, options)
       };
       const result = await toolDef.execute(
         api.callId,
         args2,
         void 0,
         (update) => {
-          if (update?.content && typeof api.output === "function") {
+          if (update?.content && hasOutput(api)) {
             const textChunks = update.content.filter((c) => c.type === "text").map((c) => c.text).join("");
-            if (textChunks.length > 0) {
-              api.output(textChunks);
-            }
+            if (textChunks.length > 0) api.output(textChunks);
           }
         },
         ctx
@@ -641,30 +592,19 @@ function adaptExtensionTool(toolDef, executeToolFn, createToolContext) {
       return {
         content: result.content,
         isError: result.isError,
-        details: result.details
+        details: result.details ?? void 0
       };
     }
   });
 }
 function installExtensionTools(registry, tools) {
   if (tools.length === 0) return;
-  registry.install(
-    defineExtension2({
-      name: "extension-tools",
-      tools
-    })
-  );
+  registry.install(defineExtension2({ name: "extension-tools", tools }));
 }
 async function setupExtensionRunner(options) {
   const sessionManager = SessionManager.create(options.cwd);
   const modelRegistry = new ModelRegistry(options.modelRuntime);
-  const runner = new ExtensionRunner(
-    options.extensions,
-    options.runtime,
-    options.cwd,
-    sessionManager,
-    modelRegistry
-  );
+  const runner = new ExtensionRunner(options.extensions, options.runtime, options.cwd, sessionManager, modelRegistry);
   runner.bindCore(
     {
       getActiveTools: () => [],
@@ -677,13 +617,11 @@ async function setupExtensionRunner(options) {
     {
       isProjectTrusted: () => true,
       executeTool: (callerId, name, args2, opts) => options.executeToolFn(callerId, name, args2, opts),
-      getCallableTools: () => {
-        return options.getCallableTools ? options.getCallableTools() : runner.getAllRegisteredTools().map((t) => ({
-          name: t.definition.name,
-          description: t.definition.description,
-          parameters: t.definition.parameters
-        }));
-      },
+      getCallableTools: () => options.getCallableTools ? options.getCallableTools() : runner.getAllRegisteredTools().map((t) => ({
+        name: t.definition.name,
+        description: t.definition.description,
+        parameters: t.definition.parameters
+      })),
       getSystemPrompt: () => ""
     }
   );
@@ -691,7 +629,81 @@ async function setupExtensionRunner(options) {
   return runner;
 }
 
-// src/runner/subagent.ts
+// src/runner/extension-mount.ts
+function createNestedToolExecutor(registry) {
+  return async (callerId, name, args2) => {
+    const target = registry.snapshot().tools().find((t) => t.tool.name === name);
+    if (!target) {
+      return {
+        toolCall: { type: "toolCall", id: `${callerId}/nested`, name, arguments: args2 },
+        result: { content: [{ type: "text", text: `Tool ${name} not found` }], details: {} },
+        isError: true
+      };
+    }
+    try {
+      const res = await target.tool.execute(
+        args2,
+        { callId: `${callerId}/nested`, output: () => {
+        } },
+        runtimeContext
+      );
+      const rawContent = res.content;
+      const content = Array.isArray(rawContent) ? rawContent : [{ type: "text", text: String(rawContent ?? "") }];
+      return {
+        toolCall: { type: "toolCall", id: `${callerId}/nested`, name, arguments: args2 },
+        result: { content, details: res.details },
+        isError: !!res.isError
+      };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return {
+        toolCall: { type: "toolCall", id: `${callerId}/nested`, name, arguments: args2 },
+        result: { content: [{ type: "text", text: message }], details: {} },
+        isError: true
+      };
+    }
+  };
+}
+async function mountExtensionBridge(location, modelRuntime, extensionsResult, registry, executeToolFn, report) {
+  let extensionRunner;
+  try {
+    const syncToolsToRegistry = () => {
+      if (!extensionRunner) return;
+      const createToolContext = (callId) => extensionRunner.createToolContext(callId, void 0);
+      const adapted = extensionRunner.getAllRegisteredTools().map(
+        (t) => adaptExtensionTool(t.definition, executeToolFn, createToolContext)
+      );
+      installExtensionTools(registry, adapted);
+    };
+    extensionRunner = await setupExtensionRunner({
+      extensions: extensionsResult.extensions,
+      runtime: extensionsResult.runtime,
+      cwd: location.cwd,
+      modelRuntime,
+      executeToolFn,
+      getCallableTools: () => registry.snapshot().tools().map((t) => ({
+        name: t.tool.name,
+        description: t.tool.description ?? "",
+        parameters: t.tool.parameters
+      })),
+      onToolsChanged: syncToolsToRegistry
+    });
+    syncToolsToRegistry();
+  } catch (error) {
+    report(error);
+  }
+  return async () => {
+    if (extensionRunner) {
+      try {
+        await extensionRunner.emit({ type: "session_shutdown", reason: "shutdown" });
+      } catch (err) {
+        console.warn("[ExtensionBridge] Cleanup session_shutdown failed:", err);
+      }
+    }
+  };
+}
+
+// src/runner/upstream/subagent-tool.ts
 import { Type } from "@earendil-works/pi-ai";
 import {
   AssistantEntry,
@@ -737,38 +749,40 @@ var Subagent = defineExtension3({
 // src/runner/runtime-loader.ts
 import { Harness } from "@earendil-works/pi-durable";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
-async function loadHarnessEnvironment(location, options, envs) {
-  const modelRuntime = await ModelRuntime2.create();
-  const settingsManager = SettingsManager2.create(location.cwd);
-  const agentDir = getAgentDir();
-  const resourceLoader = new DefaultResourceLoader2({
-    cwd: location.cwd,
-    agentDir,
-    settingsManager,
-    extensionFactories: createStandardExtensionFactories()
-  });
-  await resourceLoader.reload();
-  const extensionsResult = resourceLoader.getExtensions();
-  for (const { name, config } of extensionsResult.runtime.pendingProviderRegistrations) {
+function registerPendingProviders(modelRuntime, runtime) {
+  for (const { name, config } of runtime.pendingProviderRegistrations) {
     try {
       modelRuntime.registerProvider(name, config);
     } catch {
     }
   }
-  for (const { provider } of extensionsResult.runtime.pendingNativeProviderRegistrations) {
+  for (const { provider } of runtime.pendingNativeProviderRegistrations) {
     try {
       modelRuntime.registerNativeProvider(provider);
     } catch {
     }
   }
-  for (const { definition } of extensionsResult.runtime.pendingVirtualModelRegistrations) {
+  for (const { definition } of runtime.pendingVirtualModelRegistrations) {
     try {
       modelRuntime.registerVirtualModel(definition);
     } catch {
     }
   }
+}
+async function loadHarnessEnvironment(location, options, envs) {
+  const modelRuntime = await ModelRuntime2.create();
+  const settingsManager = SettingsManager2.create(location.cwd);
+  const resourceLoader = new DefaultResourceLoader2({
+    cwd: location.cwd,
+    agentDir: getAgentDir(),
+    settingsManager,
+    extensionFactories: createStandardExtensionFactories()
+  });
+  await resourceLoader.reload();
+  const extensionsResult = resourceLoader.getExtensions();
+  registerPendingProviders(modelRuntime, extensionsResult.runtime);
   configureHarnessHttp(settingsManager);
-  let activeModelRef = void 0;
+  let activeModelRef;
   const getActiveModel = () => {
     if (activeModelRef) return activeModelRef;
     const p = settingsManager.getDefaultProvider();
@@ -776,100 +790,29 @@ async function loadHarnessEnvironment(location, options, envs) {
     return p && m ? { provider: p, modelId: m } : void 0;
   };
   const settings = createHarnessSettings(settingsManager, getActiveModel);
-  const registry = createCodingRegistry(settingsManager, location.cwd, options.prompt);
+  const registry = createCodingRegistry(settingsManager, location.cwd, {
+    ...options.prompt,
+    resourceLoader
+  });
   registry.install(Subagent);
   const pendingReports = [];
   const report = (error) => pendingReports.push(error);
-  const executeToolFn = async (callerId, name, args2) => {
-    const target = registry.snapshot().tools().find((t) => t.tool.name === name);
-    if (!target) {
-      return {
-        toolCall: { type: "toolCall", id: `${callerId}/nested`, name, arguments: args2 },
-        result: { content: [{ type: "text", text: `Tool ${name} not found` }], details: {} },
-        isError: true
-      };
-    }
-    try {
-      const res = await target.tool.execute(
-        args2,
-        {
-          callId: `${callerId}/nested`,
-          output: () => {
-          }
-        },
-        runtimeContext
-      );
-      const rawContent = res.content;
-      const content = Array.isArray(rawContent) ? rawContent : [{ type: "text", text: String(rawContent ?? "") }];
-      return {
-        toolCall: { type: "toolCall", id: `${callerId}/nested`, name, arguments: args2 },
-        result: { content, details: res.details },
-        isError: !!res.isError
-      };
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      return {
-        toolCall: { type: "toolCall", id: `${callerId}/nested`, name, arguments: args2 },
-        result: { content: [{ type: "text", text: message }], details: {} },
-        isError: true
-      };
-    }
-  };
-  let extensionRunner;
-  try {
-    const syncToolsToRegistry = () => {
-      if (!extensionRunner) return;
-      const createToolContext = (callId) => extensionRunner.createToolContext(callId, void 0);
-      const registeredTools = extensionRunner.getAllRegisteredTools();
-      const adaptedTools = registeredTools.map(
-        (t) => adaptExtensionTool(t.definition, executeToolFn, createToolContext)
-      );
-      installExtensionTools(registry, adaptedTools);
-    };
-    const getCallableTools = () => {
-      return registry.snapshot().tools().map((t) => ({
-        name: t.tool.name,
-        description: t.tool.description ?? "",
-        parameters: t.tool.parameters
-      }));
-    };
-    extensionRunner = await setupExtensionRunner({
-      extensions: extensionsResult.extensions,
-      runtime: extensionsResult.runtime,
-      cwd: location.cwd,
-      modelRuntime,
-      executeToolFn,
-      getCallableTools,
-      onToolsChanged: syncToolsToRegistry
-    });
-    syncToolsToRegistry();
-  } catch (error) {
-    report(error);
-  }
-  const cleanup = async () => {
-    if (extensionRunner) {
-      try {
-        await extensionRunner.emit({ type: "session_shutdown", reason: "shutdown" });
-      } catch (err) {
-        console.warn("[ExtensionBridge] Cleanup session_shutdown failed:", err);
-      }
-    }
-  };
+  const executeToolFn = createNestedToolExecutor(registry);
+  const cleanup = await mountExtensionBridge(
+    location,
+    modelRuntime,
+    extensionsResult,
+    registry,
+    executeToolFn,
+    report
+  );
   const harness = await Harness.open(
     await openNodeSqliteStorage(location.database),
-    {
-      models: modelRuntime,
-      registry,
-      settings,
-      env: envs.env,
-      onReport: (error) => report(error)
-    },
+    { models: modelRuntime, registry, settings, env: envs.env, onReport: report },
     runtimeContext
   );
   const initial = location.created ? await findInitialAgentModel(settingsManager, modelRuntime, options.cli) : void 0;
-  if (initial?.model) {
-    activeModelRef = initial.model;
-  }
+  if (initial?.model) activeModelRef = initial.model;
   return {
     modelRuntime,
     settingsManager,
@@ -886,6 +829,17 @@ async function loadHarnessEnvironment(location, options, envs) {
 }
 
 // src/runner/runtime.ts
+async function loadSummaries(harness, rootId) {
+  const label = (id) => id === rootId ? "main" : `subagent ${id}`;
+  const summaries = [];
+  let cursor;
+  do {
+    const page = await harness.commit((tx) => tx.scanConversations({}, 256, cursor), runtimeContext);
+    for (const { id } of page.items) summaries.push({ id, label: label(id), ...await firstInput(harness, id) });
+    cursor = page.next;
+  } while (cursor !== void 0);
+  return summaries;
+}
 async function openDurable(options = {}) {
   const location = await selectSession(options.cwd ?? process.cwd(), options.continueSession ?? false, options.session);
   const envs = new ExecutionEnvs(location.cwd);
@@ -895,44 +849,26 @@ async function openDurable(options = {}) {
     const { modelRuntime, settingsManager } = envState2;
     harness = envState2.harness;
     const root = await harness.root(runtimeContext, {
-      agent: {
-        cwd: location.cwd,
-        ...envState2.initialModelRef === void 0 ? {} : { model: envState2.initialModelRef }
-      }
+      agent: { cwd: location.cwd, ...envState2.initialModelRef ? { model: envState2.initialModelRef } : {} }
     });
     if (!location.created) {
       const rootAgent = await root.agent(runtimeContext);
-      if (rootAgent.model) {
-        envState2.setActiveModelRef(rootAgent.model);
+      if (rootAgent.model) envState2.setActiveModelRef(rootAgent.model);
+      if (options.cli !== void 0) {
+        const cli = await findInitialAgentModel(settingsManager, modelRuntime, options.cli);
+        if (cli.model) {
+          envState2.setActiveModelRef(cli.model);
+          await root.configure({ model: cli.model, thinkingLevel: cli.thinkingLevel }, runtimeContext);
+        }
       }
     }
-    if (!location.created && options.cli !== void 0) {
-      const cliModel = await findInitialAgentModel(settingsManager, modelRuntime, options.cli);
-      if (cliModel.model !== void 0) {
-        envState2.setActiveModelRef(cliModel.model);
-        await root.configure({ model: cliModel.model, thinkingLevel: cliModel.thinkingLevel }, runtimeContext);
-      }
-    }
-    const label = (id) => id === root.id ? "main" : `subagent ${id}`;
-    const opened = harness;
-    const summaries = [];
-    let cursor;
-    do {
-      const page = await opened.commit((tx) => tx.scanConversations({}, 256, cursor), runtimeContext);
-      for (const { id } of page.items) summaries.push({ id, label: label(id), ...await firstInput(opened, id) });
-      cursor = page.next;
-    } while (cursor !== void 0);
+    const summaries = await loadSummaries(harness, root.id);
     let current = root;
     let conversation = await root.viewState(runtimeContext);
-    const enabledPatterns = settingsManager.getEnabledModels();
-    const scopedScope = enabledPatterns && enabledPatterns.length > 0 ? await resolveModelScopeWithDiagnostics2(enabledPatterns, modelRuntime) : void 0;
-    const scopedModelList = scopedScope && scopedScope.scopedModels.length > 0 ? scopedScope.scopedModels.map((sm) => sm.model) : modelRuntime.getAvailableSnapshot();
-    const models = () => scopedModelList.map((model) => ({
-      provider: model.provider,
-      modelId: model.id,
-      name: model.name,
-      contextWindow: model.contextWindow
-    }));
+    const enabled = settingsManager.getEnabledModels();
+    const scoped = enabled?.length ? await resolveModelScopeWithDiagnostics2(enabled, modelRuntime) : void 0;
+    const scopedList = scoped?.scopedModels?.length ? scoped.scopedModels.map((sm) => sm.model) : modelRuntime.getAvailableSnapshot();
+    const models = () => scopedList.map((m) => ({ provider: m.provider, modelId: m.id, name: m.name, contextWindow: m.contextWindow }));
     let state = {
       session: { id: location.id, directory: location.directory, cwd: location.cwd },
       conversation: conversation.value,
@@ -955,24 +891,20 @@ async function openDurable(options = {}) {
     const notice = (level, message) => {
       update({ notices: [...state.notices, { id: nextNotice++, level, message }].slice(-20) });
     };
-    const fail = (error) => notice("error", error instanceof Error ? error.message : String(error));
-    for (const error of envState2.pendingReports) {
-      notice("warning", error instanceof Error ? error.message : String(error));
-    }
-    let unsubscribeConversation = conversation.subscribe((value) => update({ conversation: value }));
-    const unsubscribeCommits = harness.subscribeCommits((publication) => {
-      let conversations = state.conversations;
-      for (const change of publication.changes) {
-        if (change.type === "conversation") {
-          conversations = [...conversations, { id: change.value.id, label: label(change.value.id) }];
-        } else if (change.type === "entry" && change.value.kind === "pi.user") {
-          const id = change.value.conversationId;
-          conversations = conversations.map(
-            (summary) => summary.id === id && summary.title === void 0 ? { ...summary, ...titleOf(change.value) } : summary
-          );
+    const fail = (err) => notice("error", err instanceof Error ? err.message : String(err));
+    for (const err of envState2.pendingReports) notice("warning", err instanceof Error ? err.message : String(err));
+    let unsubscribeConversation = conversation.subscribe((val) => update({ conversation: val }));
+    const unsubscribeCommits = harness.subscribeCommits((pub) => {
+      let convs = state.conversations;
+      for (const ch of pub.changes) {
+        if (ch.type === "conversation") {
+          convs = [...convs, { id: ch.value.id, label: ch.value.id === root.id ? "main" : `subagent ${ch.value.id}` }];
+        } else if (ch.type === "entry" && ch.value.kind === "pi.user") {
+          const id = ch.value.conversationId;
+          convs = convs.map((s) => s.id === id && !s.title ? { ...s, ...titleOf(ch.value) } : s);
         }
       }
-      if (conversations !== state.conversations) update({ conversations });
+      if (convs !== state.conversations) update({ conversations: convs });
     });
     let tasks;
     let unsubscribeTasks = () => {
@@ -982,6 +914,7 @@ async function openDurable(options = {}) {
       tasks?.dispose();
       tasks = void 0;
     };
+    const opened = harness;
     const controller = createDurableController({
       getCurrent: () => current,
       setCurrent: (c) => {
@@ -1012,11 +945,11 @@ async function openDurable(options = {}) {
       setActiveModelRef: (ref) => envState2.setActiveModelRef(ref)
     });
     const saved = agentOf(state.conversation).model;
-    if (saved === void 0) notice("warning", "No model configured; select one with /model.");
-    else if (modelRuntime.getModel(saved.provider, saved.modelId) === void 0) {
+    if (!saved) notice("warning", "No model configured; select one with /model.");
+    else if (!modelRuntime.getModel(saved.provider, saved.modelId)) {
       notice("warning", `Saved model is unavailable: ${saved.provider}/${saved.modelId}`);
     }
-    if (envState2.fallbackMessage !== void 0) notice("info", envState2.fallbackMessage);
+    if (envState2.fallbackMessage) notice("info", envState2.fallbackMessage);
     await controller.toggleTasks();
     harness.resume();
     let closing;
@@ -1033,7 +966,7 @@ async function openDurable(options = {}) {
       modelRuntime,
       harness,
       close() {
-        closing ??= (async () => {
+        return closing ??= (async () => {
           unsubscribeConversation();
           unsubscribeCommits();
           conversation.dispose();
@@ -1046,19 +979,12 @@ async function openDurable(options = {}) {
             await location.release();
           }
         })();
-        return closing;
       }
     };
   } catch (error) {
-    await envState?.cleanup?.().catch((err) => {
-      console.warn("[DurableRuntime] Cleanup extension runner failed:", err);
-    });
-    await harness?.close(runtimeContext).catch((err) => {
-      console.warn("[DurableRuntime] Cleanup harness close failed:", err);
-    });
-    await location.release().catch((err) => {
-      console.warn("[DurableRuntime] Cleanup location release failed:", err);
-    });
+    await envState?.cleanup?.().catch((err) => console.warn("[DurableRuntime] Cleanup extension runner:", err));
+    await harness?.close(runtimeContext).catch((err) => console.warn("[DurableRuntime] Cleanup harness:", err));
+    await location.release().catch((err) => console.warn("[DurableRuntime] Cleanup location:", err));
     throw error;
   }
 }
@@ -1398,7 +1324,9 @@ async function handleActiveSessionCommand(cmd, durable, modelRuntime, args2, res
   }
 }
 
-// src/runner/index.ts
+// src/runner/version.ts
+import { existsSync as existsSync2, readFileSync as readFileSync2 } from "node:fs";
+import { join as join2 } from "node:path";
 function getPiDurableVersion() {
   try {
     const durablePkg = __require.resolve("@earendil-works/pi-durable/package.json");
@@ -1409,7 +1337,7 @@ function getPiDurableVersion() {
   } catch {
   }
   try {
-    const pluginPkg = join3(__dirname, "..", "..", "package.json");
+    const pluginPkg = join2(__dirname, "..", "..", "package.json");
     if (existsSync2(pluginPkg)) {
       const parsed = JSON.parse(readFileSync2(pluginPkg, "utf8"));
       const dep = parsed.dependencies?.["@earendil-works/pi-durable"]?.replace(/^[\^~]/, "");
@@ -1419,6 +1347,53 @@ function getPiDurableVersion() {
   }
   return "1.0.0";
 }
+
+// src/runner/bridge-channel.ts
+import { Socket } from "node:net";
+import { writeSync } from "node:fs";
+var CHILD_TO_BRIDGE_FD = 3;
+var BRIDGE_TO_CHILD_FD = 4;
+function createBridgeSender() {
+  return (msg) => {
+    const str = `${JSON.stringify(msg)}
+`;
+    try {
+      writeSync(CHILD_TO_BRIDGE_FD, Buffer.from(str, "utf8"));
+    } catch {
+    }
+  };
+}
+function initBridgeInboundChannel(modelScope, sendToBridge2) {
+  try {
+    const bridgeIn = new Socket({ fd: BRIDGE_TO_CHILD_FD, readable: true, writable: false });
+    bridgeIn.on("error", () => {
+    });
+    bridgeIn.unref();
+    attachJsonlLineReader(bridgeIn, (line) => {
+      const trimmed = line.trim();
+      if (!trimmed) return;
+      try {
+        const req = JSON.parse(trimmed);
+        if (req.kind === "request") {
+          if (req.method === "model-scope") {
+            sendToBridge2({ kind: "reply", id: req.id, result: modelScope });
+          } else if (req.method === "refresh-models") {
+            sendToBridge2({ kind: "reply", id: req.id, result: { refreshed: true } });
+          } else if (req.method === "leaf") {
+            sendToBridge2({ kind: "reply", id: req.id, result: { leafId: null } });
+          } else {
+            sendToBridge2({ kind: "reply", id: req.id, result: {} });
+          }
+        }
+      } catch (err) {
+        console.error("[Runner] Failed to parse or process bridge channel message:", err);
+      }
+    });
+  } catch {
+  }
+}
+
+// src/runner/index.ts
 var argv = process.argv.slice(2);
 if (argv.includes("--version") || argv.includes("-v")) {
   console.log(getPiDurableVersion());
@@ -1428,21 +1403,7 @@ var args = parseCliArgs(argv);
 function output(data) {
   process.stdout.write(serializeJsonLine(data));
 }
-var CHILD_TO_BRIDGE_FD = 3;
-var BRIDGE_TO_CHILD_FD = 4;
-var sendToBridge = (_msg) => {
-};
-try {
-  sendToBridge = (msg) => {
-    const str = `${JSON.stringify(msg)}
-`;
-    try {
-      writeSync(CHILD_TO_BRIDGE_FD, Buffer.from(str, "utf8"));
-    } catch {
-    }
-  };
-} catch {
-}
+var sendToBridge = createBridgeSender();
 async function main() {
   let activeDurable = null;
   let isTerminating = false;
@@ -1476,33 +1437,7 @@ async function main() {
     modelScope
   } = await setupRunnerModels(cwd, args);
   sendToBridge({ kind: "model-scope", ...modelScope });
-  try {
-    const bridgeIn = new Socket({ fd: BRIDGE_TO_CHILD_FD, readable: true, writable: false });
-    bridgeIn.on("error", () => {
-    });
-    bridgeIn.unref();
-    attachJsonlLineReader(bridgeIn, (line) => {
-      const trimmed = line.trim();
-      if (!trimmed) return;
-      try {
-        const req = JSON.parse(trimmed);
-        if (req.kind === "request") {
-          if (req.method === "model-scope") {
-            sendToBridge({ kind: "reply", id: req.id, result: modelScope });
-          } else if (req.method === "refresh-models") {
-            sendToBridge({ kind: "reply", id: req.id, result: { refreshed: true } });
-          } else if (req.method === "leaf") {
-            sendToBridge({ kind: "reply", id: req.id, result: { leafId: null } });
-          } else {
-            sendToBridge({ kind: "reply", id: req.id, result: {} });
-          }
-        }
-      } catch (err) {
-        console.error("[Runner] Failed to parse or process bridge channel message:", err);
-      }
-    });
-  } catch {
-  }
+  initBridgeInboundChannel(modelScope, sendToBridge);
   const success = (id, command, data) => {
     output({ id, type: "response", command, success: true, data });
   };
