@@ -1,11 +1,11 @@
 # Master Architectural Implementation Plan: Remediation & Full Parity of Pi Durable in BB IDE
 
 **Document ID:** `plans/pi-durable-bb-provider-arch-master-plan`  
-**Version:** 3.2.0 (Master Unified Roadmap: Remediation + Feature Parity)  
+**Version:** 3.3.0 (Master Unified Roadmap: Remediation + Feature Parity)  
 **Target Repository:** `/Users/vanya/Projects/bb-plugin-provider-pi-durable`  
 **Governing Standard:** `arch-rules.md` (AP-010 – AP-071) & `arch-improvement-loop` State Machine  
 **Upstream PRDs:**
-- `prd/pi-durable-provider-remediation` (Audit of 12 Critical Divergences in Implemented Features)
+- `prd/pi-durable-provider-remediation` (Audit of 13 Critical Divergences in Implemented Features)
 - `prd/pi-durable-bb-provider-full-parity` (Complete Engine Capabilities & Parity Features)  
 **Execution Model:** 12 Distinct Sequential Arch Improvement Loop Cycles (Cycle 56 to Cycle 67), each executed in a dedicated thread with strict verification gates.
 
@@ -61,8 +61,8 @@ Every individual cycle (Cycles 56 through 67) must be executed in its own dedica
 
 ```
 STAGE 1: FOUNDATION HARDENING & AUDIT REMEDIATION (Cycles 56–59)
-Eliminate all 12 divergences in already-implemented session, streaming, tool, and model code.
-  - Cycle 56: Process Lifecycle, Lock Cleanup & Session Path Normalization (D-1, D-2)
+Eliminate all 13 divergences in already-implemented session, streaming, tool, and model code.
+  - Cycle 56: Process Lifecycle, Lock Cleanup, Error Diagnostics & Session Path Normalization (D-1, D-2, D-13)
   - Cycle 57: Tool Fault Integrity, Error Reporting & Diff Metadata Forwarding (D-5, D-6, D-9)
   - Cycle 58: Full Native Event Streaming, Reasoning Channels & Thinking Accordion Lifecycle (D-3, D-4, D-10, D-11, D-12)
   - Cycle 59: Model Reasoning Compatibility & Cumulative Usage Integrity (D-7, D-8)
@@ -89,23 +89,32 @@ Build new advanced capabilities on top of the hardened, defect-free foundation.
 
 ---
 
-### Cycle 56: Process Lifecycle, Lock Cleanup & Session Path Normalization
-- **PRD Divergences Covered:** D-1, D-2.
+### Cycle 56: Process Lifecycle, Lock Cleanup, Error Diagnostics & Session Path Normalization
+- **PRD Divergences Covered:** D-1, D-2, D-13 (FR-18, FR-R1, FR-R2, FR-R12, UJ-9).
 - **Architectural Problem:**
-  1. `SIGTERM`, `SIGINT`, `stdin.on("end")` call `process.exit(0)` immediately without awaiting `durable.close()`. This leaves `proper-lockfile` unreleased, forcing every thread resume or start to freeze for 10 seconds waiting for stale lock timeout.
-  2. `paths.ts` appends `.jsonl` to session path (`thr_xxx.jsonl`), causing SQLite sessions to live in directories named `thr_xxx.jsonl/session.sqlite`.
+  1. `SIGTERM`, `SIGINT`, `stdin.on("end")` call `process.exit(0)` immediately without awaiting `durable.close()`. This leaves `proper-lockfile` unreleased, forcing thread resume or start to freeze for 10 seconds waiting for stale lock timeout (D-1).
+  2. `paths.ts` appends `.jsonl` to session path (`thr_xxx.jsonl`), causing SQLite sessions to live in directories named `thr_xxx.jsonl/session.sqlite` (D-2).
+  3. Systemic errors (invalid `cwd`, unmounted volumes, runner spawn failures, unexpected runner exits) are swallowed or sent only as raw JSON-RPC `-32000` responses without emitting `provider.error` deltas into the thread. In the BB IDE UI, the user sees complete silence: no error card, and the input hangs indefinitely (D-13).
 - **Target Solution:**
-  1. In `src/runner/index.ts`, implement graceful shutdown hook: on termination signal, run `await durable.close(); process.exit(0)`.
-  2. In `src/host/paths.ts` and `src/host/session.ts`, remove `.jsonl` suffix; standardize on directory paths `~/.bb/pi-bridge-sessions/<sanitizedThreadId>/session.sqlite`, while retaining backward-compatibility for existing `.jsonl` directories.
+  1. **Graceful Shutdown & Lock Release:** In `src/runner/index.ts`, hook termination signals to execute `await durable.close()` before exit, releasing `proper-lockfile` instantly.
+  2. **Location Validation:** In `src/host/session.ts` and `src/host/bridge.ts`, validate `cwd` existence and directory status before launch (`statSync.isDirectory()`). If invalid, emit `provider.error` delta with detailed path and `settlesTurn: true`.
+  3. **Process Observability:** In `src/host/runner-process.ts`, bind `child.on("error")`, capture `stderrTail`, and invoke `onExit` callback on `PiThreadSession`.
+  4. **Diagnostic Delta Forwarding:** In `src/host/session.ts` and `src/host/bridge.ts`, handle unexpected exits and startup failures by emitting `{ kind: "provider.error", message, detail, settlesTurn: true }` and JSON-RPC `error` notification.
+  5. **Session Path Normalization:** Standardize session paths in `paths.ts` to `~/.bb/pi-bridge-sessions/<sanitizedThreadId>/session.sqlite`.
 - **File Impact & Line Budget (AP-019):**
-  - `src/runner/index.ts`: +20 lines (keep under 250 lines).
-  - `src/host/paths.ts`: refactor session path resolution (~65 lines).
-  - `src/host/session.ts`: align session directory args (~160 lines).
+  - `src/runner/index.ts`: +20 lines (~180 lines).
+  - `src/host/paths.ts`: +15 lines (~75 lines).
+  - `src/host/runner-process.ts`: +30 lines (~155 lines).
+  - `src/host/session.ts`: +35 lines (~185 lines).
+  - `src/host/bridge.ts`: +25 lines (~215 lines).
+  - `tests/lifecycle-and-error-diagnostics.test.ts`: new file (~140 lines).
 - **Test Suite (TDD):**
-  - `tests/lifecycle-lock-cleanup.test.ts`: verify sending `SIGTERM` releases lockfile immediately; verify immediate re-acquisition succeeds in < 100 ms without 10-second delay. Verify session directory structure.
+  - Verify `SIGTERM` immediately releases `proper-lockfile` (< 100 ms re-acquisition).
+  - Verify launching with invalid `cwd` emits `provider.error` delta with readable diagnostic and `settlesTurn: true`.
+  - Verify runner child crash mid-turn emits `provider.error` and marks turn failed without input hang.
 - **Verification Gates:**
   - `npm test` passes.
-  - No 10-second hang when restarting active thread `thr_ixcw5bus8c`.
+  - Live BB test: Running against non-existent directory immediately displays a red error card in BB IDE chat instead of silence.
 
 ---
 
