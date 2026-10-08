@@ -43,7 +43,7 @@ var DynamicPromptSections = class {
     return { ...this.sections };
   }
   updateSections(sections) {
-    Object.assign(this.sections, sections);
+    this.sections = { ...sections };
     this.revision++;
   }
   getRevision() {
@@ -51,10 +51,10 @@ var DynamicPromptSections = class {
   }
 };
 var CANONICAL_TOOL_DEFS = {
-  read: createReadToolDefinition(),
-  write: createWriteToolDefinition(),
-  edit: createEditToolDefinition(),
-  bash: createBashToolDefinition()
+  read: createReadToolDefinition(process.cwd()),
+  write: createWriteToolDefinition(process.cwd()),
+  edit: createEditToolDefinition(process.cwd()),
+  bash: createBashToolDefinition(process.cwd())
 };
 var KEYS = [
   "preamble",
@@ -79,7 +79,9 @@ function resolveContextFiles(options) {
 }
 function resolveSkills(options) {
   if (options.resourceLoader?.getSkills) {
-    return options.resourceLoader.getSkills() ?? [];
+    const res = options.resourceLoader.getSkills();
+    if (Array.isArray(res)) return res;
+    return res?.skills ?? [];
   }
   return [];
 }
@@ -164,12 +166,14 @@ ${cwd.replace(/\\/g, "/")}
 </cwd>`;
     if (options.dynamicSections) {
       const extra = options.dynamicSections.getSections();
-      if (extra.mcp_servers) {
+      if (extra.mcp_servers && typeof extra.mcp_servers === "string" && extra.mcp_servers.trim().length > 0) {
         sections.mcp_servers = `<mcp_servers>
 ${extra.mcp_servers}
 </mcp_servers>`;
       }
-      const otherEntries = Object.entries(extra).filter(([k]) => k !== "mcp_servers");
+      const otherEntries = Object.entries(extra).filter(
+        ([k, text]) => k !== "mcp_servers" && Boolean(text && typeof text === "string" && text.trim().length > 0)
+      );
       if (otherEntries.length > 0) {
         sections.dynamic_sections = otherEntries.map(([name, text]) => `<${name}>
 ${text}
@@ -697,7 +701,7 @@ function hasOutput(api) {
   return typeof api === "object" && api !== null && "output" in api && typeof api.output === "function";
 }
 function createStandardExtensionFactories() {
-  return [createCodemodeExtension({ mode: "auto" }), createToolSearchExtension(), createMcpExtension()];
+  return [createCodemodeExtension({ mode: "on" }), createToolSearchExtension(), createMcpExtension()];
 }
 function adaptExtensionTool(toolDef, executeToolFn, createToolContext, getExtensionRunner) {
   return defineTool({
@@ -724,34 +728,54 @@ function adaptExtensionTool(toolDef, executeToolFn, createToolContext, getExtens
         tools: [],
         executeTool: async (name, nestedArgs, options) => executeToolFn(api.callId, name, nestedArgs, options)
       };
-      const result = await toolDef.execute(
-        api.callId,
-        args2,
-        void 0,
-        (update) => {
-          if (update?.content && hasOutput(api)) {
-            const textChunks = update.content.filter((c) => c.type === "text").map((c) => c.text).join("");
-            if (textChunks.length > 0) api.output(textChunks);
-          }
-        },
-        ctx
-      );
-      if (runner?.hasHandlers("tool_result")) {
-        await runner.emitToolResult({
-          type: "tool_result",
-          toolName: toolDef.name,
-          toolCallId: api.callId,
-          input: args2 ?? {},
+      try {
+        const result = await toolDef.execute(
+          api.callId,
+          args2,
+          void 0,
+          (update) => {
+            if (update?.content && hasOutput(api)) {
+              const textChunks = update.content.filter((c) => c.type === "text").map((c) => c.text).join("");
+              if (textChunks.length > 0) api.output(textChunks);
+            }
+          },
+          ctx
+        );
+        if (runner?.hasHandlers("tool_result")) {
+          await runner.emitToolResult({
+            type: "tool_result",
+            toolName: toolDef.name,
+            toolCallId: api.callId,
+            input: args2 ?? {},
+            content: result.content,
+            details: result.details ?? void 0,
+            isError: result.isError ?? false
+          });
+        }
+        return {
           content: result.content,
-          details: result.details ?? void 0,
-          isError: result.isError
-        });
+          isError: result.isError,
+          details: result.details ?? void 0
+        };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        const errorContent = [{ type: "text", text: message }];
+        if (runner?.hasHandlers("tool_result")) {
+          await runner.emitToolResult({
+            type: "tool_result",
+            toolName: toolDef.name,
+            toolCallId: api.callId,
+            input: args2 ?? {},
+            content: errorContent,
+            details: void 0,
+            isError: true
+          });
+        }
+        return {
+          content: errorContent,
+          isError: true
+        };
       }
-      return {
-        content: result.content,
-        isError: result.isError,
-        details: result.details ?? void 0
-      };
     }
   });
 }
@@ -791,7 +815,7 @@ async function setupExtensionRunner(options) {
       getSystemPrompt: () => ""
     }
   );
-  await runner.emit({ type: "session_start" });
+  await runner.emit({ type: "session_start", reason: "startup" });
   return runner;
 }
 
@@ -854,9 +878,22 @@ function createNestedToolExecutor(registry, getExtensionRunner) {
       };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
+      const errorContent = [{ type: "text", text: message }];
+      if (runner?.hasHandlers("tool_result")) {
+        await runner.emitToolResult({
+          type: "tool_result",
+          toolName: name,
+          toolCallId: `${callerId}/nested`,
+          parentToolCallId: callerId,
+          input: args2 ?? {},
+          content: errorContent,
+          details: {},
+          isError: true
+        });
+      }
       return {
         toolCall: { type: "toolCall", id: `${callerId}/nested`, name, arguments: args2 },
-        result: { content: [{ type: "text", text: message }], details: {} },
+        result: { content: errorContent, details: {} },
         isError: true
       };
     }
@@ -904,7 +941,7 @@ async function mountExtensionBridge(location, modelRuntime, extensionsResult, re
     cleanup: async () => {
       if (extensionRunner) {
         try {
-          await extensionRunner.emit({ type: "session_shutdown", reason: "shutdown" });
+          await extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
         } catch (err) {
           console.warn("[ExtensionBridge] Cleanup session_shutdown failed:", err);
         }
@@ -1009,6 +1046,7 @@ async function loadHarnessEnvironment(location, options, envs) {
   registry.install(Subagent);
   const pendingReports = [];
   const report = (error) => pendingReports.push(error);
+  let liveNoticeForwarder;
   let runnerRef;
   const executeToolFn = createNestedToolExecutor(registry, () => runnerRef);
   const mounted = await mountExtensionBridge(
@@ -1019,7 +1057,13 @@ async function loadHarnessEnvironment(location, options, envs) {
     executeToolFn,
     report,
     dynamicSections,
-    (level, message) => pendingReports.push({ kind: "notice", level, message })
+    (level, message) => {
+      if (liveNoticeForwarder) {
+        liveNoticeForwarder(level, message);
+      } else {
+        pendingReports.push({ kind: "notice", level, message });
+      }
+    }
   );
   runnerRef = mounted.extensionRunner;
   const harness = await Harness.open(
@@ -1043,7 +1087,10 @@ async function loadHarnessEnvironment(location, options, envs) {
     },
     cleanup: mounted.cleanup,
     extensionRunner: mounted.extensionRunner,
-    dynamicSections
+    dynamicSections,
+    setNoticeForwarder: (forwarder) => {
+      liveNoticeForwarder = forwarder;
+    }
   };
 }
 
@@ -1063,24 +1110,26 @@ async function openDurable(options = {}) {
   const location = await selectSession(options.cwd ?? process.cwd(), options.continueSession ?? false, options.session);
   const envs = new ExecutionEnvs(location.cwd);
   let harness;
+  let envState;
   try {
-    const envState2 = await loadHarnessEnvironment(location, options, envs);
-    const { modelRuntime, settingsManager } = envState2;
-    harness = envState2.harness;
+    const activeEnvState = await loadHarnessEnvironment(location, options, envs);
+    envState = activeEnvState;
+    const { modelRuntime, settingsManager } = activeEnvState;
+    harness = activeEnvState.harness;
     const root = await harness.root(runtimeContext, {
       agent: {
         cwd: location.cwd,
-        ...envState2.initialModelRef ? { model: envState2.initialModelRef } : {},
-        ...envState2.initialThinkingLevel ? { thinkingLevel: envState2.initialThinkingLevel } : {}
+        ...activeEnvState.initialModelRef ? { model: activeEnvState.initialModelRef } : {},
+        ...activeEnvState.initialThinkingLevel ? { thinkingLevel: activeEnvState.initialThinkingLevel } : {}
       }
     });
     if (!location.created) {
       const rootAgent = await root.agent(runtimeContext);
-      if (rootAgent.model) envState2.setActiveModelRef(rootAgent.model);
+      if (rootAgent.model) activeEnvState.setActiveModelRef(rootAgent.model);
       if (options.cli !== void 0) {
         const cli = await findInitialAgentModel(settingsManager, modelRuntime, options.cli);
         if (cli.model) {
-          envState2.setActiveModelRef(cli.model);
+          activeEnvState.setActiveModelRef(cli.model);
           await root.configure({ model: cli.model, thinkingLevel: cli.thinkingLevel }, runtimeContext);
         } else if (cli.thinkingLevel !== void 0) {
           await root.configure({ thinkingLevel: cli.thinkingLevel }, runtimeContext);
@@ -1117,7 +1166,15 @@ async function openDurable(options = {}) {
       update({ notices: [...state.notices, { id: nextNotice++, level, message }].slice(-20) });
     };
     const fail = (err) => notice("error", err instanceof Error ? err.message : String(err));
-    for (const err of envState2.pendingReports) notice("warning", err instanceof Error ? err.message : String(err));
+    for (const report of activeEnvState.pendingReports) {
+      if (report && typeof report === "object" && "kind" in report && report.kind === "notice") {
+        const nr = report;
+        notice(nr.level, nr.message);
+      } else {
+        notice("warning", report instanceof Error ? report.message : String(report));
+      }
+    }
+    activeEnvState.setNoticeForwarder?.((level, message) => notice(level, message));
     let unsubscribeConversation = conversation.subscribe((val) => update({ conversation: val }));
     const unsubscribeCommits = harness.subscribeCommits((pub) => {
       let convs = state.conversations;
@@ -1167,9 +1224,9 @@ async function openDurable(options = {}) {
         unsubscribeTasks = fn;
       },
       closeTasks,
-      setActiveModelRef: (ref) => envState2.setActiveModelRef(ref),
-      extensionRunner: envState2.extensionRunner,
-      dynamicSections: envState2.dynamicSections,
+      setActiveModelRef: (ref) => activeEnvState.setActiveModelRef(ref),
+      extensionRunner: activeEnvState.extensionRunner,
+      dynamicSections: activeEnvState.dynamicSections,
       cwd: location.cwd
     });
     const saved = agentOf(state.conversation).model;
@@ -1177,7 +1234,7 @@ async function openDurable(options = {}) {
     else if (!modelRuntime.getModel(saved.provider, saved.modelId)) {
       notice("warning", `Saved model is unavailable: ${saved.provider}/${saved.modelId}`);
     }
-    if (envState2.fallbackMessage) notice("info", envState2.fallbackMessage);
+    if (activeEnvState.fallbackMessage) notice("info", activeEnvState.fallbackMessage);
     await controller.toggleTasks();
     harness.resume();
     let closing;
@@ -1202,7 +1259,7 @@ async function openDurable(options = {}) {
           try {
             await opened.close(runtimeContext);
             await envs.cleanup(runtimeContext);
-            await envState2.cleanup?.();
+            await activeEnvState.cleanup?.();
           } finally {
             await location.release();
           }
@@ -1428,8 +1485,11 @@ var BBEventAdapter = class {
     const lastAssistantEntry = [...entries].reverse().find(
       (e) => isConversationEntryRecord(e) && e.kind === "pi.assistant"
     );
-    const isLastAssistantAborted = lastAssistantEntry?.model?.[0]?.stopReason === "aborted";
-    const isAborted = finalMsg.stopReason === "aborted" || (isLastAssistantAborted ?? false);
+    const firstModelMsg = lastAssistantEntry?.model?.[0];
+    const isLastAssistantAborted = Boolean(
+      firstModelMsg && "stopReason" in firstModelMsg && firstModelMsg.stopReason === "aborted"
+    );
+    const isAborted = finalMsg.stopReason === "aborted" || isLastAssistantAborted;
     if (isAborted && finalMsg.stopReason !== "aborted") {
       finalMsg.stopReason = "aborted";
     }
@@ -1655,6 +1715,10 @@ async function handleActiveSessionCommand(cmd, durable, modelRuntime, args2, res
       break;
     }
     case "set_thinking_level": {
+      if (!cmd.level) {
+        respond.error(cmd.id, "set_thinking_level", "Missing thinking level");
+        return;
+      }
       await durable.controller.setThinkingLevel(cmd.level);
       respond.success(cmd.id, "set_thinking_level");
       break;
@@ -1689,7 +1753,7 @@ async function handleActiveSessionCommand(cmd, durable, modelRuntime, args2, res
       break;
     }
     default: {
-      respond.error(cmd.id, cmd.type, `Unknown command: ${cmd.type}`);
+      respond.error(cmd.id, cmd.type ?? "unknown", `Unknown command: ${cmd.type}`);
       break;
     }
   }
@@ -1886,7 +1950,7 @@ async function main() {
     try {
       await handleActiveSessionCommand(cmd, durable, modelRuntime, args, { success, error });
     } catch (err) {
-      error(cmd.id, cmd.type, err instanceof Error ? err.message : String(err));
+      error(cmd.id, cmd.type ?? "unknown", err instanceof Error ? err.message : String(err));
     }
   });
   sendToBridge({ ready: true, kind: "ready" });

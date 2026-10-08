@@ -22,6 +22,7 @@ export interface RunnerCommandPayload {
 	streamingBehavior?: string;
 	provider?: string;
 	modelId?: string;
+	instructions?: string;
 	level?: import("@earendil-works/pi-ai").ModelThinkingLevel;
 }
 
@@ -95,6 +96,10 @@ export async function handleActiveSessionCommand(
 			break;
 		}
 		case "set_thinking_level": {
+			if (!cmd.level) {
+				respond.error(cmd.id, "set_thinking_level", "Missing thinking level");
+				return;
+			}
 			await durable.controller.setThinkingLevel(cmd.level);
 			respond.success(cmd.id, "set_thinking_level");
 			break;
@@ -129,7 +134,7 @@ export async function handleActiveSessionCommand(
 			break;
 		}
 		default: {
-			respond.error(cmd.id, cmd.type, `Unknown command: ${cmd.type}`);
+			respond.error(cmd.id, cmd.type ?? "unknown", `Unknown command: ${cmd.type}`);
 			break;
 		}
 	}

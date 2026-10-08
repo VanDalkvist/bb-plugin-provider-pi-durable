@@ -81,9 +81,22 @@ export function createNestedToolExecutor(
 			};
 		} catch (err: unknown) {
 			const message = err instanceof Error ? err.message : String(err);
+			const errorContent = [{ type: "text" as const, text: message }];
+			if (runner?.hasHandlers("tool_result")) {
+				await runner.emitToolResult({
+					type: "tool_result",
+					toolName: name,
+					toolCallId: `${callerId}/nested`,
+					parentToolCallId: callerId,
+					input: (args ?? {}) as Record<string, unknown>,
+					content: errorContent,
+					details: {},
+					isError: true,
+				});
+			}
 			return {
 				toolCall: { type: "toolCall", id: `${callerId}/nested`, name, arguments: args },
-				result: { content: [{ type: "text", text: message }], details: {} },
+				result: { content: errorContent, details: {} },
 				isError: true,
 			};
 		}
@@ -146,7 +159,7 @@ export async function mountExtensionBridge(
 		cleanup: async () => {
 			if (extensionRunner) {
 				try {
-					await extensionRunner.emit({ type: "session_shutdown", reason: "shutdown" });
+					await extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
 				} catch (err) {
 					console.warn("[ExtensionBridge] Cleanup session_shutdown failed:", err);
 				}

@@ -34,6 +34,7 @@ export interface LoadedHarnessEnvironment {
 	cleanup?: () => Promise<void>;
 	extensionRunner?: import("@earendil-works/pi-coding-agent").ExtensionRunner;
 	dynamicSections?: DynamicPromptSections;
+	setNoticeForwarder?: (forwarder: (level: "info" | "warning" | "error", message: string) => void) => void;
 }
 
 function registerPendingProviders(modelRuntime: ModelRuntime, runtime: ExtensionRuntime): void {
@@ -87,6 +88,7 @@ export async function loadHarnessEnvironment(
 	const pendingReports: unknown[] = [];
 	const report = (error: unknown) => pendingReports.push(error);
 
+	let liveNoticeForwarder: ((level: "info" | "warning" | "error", message: string) => void) | undefined;
 	let runnerRef: import("@earendil-works/pi-coding-agent").ExtensionRunner | undefined;
 	const executeToolFn = createNestedToolExecutor(registry, () => runnerRef);
 	const mounted = await mountExtensionBridge(
@@ -97,7 +99,13 @@ export async function loadHarnessEnvironment(
 		executeToolFn,
 		report,
 		dynamicSections,
-		(level, message) => pendingReports.push({ kind: "notice", level, message }),
+		(level, message) => {
+			if (liveNoticeForwarder) {
+				liveNoticeForwarder(level, message);
+			} else {
+				pendingReports.push({ kind: "notice", level, message });
+			}
+		},
 	);
 	runnerRef = mounted.extensionRunner;
 
@@ -125,5 +133,8 @@ export async function loadHarnessEnvironment(
 		cleanup: mounted.cleanup,
 		extensionRunner: mounted.extensionRunner,
 		dynamicSections,
+		setNoticeForwarder: (forwarder) => {
+			liveNoticeForwarder = forwarder;
+		},
 	};
 }

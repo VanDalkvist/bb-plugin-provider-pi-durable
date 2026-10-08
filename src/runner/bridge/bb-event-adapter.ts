@@ -4,6 +4,7 @@ import {
 	isAgentDocument,
 	isConversationEntryRecord,
 	type AgentDocument,
+	type ConversationEntryRecord,
 	type BBWireEvent,
 	type BBAssistantMessage,
 	type BBAssistantMessageUsage,
@@ -83,8 +84,11 @@ export class BBEventAdapter {
 		const lastAssistantEntry = [...entries].reverse().find(
 			(e): e is ConversationEntryRecord => isConversationEntryRecord(e) && e.kind === "pi.assistant",
 		);
-		const isLastAssistantAborted = lastAssistantEntry?.model?.[0]?.stopReason === "aborted";
-		const isAborted = finalMsg.stopReason === "aborted" || (isLastAssistantAborted ?? false);
+		const firstModelMsg = lastAssistantEntry?.model?.[0];
+		const isLastAssistantAborted = Boolean(
+			firstModelMsg && "stopReason" in firstModelMsg && (firstModelMsg as { stopReason?: string }).stopReason === "aborted",
+		);
+		const isAborted = finalMsg.stopReason === "aborted" || isLastAssistantAborted;
 
 		if (isAborted && finalMsg.stopReason !== "aborted") {
 			finalMsg.stopReason = "aborted";

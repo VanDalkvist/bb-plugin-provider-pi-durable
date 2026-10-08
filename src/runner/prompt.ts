@@ -12,7 +12,7 @@ import {
 
 export interface ResourceLoaderLike {
 	getAgentsFiles?: () => { agentsFiles: Array<{ path: string; content: string }> };
-	getSkills?: () => Skill[];
+	getSkills?: () => Skill[] | { skills: Skill[] };
 }
 
 export interface DynamicSectionsHolder {
@@ -22,7 +22,7 @@ export interface DynamicSectionsHolder {
 }
 
 export class DynamicPromptSections implements DynamicSectionsHolder {
-	private readonly sections: Record<string, string> = {};
+	private sections: Record<string, string> = {};
 	private revision = 0;
 
 	getSections(): Record<string, string> {
@@ -30,7 +30,7 @@ export class DynamicPromptSections implements DynamicSectionsHolder {
 	}
 
 	updateSections(sections: Record<string, string>): void {
-		Object.assign(this.sections, sections);
+		this.sections = { ...sections };
 		this.revision++;
 	}
 
@@ -48,10 +48,10 @@ export interface PromptOptions {
 }
 
 const CANONICAL_TOOL_DEFS = {
-	read: createReadToolDefinition(),
-	write: createWriteToolDefinition(),
-	edit: createEditToolDefinition(),
-	bash: createBashToolDefinition(),
+	read: createReadToolDefinition(process.cwd()),
+	write: createWriteToolDefinition(process.cwd()),
+	edit: createEditToolDefinition(process.cwd()),
+	bash: createBashToolDefinition(process.cwd()),
 };
 
 const KEYS = [
@@ -79,7 +79,9 @@ function resolveContextFiles(options: PromptOptions): Array<{ path: string; cont
 
 function resolveSkills(options: PromptOptions): Skill[] {
 	if (options.resourceLoader?.getSkills) {
-		return options.resourceLoader.getSkills() ?? [];
+		const res = options.resourceLoader.getSkills();
+		if (Array.isArray(res)) return res;
+		return res?.skills ?? [];
 	}
 	return [];
 }
@@ -171,10 +173,12 @@ export function createPiPrompt(
 
 		if (options.dynamicSections) {
 			const extra = options.dynamicSections.getSections();
-			if (extra.mcp_servers) {
+			if (extra.mcp_servers && typeof extra.mcp_servers === "string" && extra.mcp_servers.trim().length > 0) {
 				sections.mcp_servers = `<mcp_servers>\n${extra.mcp_servers}\n</mcp_servers>`;
 			}
-			const otherEntries = Object.entries(extra).filter(([k]) => k !== "mcp_servers");
+			const otherEntries = Object.entries(extra).filter(
+				([k, text]) => k !== "mcp_servers" && Boolean(text && typeof text === "string" && text.trim().length > 0),
+			);
 			if (otherEntries.length > 0) {
 				sections.dynamic_sections = otherEntries
 					.map(([name, text]) => `<${name}>\n${text}\n</${name}>`)

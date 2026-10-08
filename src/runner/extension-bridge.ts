@@ -38,7 +38,7 @@ export function hasOutput(api: unknown): api is { output(text: string): void } {
 
 /** Returns the standard built-in extension factories provided by Pi. */
 export function createStandardExtensionFactories(): ExtensionFactory[] {
-	return [createCodemodeExtension({ mode: "auto" }), createToolSearchExtension(), createMcpExtension()];
+	return [createCodemodeExtension({ mode: "on" }), createToolSearchExtension(), createMcpExtension()];
 }
 
 /** Adapts an extension ToolDefinition to a Durable ToolRegistration without type escape hatches. */
@@ -75,41 +75,61 @@ export function adaptExtensionTool(
 						tools: [],
 						executeTool: async (name: string, nestedArgs: unknown, options?: { signal?: AbortSignal }) =>
 							executeToolFn(api.callId, name, nestedArgs, options),
-					} as ExtensionToolContext);
+					} as unknown as ExtensionToolContext);
 
-			const result = await toolDef.execute(
-				api.callId,
-				args,
-				undefined,
-				(update) => {
-					if (update?.content && hasOutput(api)) {
-						const textChunks = update.content
-							.filter((c): c is { type: "text"; text: string } => c.type === "text")
-							.map((c) => c.text)
-							.join("");
-						if (textChunks.length > 0) api.output(textChunks);
-					}
-				},
-				ctx,
-			);
+			try {
+				const result = await toolDef.execute(
+					api.callId,
+					args,
+					undefined,
+					(update) => {
+						if (update?.content && hasOutput(api)) {
+							const textChunks = update.content
+								.filter((c): c is { type: "text"; text: string } => c.type === "text")
+								.map((c) => c.text)
+								.join("");
+							if (textChunks.length > 0) api.output(textChunks);
+						}
+					},
+					ctx,
+				);
 
-			if (runner?.hasHandlers("tool_result")) {
-				await runner.emitToolResult({
-					type: "tool_result",
-					toolName: toolDef.name,
-					toolCallId: api.callId,
-					input: (args ?? {}) as Record<string, unknown>,
+				if (runner?.hasHandlers("tool_result")) {
+					await runner.emitToolResult({
+						type: "tool_result",
+						toolName: toolDef.name,
+						toolCallId: api.callId,
+						input: (args ?? {}) as Record<string, unknown>,
+						content: result.content,
+						details: (result.details ?? undefined) as JsonValue | undefined,
+						isError: result.isError ?? false,
+					});
+				}
+
+				return {
 					content: result.content,
-					details: (result.details ?? undefined) as JsonValue | undefined,
 					isError: result.isError,
-				});
+					details: (result.details ?? undefined) as JsonValue | undefined,
+				};
+			} catch (err: unknown) {
+				const message = err instanceof Error ? err.message : String(err);
+				const errorContent = [{ type: "text" as const, text: message }];
+				if (runner?.hasHandlers("tool_result")) {
+					await runner.emitToolResult({
+						type: "tool_result",
+						toolName: toolDef.name,
+						toolCallId: api.callId,
+						input: (args ?? {}) as Record<string, unknown>,
+						content: errorContent,
+						details: undefined,
+						isError: true,
+					});
+				}
+				return {
+					content: errorContent,
+					isError: true,
+				};
 			}
-
-			return {
-				content: result.content,
-				isError: result.isError,
-				details: (result.details ?? undefined) as JsonValue | undefined,
-			};
 		},
 	});
 }
@@ -154,10 +174,11 @@ export async function setupExtensionRunner(options: SetupExtensionRunnerOptions)
 			refreshTools: () => {
 				options.onToolsChanged?.();
 			},
-		},
+		} as unknown as import("@earendil-works/pi-coding-agent").ExtensionActions,
 		{
 			isProjectTrusted: () => true,
-			executeTool: (callerId, name, args, opts) => options.executeToolFn(callerId, name, args, opts),
+			executeTool: (callerId: string, name: string, args: unknown, opts?: { signal?: AbortSignal }) =>
+				options.executeToolFn(callerId, name, args, opts),
 			getCallableTools: () =>
 				options.getCallableTools
 					? options.getCallableTools()
@@ -167,9 +188,9 @@ export async function setupExtensionRunner(options: SetupExtensionRunnerOptions)
 							parameters: t.definition.parameters,
 						})),
 			getSystemPrompt: () => "",
-		},
+		} as unknown as import("@earendil-works/pi-coding-agent").ExtensionContextActions,
 	);
 
-	await runner.emit({ type: "session_start" });
+	await runner.emit({ type: "session_start", reason: "startup" });
 	return runner;
 }

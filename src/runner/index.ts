@@ -6,7 +6,7 @@ import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { BBEventAdapter } from "./bridge/bb-event-adapter.ts";
 import type { BBWireEvent } from "./bridge/contracts.ts";
 import { parseCliArgs } from "./cli-args.ts";
-import { handleActiveSessionCommand } from "./session-commands.ts";
+import { handleActiveSessionCommand, type RunnerCommandPayload } from "./session-commands.ts";
 import { getPiDurableVersion } from "./version.ts";
 import { createBridgeSender, initBridgeInboundChannel } from "./bridge-channel.ts";
 
@@ -137,9 +137,9 @@ async function main() {
 
 	// Handle stdin RPC commands in active session
 	attachJsonlLineReader(process.stdin, async (line) => {
-		let cmd: any;
+		let cmd: RunnerCommandPayload;
 		try {
-			cmd = JSON.parse(line);
+			cmd = JSON.parse(line) as RunnerCommandPayload;
 		} catch (e) {
 			error(undefined, "parse", `Invalid JSON: ${e}`);
 			return;
@@ -148,7 +148,7 @@ async function main() {
 		try {
 			await handleActiveSessionCommand(cmd, durable, modelRuntime, args, { success, error });
 		} catch (err) {
-			error(cmd.id, cmd.type, err instanceof Error ? err.message : String(err));
+			error(cmd.id, cmd.type ?? "unknown", err instanceof Error ? err.message : String(err));
 		}
 	});
 

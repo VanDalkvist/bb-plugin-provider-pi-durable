@@ -19,11 +19,11 @@ export interface DeltaTranslatorContext {
 
 export class DeltaTranslator {
 	private activeTools = new Map<string, Record<string, unknown>>();
-	private currentThinkingIndex = 0;
-	private currentAgentText = "";
+	public currentThinkingIndex = 0;
+	public currentAgentText = "";
 	private turnOpenSent = false;
 	private turnBoundarySent = false;
-	private openThinkingChannels = new Set<string>();
+	public openThinkingChannels = new Set<string>();
 
 	public reset(): void {
 		this.activeTools.clear();

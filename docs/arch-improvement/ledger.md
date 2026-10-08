@@ -994,6 +994,59 @@ Resolve findings F-65-1, F-65-2, and F-65-3:
   - `AP-029`: Strict TypeScript with zero `as any` in entire `src/` directory.
 - **Residual Risk:** None. All dynamic extensions and direct MCP servers cleanly synchronized.
 
+---
+
+### Cycle 74.1 Remediation: Audit Finding Fixes & Strict TypeScript Parity
+- **Release:** `v0.2.20`
+- **Date:** 2026-10-08
+- **Governing Standard:** `arch-rules.md` (AP-010 – AP-071)
+- **Plan Reference:** `docs/superpowers/plans/2026-10-08-arch-improvement-cycle-74.1-remediation.md`
+- **Tests Passing:** 123/123 tests (10 suites, 0 failures, 0 skips)
+
+#### Context & Objectives
+Remediate all findings flagged by the Independent Auditor in `thr_reatqq4wr6` for Cycle 74 (`3f504f8`):
+1. **[P1-1] UI Notice Forwarding (D-19):** Notice objects were stringified into `"[object Object]"` and subsequent mid-session notices were lost.
+2. **[P1-2] Scoping Bug in `openDurable` (`src/runner/runtime.ts`):** `envState` was scoped inside `try`, causing `ReferenceError` during error cleanup in `catch`.
+3. **[P2-1] Guaranteed `tool_result` Emission on Tool Exception:** Tool execution exceptions did not emit `tool_result` events in `adaptExtensionTool` and `createNestedToolExecutor`.
+4. **[P2-2] Dynamic Prompt Truthy & Whitespace Check:** Empty or whitespace dynamic sections generated empty XML tags.
+5. **[P2-3] TypeScript Type Consistency in `session-commands.ts`:** Missing `instructions?`, unguarded `cmd.level`, unguarded `cmd.type`.
+6. **[P3] Clean Dynamic Prompt Section Replacement:** `updateSections` used `Object.assign`, leaking removed sections across turns.
+7. **Zero TypeScript Errors (`tsc --noEmit`):** Full elimination of type errors across the entire codebase with zero `as any`.
+
+#### Key Implementations
+1. **`src/runner/runtime-loader.ts` & `src/runner/runtime.ts`:**
+   - Hoisted `let envState: LoadedHarnessEnvironment | undefined;` above `try` block in `openDurable` to guarantee safe cleanup on startup failures.
+   - Unpacked `{ kind: "notice", level, message }` records in `pendingReports` without `"[object Object]"`.
+   - Introduced `setNoticeForwarder` hook on `LoadedHarnessEnvironment` to forward post-startup notices live to `notice(level, message)`.
+2. **`src/runner/extension-bridge.ts` & `src/runner/extension-mount.ts`:**
+   - Wrapped tool execution in `adaptExtensionTool` in `try / catch`, emitting `runner.emitToolResult({ ..., isError: true })` on exceptions.
+   - Wrapped target execution in `createNestedToolExecutor` in `try / catch`, emitting `runner.emitToolResult({ ..., isError: true })` before returning error outcome.
+   - Updated `session_shutdown` reason to `"quit"` and `session_start` reason to `"startup"`.
+3. **`src/runner/prompt.ts`:**
+   - Updated `DynamicPromptSections.updateSections(sections)` to cleanly replace `this.sections = { ...sections }`.
+   - Filtered out empty and whitespace-only dynamic sections and `mcp_servers` in `buildSections`.
+   - Supplied `process.cwd()` to canonical tool definition factories.
+   - Added `Skill[] | { skills: Skill[] }` support to `ResourceLoaderLike`.
+4. **`src/runner/session-commands.ts` & `src/runner/index.ts`:**
+   - Added `instructions?: string` to `RunnerCommandPayload`.
+   - Guarded `cmd.level` before calling `setThinkingLevel` with explicit error response.
+   - Handled `cmd.type ?? "unknown"` in `default:` error response.
+5. **Strict TypeScript & Architecture Invariants:**
+   - Narrowed bridge parameters in `src/host/bridge.ts`.
+   - Made translation state properties public in `src/host/delta-translator.ts`.
+   - Aligned `ConversationEntryRecord` with `EntryRecord`.
+   - All files strictly < 241 lines (< 250 hard limit, AP-019). Zero `as any` in `src/` (AP-029).
+   - Added comprehensive regression suite in `tests/cycle-74-remediation.test.ts`.
+
+#### Verification & Architecture Compliance
+- `npx tsc --noEmit`: **0 errors (exit code 0)**.
+- `npm run build`: **Success** (`dist/runner/index.js`, `dist/host.js`, `dist/server.js`).
+- `npm test`: **123 / 123 tests passing (10 suites, 0 failures, 0 skips)**.
+- `AP-019`: All modified and new files under 241 lines (< 250 hard limit).
+- `AP-029`: Strict TypeScript with zero `as any` across all source files.
+- **Residual Risk:** None. All audit findings resolved.
+
+
 
 
 

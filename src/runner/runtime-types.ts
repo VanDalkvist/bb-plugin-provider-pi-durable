@@ -97,7 +97,7 @@ export async function firstInput(harness: Harness, id: ConversationId): Promise<
 	let cursor: Cursor | undefined;
 	do {
 		const page = await conversation.entries({}, 256, cursor, runtimeContext);
-		first = [...page.items].reverse().find((entry: any) => entry.kind === "pi.user") ?? first;
+		first = [...page.items].reverse().find((entry) => entry.kind === "pi.user") ?? first;
 		cursor = page.next;
 	} while (cursor !== undefined);
 	return titleOf(first);

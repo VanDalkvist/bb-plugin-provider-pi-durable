@@ -71,7 +71,8 @@ export class ProviderBridge {
 		const { id, method, params = {} } = req;
 
 		try {
-			const discoveryResult = await handleDiscoveryRequest(method, params, getSharedCatalog(params.cwd));
+			const catalogCwd = typeof params.cwd === "string" ? params.cwd : undefined;
+			const discoveryResult = await handleDiscoveryRequest(method, params, getSharedCatalog(catalogCwd));
 			if (discoveryResult !== null) {
 				this.sendResult(id, discoveryResult);
 				return;
@@ -80,15 +81,17 @@ export class ProviderBridge {
 			switch (method) {
 				case "thread/start":
 				case "thread/resume": {
-					const threadId = params.threadId;
-					const providerThreadId = params.providerThreadId || `pi_durable_${Date.now()}`;
+					const threadId = typeof params.threadId === "string" ? params.threadId : String(params.threadId ?? "");
+					const providerThreadId = typeof params.providerThreadId === "string" && params.providerThreadId
+						? params.providerThreadId
+						: `pi_durable_${Date.now()}`;
 					await this.registry.createOrGet(threadId, providerThreadId, params);
 					this.sendResult(id, { providerThreadId, sessionRestorable: true });
 					break;
 				}
 
 				case "thread/fork": {
-					const threadId = params.threadId;
+					const threadId = typeof params.threadId === "string" ? params.threadId : String(params.threadId ?? "");
 					const sourceProviderThreadId = params.sourceProviderThreadId;
 					const checkpointId = params.sourceProviderCheckpointId;
 					const targetProviderThreadId = `pi_durable_${Date.now()}`;
@@ -125,7 +128,7 @@ export class ProviderBridge {
 				}
 
 				case "thread/discard": {
-					await this.registry.stop(params.threadId);
+					await this.registry.stop(String(params.threadId ?? ""));
 					this.sendResult(id, { ok: true });
 					break;
 				}

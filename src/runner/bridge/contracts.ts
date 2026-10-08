@@ -185,20 +185,7 @@ export interface ToolCallBlock {
 	[key: string]: unknown;
 }
 
-export interface ConversationEntryRecord {
-	readonly id: number;
-	readonly conversationId: number;
-	kind?: string;
-	model?: Array<{
-		role?: string;
-		isError?: boolean;
-		content?: unknown;
-		stopReason?: string;
-		usage?: BBAssistantMessageUsage;
-		[key: string]: unknown;
-	}>;
-	[key: string]: unknown;
-}
+export type ConversationEntryRecord = import("@earendil-works/pi-durable").EntryRecord;
 
 export interface LiveToolSlotRecord {
 	id?: string | number;
