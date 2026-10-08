@@ -1090,6 +1090,45 @@ Execute the Master Parity Conformance Audit for `bb-plugin-provider-pi-durable`,
 - `AP-029`: Strict TypeScript with zero `as any` across `src/` and `tests/master-parity-conformance.test.ts`.
 - **Residual Risk:** None. Full architectural parity confirmed across the entire parity matrix.
 
+---
+
+### Cycle 75.1: File Diff Synthesis & Clean Path Relativization (D-21, Remediation)
+- **Release:** `v0.2.21`
+- **Date:** 2026-10-08
+- **Governing Standard:** `arch-rules.md` (AP-010 – AP-071)
+- **Tests Passing:** 135/135 tests (10 suites, 0 failures, 0 skips)
+
+#### Context & Objectives
+Remediate the file change diff presentation bug in BB IDE for `bb-plugin-provider-pi-durable`:
+- **Observed Defect:** When files were created via `write` tool (e.g. `tests/master-parity-conformance.test.ts`), the expanded file card in BB IDE displayed `b/<path>` with `+0 -0` diffStats, even though the row summary showed `Created <filename> +<lines>`. In contrast, files edited via `edit` tool showed clean paths and correct diff stats.
+- **Root Cause Forensic Analysis:**
+  1. Pi's `write` tool returns `{ content: [...], details: undefined }` without diff metadata.
+  2. `translateToolEnd` previously attached diffs only if `event.details.diff` or `event.details.patch` existed, leaving `changes[0].diff` as `undefined` for `write`.
+  3. BB IDE server diff calculation (`getFileChangeDiffStats` in `start-server.js`) returns `EMPTY_DIFF_STATS` (`{ added: 0, removed: 0 }`) when `!change.diff`.
+  4. BB IDE frontend patch parsing (`parsePatch` in `dist-CETM3qzT.js`): if a patch contains `--- a/...` and `+++ b/...` without a leading `diff --git a/... b/...`, `parsePatch` treats it as a rename (`prevName: "a/..."`, `name: "b/..."`, `type: "rename-changed"`), causing the `b/` prefix to leak into the UI card header (`git-diff-patch-text-C5poYycl.js`).
+- **D-21 Architectural Divergence Contract:**
+  1. **Canonical Git Unified Diff Synthesis:** When a `write` tool execution ends (or in `translateToolEnd`), if `changes[0]` has `kind === "add"` and `newText`, synthesize a canonical unified git patch:
+     ```
+     diff --git a/${cleanPath} b/${cleanPath}
+     --- /dev/null
+     +++ b/${cleanPath}
+     @@ -0,0 +1,${lineCount} @@
+     +line1
+     +line2
+     ```
+     For empty content (`""`), line count is 0 (`@@ -0,0 +0,0 @@`).
+  2. **Clean Path Relativization:** Normalize file paths and strip spurious `b/` or `a/` prefixes and leading `./` in `normalizeFilePath`.
+  3. **Edit Patch Normalization:** Normalize patches for `edit` tools to standard git headers (`diff --git a/${cleanPath} b/${cleanPath}`) to prevent parsePatch from treating changes as renames with `b/` prefixes.
+  4. **Modular Architecture (AP-019):** Diff utilities extracted to `src/host/diff-utils.ts` (183 lines, < 250 limit), keeping `src/host/tool-delta-translator.ts` at 201 lines (< 250 limit).
+
+#### Verification & Architecture Compliance
+- `npx tsc --noEmit`: **0 errors (exit code 0)**.
+- `npm run build`: **Success** (`dist/runner/index.js`, `dist/host.js`, `dist/server.js`).
+- `npm test`: **135 / 135 tests passing across 10 test suites (0 failures, 0 skips)**.
+- `AP-019`: All source and test files strictly < 250 lines (`src/host/diff-utils.ts` = 183 lines, `src/host/tool-delta-translator.ts` = 201 lines, `tests/tool-delta-translator.test.ts` = 216 lines).
+- `AP-029`: Strict TypeScript with zero `as any` across newly added modules and updated test files.
+- **Residual Risk:** None. Diff synthesis and clean path relativization confirmed with 100% deterministic test coverage.
+
 
 
 

@@ -1,4 +1,12 @@
 import type { RunnerEvent, ThreadDelta } from "./types.ts";
+import {
+	normalizeFilePath,
+	synthesizeAddDiff,
+	normalizeGitPatch,
+	resolveFileChangeItem,
+} from "./diff-utils.ts";
+
+export { normalizeFilePath, synthesizeAddDiff, normalizeGitPatch, resolveFileChangeItem };
 
 interface RawEditItem {
 	oldText?: unknown;
@@ -35,7 +43,7 @@ export function buildToolItemShape(
 	}
 
 	if (toolName === "write") {
-		const filePath = typeof args.path === "string" ? args.path : "";
+		const filePath = normalizeFilePath(args.path, fallbackCwd);
 		const newText = typeof args.content === "string" ? args.content : undefined;
 		return {
 			type: "fileChange",
@@ -46,7 +54,7 @@ export function buildToolItemShape(
 	}
 
 	if (toolName === "edit") {
-		const filePath = typeof args.path === "string" ? args.path : "";
+		const filePath = normalizeFilePath(args.path, fallbackCwd);
 		if (!filePath) {
 			return { type: "fileChange", changes: [] };
 		}
@@ -150,26 +158,8 @@ export function translateToolEnd(
 	const isError = Boolean(event.isError);
 
 	let item = shape;
-	if (item.type === "fileChange" && Array.isArray(item.changes)) {
-		const detailsObj = typeof event.details === "object" && event.details !== null
-			? (event.details as Record<string, unknown>)
-			: undefined;
-		const diff = typeof detailsObj?.diff === "string"
-			? detailsObj.diff
-			: typeof detailsObj?.patch === "string"
-				? detailsObj.patch
-				: undefined;
-		if (diff && item.changes.length > 0) {
-			item = {
-				...item,
-				changes: item.changes.map((change: unknown, index: number) => {
-					if (typeof change === "object" && change !== null && index === 0) {
-						return { ...change, diff };
-					}
-					return change;
-				}),
-			};
-		}
+	if (item.type === "fileChange") {
+		item = resolveFileChangeItem(item, event, fallbackCwd);
 	} else if (item.type === "tool" && isError) {
 		item = {
 			...item,

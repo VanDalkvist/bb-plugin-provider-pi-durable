@@ -95,6 +95,7 @@ Because `@earendil-works/pi-durable` is an execution engine rather than an agent
 | **D-18**| **Отсутствие хуков `tool_call`/`tool_result` в runner** | Ленивое ожидание серверов в `codemode` и guardrails (`skill-guardian`) не работают | ✅ **FIXED** (Проброс `tool_call` и `tool_result` в `extensionRunner`) | `v0.2.20` (Cycle 74) |
 | **D-19**| **Глушение UI и диагностических notice расширений** | Ошибки и статусы MCP (`needs-auth`, сбои соединения) тонут в `noOpUIContext` | ✅ **FIXED** (Привязка `runner.setUIContext` к wire notice и логам хоста) | `v0.2.20` (Cycle 74) |
 | **D-20**| **Блокировка сессий сиротами и жесткая привязка к ~/.bb** | Сиротские раннеры вешают `session.sqlite`; `BB_DATA_DIR` не учитывается при поиске раннера | ✅ **FIXED** (session.owner.json, graceful eviction, teardown, Issue #7) | `v0.2.17` (Cycle 71) |
+| **D-21**| **Синтез Git Diff для `write` и очистка префиксов путей** | Pi `write` не генерирует diff; BB IDE показывает `b/<path>` и `+0 -0` | ✅ **FIXED** (Синтез `diff --git`, очистка `b/`/`a/` и нормализация патчей `edit`) | `v0.2.21` (Cycle 75.1) |
 
 ---
 
@@ -125,7 +126,8 @@ STAGE 2: РАСШИРЕННЫЕ ВОЗМОЖНОСТИ ДВИЖКА И ПОЛН�
   - Cycle 72: Визуальные карточки сабагентов через протокольный deltaDelegationShape (type: "delegation") [✅ ЗАВЕРШЕНО, v0.2.18]
   - Cycle 73: Корректное прерывание хода, inbox-отмена и обработка thread/stop (submission.abort) [✅ ЗАВЕРШЕНО, v0.2.19]
   - Cycle 74: Паритет жизненного цикла расширений Pi и надёжность MCP-серверов (D-16, D-17, D-18, D-19) [✅ ЗАВЕРШЕНО, v0.2.20]
-  - Cycle 75: Мастер-аттестация паритета с нативным provider-pi и conformance-тесты [⏳ СЛЕДУЮЩИЙ, v0.2.21]
+  - Cycle 75: Мастер-аттестация паритета с нативным provider-pi и conformance-тесты [✅ ЗАВЕРШЕНО, v0.2.21]
+  - Cycle 75.1: Синтез Git Diff для write, очистка путей и устранение утечки b/ префикса (D-21) [✅ ЗАВЕРШЕНО, v0.2.21]
 ```
 
 ---
@@ -269,6 +271,21 @@ STAGE 2: РАСШИРЕННЫЕ ВОЗМОЖНОСТИ ДВИЖКА И ПОЛН�
   2. Проверка соответствия лимитам строк (AP-019), строгой типизации (AP-029), отсутствию гонок lockfile (AP-033).
   3. Фиксация стабильного релизного тега.
 - **Файлы:** Полный сьют тестов `tests/*.test.ts`, `docs/arch-improvement/ledger.md`.
+
+---
+
+### Cycle 75.1: File Diff Synthesis & Clean Path Relativization (D-21, Remediation)
+- **Цель:** Устранить дефект отображения диффов файлов в карточках BB IDE при использовании `write` тула (`b/<path>` и `+0 -0`).
+- **Архитектурный анализ первоисточников:**
+  1. Pi's `write` tool возвращает `{ content: [...], details: undefined }` без метаданных диффа.
+  2. В `server/dist/start-server.js`: `getFileChangeDiffStats(change)` возвращает `EMPTY_DIFF_STATS` (`{ added: 0, removed: 0 }`), если `change.diff` отсутствует.
+  3. В BB IDE frontend (`dist-CETM3qzT.js`): `parsePatch` при отсутствии заголовка `diff --git a/... b/...` воспринимает блок с `--- a/...` и `+++ b/...` как операцию переименования (`type: "rename-changed"`), из-за чего префикс `b/` утекает в заголовок карточки (`git-diff-patch-text-C5poYycl.js`), а diffStats сбрасываются в ноль.
+- **Решение (D-21):**
+  1. Синтез канонического unified git diff для `write` (`diff --git a/${cleanPath} b/${cleanPath}`) с вычислением строк (`@@ -0,0 +1,${lineCount} @@`).
+  2. Очистка и нормализация путей от ложных `b/`, `a/` и `./` префиксов в `normalizeFilePath`.
+  3. Нормализация патчей для `edit` с чистыми `diff --git` заголовками.
+  4. Вынесение логики в `src/host/diff-utils.ts` (< 250 строк по AP-019).
+- **Файлы:** `src/host/diff-utils.ts`, `src/host/tool-delta-translator.ts`, `tests/tool-delta-translator.test.ts`.
 
 ---
 
