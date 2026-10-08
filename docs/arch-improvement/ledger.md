@@ -1046,6 +1046,51 @@ Remediate all findings flagged by the Independent Auditor in `thr_reatqq4wr6` fo
 - `AP-029`: Strict TypeScript with zero `as any` across all source files.
 - **Residual Risk:** None. All audit findings resolved.
 
+---
+
+### Cycle 75: Master Parity Conformance Audit & E2E Verification
+- **Release:** `v0.2.21`
+- **Date:** 2026-10-08
+- **Governing Standard:** `arch-rules.md` (AP-010 – AP-071)
+- **Tests Passing:** 131/131 tests (11 suites, 0 failures, 0 skips)
+
+#### Context & Objectives
+Execute the Master Parity Conformance Audit for `bb-plugin-provider-pi-durable`, validating all 20 architectural divergence points (D-1 through D-20) against source code, contracts, and deterministic end-to-end tests:
+1. **D-1 (Thinking Presentation & Collapsible UI):** Reasoning stream starts with `item.open` carrying `presentation: { glyph: "Brain", label: "Thinking" }` and streams `item.textDelta`. Suppressed when `hideThinking: true`. Fallback channel closure on `text_delta` or `message_end`.
+2. **D-2 (Server Manifest & Settings Entrypoint):** `server.ts` registers settings schema and `deriveProviderOptions(ctx)` correctly extracts and maps options (`hideThinking`).
+3. **D-3 (Thinking Level Lifecycle):** `initialThinkingLevel` initialized at boot, reconfigured on session resumption, controlled via `set_thinking_level` command, and closes reasoning stream with `item.textClose`.
+4. **D-4 (Settings Schema Parity):** Unsupported legacy settings (e.g., `openThinkingByDefault`) retired; canonical `hideThinking` (boolean, default false) preserved.
+5. **D-5 (Tool Fault Integrity):** Missing entry records (`entry === undefined`) or runtime faults mapped to `tool_execution_end` with `isError: true`, status `"failed"`, `exitCode: 1`, and descriptive error message.
+6. **D-6 (Diff Metadata & File Change Structure):** Tool calls mapped to `fileChange` items (`write` -> `kind: "add"`, `edit` -> `kind: "update"` with granular edits) and attaches `diff`/`patch` strings to `item.changes[0].diff`.
+7. **D-7 (Cumulative Usage Monotonicity):** Synchronized with native `pi.usage` document from Durable view. Monotonic cumulative usage spend mapped to `delta.total`, while turn spend is tracked in `delta.last`.
+8. **D-9 (Streaming Output Updates):** `tool_execution_update` extracts and forwards `trimStart` for streaming truncation diagnostics.
+9. **D-8 (Checkpoint Extraction):** Checkpoint ID extracted from conversation tail entry on `turn_end` and `run_end` (and `snapshot` stream attachments) and attached to `turn.boundary` delta.
+10. **D-10 (Thread Fork via Checkpoint):** `thread/fork` RPC invokes `forkSessionDatabase` to clone parent SQLite DB, execute WAL checkpoint truncation, and prune entries beyond `checkpointId`.
+11. **D-11 (Turn Interruption & Abort Isolation):** Assistant message stop reason `aborted` isolated to active turn, mapped to `turn.boundary` status `"interrupted"`.
+12. **D-12 (Inbox Abort Handling):** `thread/stop` with `intent: "interrupt"` emits `{ kind: "session.ended" }`, calls `session.abort()`, retains session in registry, and returns `{ ok: true, providerCheckpointId }`.
+13. **D-13 (Thread Stop & Release):** `thread/stop` with `intent: "release"` calls `session.closeGracefully()`, purges session from registry, and returns `{ ok: true }`.
+14. **D-14 (Subagent Delegation Visual Cards):** `subagent` tool mapped to `type: "delegation"` with Bot glyph accordion presentation.
+15. **D-15 (Subagent Child Conversation Resolution):** `translateToolEnd` extracts `event.details.conversationId` and attaches to `childRef`.
+16. **D-16 (Extension Startup Race):** `mountExtensionBridge` invokes `emitBeforeAgentStart` at startup, awaiting direct MCP servers (`waitForDirectServers`) prior to advertising tools.
+17. **D-17 (Dynamic System Prompt Sections):** Dynamic extension sections (`mcp_servers`, custom sections) rendered with XML tags (`<mcp_servers>`, `<tag>`) and tracked via revision cache in `DynamicPromptSections`.
+18. **D-18 (Tool Execution Hooks & Lazy MCP Waiting):** `adaptExtensionTool` and `createNestedToolExecutor` wrap tool execution in `emitToolCall` and `emitToolResult` lifecycle hooks, handling guardrails and errors.
+19. **D-19 (UI Diagnostics & Notices):** `setNoticeForwarder` and `setUIContext({ notify })` forward runtime notices live without `[object Object]` corruption.
+20. **D-20 (Orphan Process Eviction & Ownership):** `session.owner.json` written on lock acquisition and cleared on release. Dead PIDs evicted immediately, live orphans signaled with SIGTERM escalating to SIGKILL.
+
+#### Master Parity Conformance Test Suite
+- Created `tests/master-parity-conformance.test.ts` (239 lines, strictly < 250 hard limit, AP-019).
+- 8 comprehensive end-to-end conformance test suites validating D-1 through D-20 in deterministic isolation (AP-028).
+- 100% strict TypeScript with zero `as any` (AP-029).
+
+#### Verification & Architecture Compliance
+- `npx tsc --noEmit`: **0 errors (exit code 0)**.
+- `npm run build`: **Success** (`dist/runner/index.js`, `dist/host.js`, `dist/server.js`).
+- `npm test`: **131 / 131 tests passing across 11 test suites (0 failures, 0 skips)**.
+- `AP-019`: All source and test files strictly < 250 lines (`src/**/*.ts` max 226 lines; `tests/master-parity-conformance.test.ts` = 239 lines).
+- `AP-029`: Strict TypeScript with zero `as any` across `src/` and `tests/master-parity-conformance.test.ts`.
+- **Residual Risk:** None. Full architectural parity confirmed across the entire parity matrix.
+
+
 
 
 
