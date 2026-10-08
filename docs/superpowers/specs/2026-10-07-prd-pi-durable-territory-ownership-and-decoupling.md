@@ -1,10 +1,10 @@
 # PRD: Архитектурное выравнивание территорий и устранение чужого владения в `bb-plugin-provider-pi-durable`
 
-**Статус:** ⏳ IN PROGRESS (Cycles 61–70 Completed & Verified, Cycles 71–75 Scheduled)  
+**Статус:** ⏳ IN PROGRESS (Cycles 61–72 Completed & Verified, Cycles 73–75 Scheduled)  
 **Дата создания:** 2026-10-07  
-**Дата актуализации:** 2026-10-08 (полная синхронизация нумерации, D-7, D-20, Issue #7)  
+**Дата актуализации:** 2026-10-08 (полная синхронизация нумерации, D-7, D-20, Issue #7, Delegation Cards)  
 **Автор:** Lead Architect & Agent Systems Engineer  
-**Реализовано в релизах:** `v0.2.7` (Cycles 61–62), `v0.2.8` (Cycle 63), `v0.2.9` (Cycle 64), `v0.2.10` (Cycle 65), `v0.2.11` (Cycle 66), `v0.2.12` (Cycle 67), `v0.2.13` (Cycle 68), `v0.2.14` (Cycle 68.1), `v0.2.15` (Cycle 69), `v0.2.16` (Cycle 70)  
+**Реализовано в релизах:** `v0.2.7` (Cycles 61–62), `v0.2.8` (Cycle 63), `v0.2.9` (Cycle 64), `v0.2.10` (Cycle 65), `v0.2.11` (Cycle 66), `v0.2.12` (Cycle 67), `v0.2.13` (Cycle 68), `v0.2.14` (Cycle 68.1), `v0.2.15` (Cycle 69), `v0.2.16` (Cycle 70), `v0.2.17` (Cycle 71), `v0.2.18` (Cycle 72)  
 
 ---
 
@@ -132,10 +132,13 @@ src/
   3. **Worker Teardown (AP-027):** Обработчики `disconnect`, `SIGTERM`, `SIGINT` в `src/host/index.ts` с вызовом `bridge.shutdown()`.
   4. **BB_DATA_DIR Portability (Issue #7):** Поддержка `process.env.BB_DATA_DIR` с фоллбеком на `~/.bb` для поиска `bb.db` и кэша плагинов.
 
-### Срез 10: Визуальные карточки сабагентов (Cycle 72, v0.2.18)
-- Трансляция `subagent` в карточки `deltaDelegationShapeSchema` (`type: "delegation"`).
+### Срез 10: Визуальные карточки сабагентов (Cycle 72, v0.2.18) [✅ Выполнено в Cycle 72, v0.2.18]
+- **Результат:**
+  - В `buildToolItemShape` добавлена поддержка инструмента `subagent` с трансляцией в форму `deltaDelegationShapeSchema` (`{ type: "delegation", childRef, label, background: false, summary }`).
+  - В `translateToolStart` добавлена презентация с бот-иконкой (`glyph: "Bot"`).
+  - В `translateToolEnd` реализовано извлечение `conversationId` из `event.details.conversationId` для обновления `childRef`, усечение резюме до 300 символов и сохранение презентации карточки. Все дельты валидируются runtime Zod-схемой `threadDeltaSchema`. 105/105 тестов зеленые.
 
-### Срез 11: Прерывание хода и отмена очереди (Cycle 73, v0.2.19)
+### Срез 11: Прерывание хода и отмена очереди (Cycle 73, v0.2.19) [⏳ СЛЕДУЮЩИЙ, v0.2.19]
 - Прерывание по `thread/stop` (`intent: "interrupt"`) через `submission.abort` в `docs["pi.inbox"]`.
 
 ### Срез 12: Паритет жизненного цикла расширений Pi и надёжность MCP (D-16..D-19) [Cycle 74, v0.2.20]
