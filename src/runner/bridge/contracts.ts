@@ -87,6 +87,8 @@ export interface BBTurnEndEvent {
 	contextWindow?: number;
 	providerCheckpointId?: string;
 	cumulativeUsage?: CumulativeUsageMetrics;
+	aborted?: boolean;
+	stopReason?: string;
 }
 
 export interface BBMessageEndEvent {
@@ -100,6 +102,8 @@ export interface BBAgentEndEvent {
 	providerCheckpointId?: string;
 	contextWindow?: number;
 	cumulativeUsage?: CumulativeUsageMetrics;
+	aborted?: boolean;
+	stopReason?: string;
 }
 
 export interface BBCompactionStartEvent {

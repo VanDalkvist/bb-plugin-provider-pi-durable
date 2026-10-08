@@ -66,6 +66,8 @@ export interface RunnerEvent {
 	type: string;
 	providerCheckpointId?: string;
 	cumulativeUsage?: CumulativeUsageMetrics;
+	aborted?: boolean;
+	stopReason?: string;
 	[key: string]: unknown;
 }
 

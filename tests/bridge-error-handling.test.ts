@@ -53,11 +53,22 @@ test("ProviderBridge returns error when steering without active session", async 
 	assert.ok(response.error.message.includes("No active session"));
 });
 
-test("ProviderBridge thread/stop with intent 'interrupt' emits turn.boundary and does not stop registry", async () => {
+test("ProviderBridge thread/stop with intent 'interrupt' emits session.ended, aborts session, and does not stop registry", async () => {
 	const sent: string[] = [];
 	const bridge = new ProviderBridge((json) => {
 		sent.push(json);
 	});
+
+	let aborted = false;
+	const mockSession = {
+		runner: { exited: false },
+		options: { cwd: "/mock/cwd", providerThreadId: "pi_mock" },
+		abort: async () => {
+			aborted = true;
+		},
+		getLastCheckpointId: () => "chk_interrupted_1",
+	} as any;
+	(bridge as any).registry.sessions.set("thr_test", mockSession);
 
 	await bridge.handleLine(JSON.stringify({
 		id: "stop_1",
@@ -69,19 +80,22 @@ test("ProviderBridge thread/stop with intent 'interrupt' emits turn.boundary and
 		},
 	}));
 
+	assert.equal(aborted, true);
 	assert.equal(sent.length, 2);
 	const notif = JSON.parse(sent[0]);
 	assert.equal(notif.method, "thread/delta");
 	assert.equal(notif.params.threadId, "thr_test");
 	assert.deepEqual(notif.params.deltas, [{
-		kind: "turn.boundary",
-		providerTurnId: "turn_abc123",
-		status: "interrupted",
+		kind: "session.ended",
 	}]);
 
 	const response = JSON.parse(sent[1]);
 	assert.equal(response.id, "stop_1");
 	assert.equal(response.result.ok, true);
+	assert.equal(response.result.providerCheckpointId, "chk_interrupted_1");
+
+	// Verify session remains in registry
+	assert.equal((bridge as any).registry.sessions.has("thr_test"), true);
 });
 
 test("ProviderBridge turn/steer emits input.accepted without providerTurnId", async () => {

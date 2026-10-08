@@ -164,9 +164,13 @@ export function translateAgentEnd(
 	let boundarySent = turnBoundarySent;
 	if (!boundarySent) {
 		boundarySent = true;
+		const isInterrupted =
+			event.aborted === true ||
+			event.stopReason === "aborted" ||
+			(rawMsg as { stopReason?: string } | undefined)?.stopReason === "aborted";
 		deltas.push({
 			kind: "turn.boundary",
-			status: "completed",
+			status: isInterrupted ? "interrupted" : "completed",
 			claimIfIdle: true,
 			...(event.providerCheckpointId ? { providerCheckpointId: event.providerCheckpointId } : {}),
 		});

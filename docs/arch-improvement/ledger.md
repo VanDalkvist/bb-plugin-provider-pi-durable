@@ -898,6 +898,57 @@ Resolve findings F-65-1, F-65-2, and F-65-3:
   - `AP-029`: Strict TypeScript typing maintained throughout without `any` bypasses.
 - **Residual Risk:** None. All 10 suites green, bundles build cleanly.
 
+---
+
+### Cycle 73: Clean Turn Interruption, Inbox Abort & Cancellation (`submission.abort`)
+- **Release:** `v0.2.19`
+- **Date:** 2026-10-08
+- **Governing Standard:** `arch-rules.md` (AP-010 – AP-071)
+- **Plan Reference:** `docs/superpowers/plans/2026-10-08-arch-improvement-cycle-73-turn-interruption-and-abort.md`
+- **Tests Passing:** 112/112 tests
+
+#### Context & Objectives
+1. **Clean Turn Interruption & Cancellation:** When a user presses Stop in Beyond Boundaries IDE, the daemon sends JSON-RPC `thread/stop` (`{ threadId, intent: "interrupt" | "release", activeTurnId? }`).
+2. **Primary Source Parity:**
+   - In native `provider-pi` (`~/Projects/bb-reference`), on `intent === "interrupt"` the host immediately emits `{ kind: "session.ended" }` to close UI input/output streams, calls session abort, and returns `{ ok: true, providerCheckpointId: checkpointId ?? null }`.
+   - In `@earendil-works/pi-durable`, `conversation.abort()` withdraws pending inbox submissions with reason `aborted`, aborts active task invocations, and commits assistant messages with `stopReason: "aborted"`.
+3. **Deficiencies Resolved:**
+   - `src/host/message-delta-translator.ts`: `translateAgentEnd` hardcoded `turn.boundary` status to `"completed"`, ignoring `stopReason === "aborted"`.
+   - `src/host/bridge-router.ts`: `handleThreadStop` emitted ad-hoc `turn.boundary`, skipped `session.ended`, and omitted `providerCheckpointId` in `{ ok: true }`, creating turn closure race conditions with `agent_end`.
+   - `src/host/session.ts`: `lastCheckpointId` was not retained across runner events.
+   - `src/runner/bridge/bb-event-adapter.ts`: did not propagate `stopReason: "aborted"` and `aborted: true` to `turn_end` / `agent_end` wire events.
+
+#### Key Implementations
+1. **`src/runner/bridge/contracts.ts` & `src/runner/bridge/bb-event-adapter.ts`:**
+   - Extended `BBTurnEndEvent` and `BBAgentEndEvent` with `aborted?: boolean; stopReason?: string;`.
+   - Deduplicated turn summary logic via `resolveTurnSummary`.
+   - Extracted and propagated `isAborted` (`finalMsg.stopReason === "aborted"` or view assistant entry with `stopReason === "aborted"`) with `aborted: true` and `stopReason: "aborted"`.
+2. **`src/host/types.ts` & `src/host/message-delta-translator.ts`:**
+   - Extended `RunnerEvent` with `aborted?: boolean; stopReason?: string;`.
+   - In `translateAgentEnd`, set `turn.boundary` status to `"interrupted"` when `event.aborted === true`, `event.stopReason === "aborted"`, or `stopReason === "aborted"`, else `"completed"`.
+   - Verified strict validation against `threadDeltaSchema`.
+3. **`src/host/session.ts`:**
+   - Stored and updated `lastCheckpointId` upon every `RunnerEvent` carrying `providerCheckpointId`.
+   - Provided public `getLastCheckpointId(): string | null` getter.
+4. **`src/host/bridge-router.ts` & `src/host/bridge.ts`:**
+   - Introduced strictly-typed parameter DTOs (`TurnStartParams`, `TurnSteerParams`, `ThreadStopParams`, 0 `as any`).
+   - In `handleThreadStop` with `intent === "interrupt"`: emitted `{ kind: "session.ended" }`, called `await session.abort()`, preserved active session in registry, and returned `{ ok: true, providerCheckpointId }`.
+   - In `handleThreadStop` with `intent === "release"`: stopped session in registry and returned `{ ok: true }`.
+   - Eliminated ad-hoc `turn.boundary` emission from router.
+5. **`tests/interruption-and-cancellation.test.ts` & `tests/bridge-error-handling.test.ts`:**
+   - Added comprehensive deterministic TDD suite (7 tests) validating delta translation (`status: "interrupted"`), `session.ended` schema conformance, `thread/stop` interrupt & release handling, wire event abort propagation, and checkpoint retention.
+
+#### Verification & Architecture Compliance
+- **Passed:**
+  - `AP-010`: Clean GoF adapter boundary; durable engine manages abort mechanics while bridge translates to protocol.
+  - `AP-012`: Fail-fast error handling and graceful fallback when thread session does not exist.
+  - `AP-013`: Complete data integrity on abort; partial generation outputs committed atomically to SQLite with checkpoint IDs.
+  - `AP-019`: All source files strictly < 250 lines (largest is `src/runner/bridge/bb-event-adapter.ts` at 236 lines).
+  - `AP-026`: DTO wire contracts and schema conformance verified against `@get-bb/plugin-sdk/provider-bridge` `threadDeltaSchema`.
+  - `AP-028`: 112/112 tests pass deterministically (10 suites, 0 failures, 0 skips).
+  - `AP-029`: Strict TypeScript typing with zero `as any` in source files.
+- **Residual Risk:** None. All 10 suites green, bundles build cleanly.
+
 
 
 

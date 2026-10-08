@@ -12,6 +12,9 @@ import {
 	handleTurnSteer,
 	handleThreadStop,
 	type BridgeRouterContext,
+	type TurnStartParams,
+	type TurnSteerParams,
+	type ThreadStopParams,
 } from "./bridge-router.ts";
 
 export class ProviderBridge {
@@ -107,17 +110,17 @@ export class ProviderBridge {
 				}
 
 				case "turn/start": {
-					await handleTurnStart(id, params, this.routerContext);
+					await handleTurnStart(id, params as unknown as TurnStartParams, this.routerContext);
 					break;
 				}
 
 				case "turn/steer": {
-					await handleTurnSteer(id, params, this.routerContext);
+					await handleTurnSteer(id, params as unknown as TurnSteerParams, this.routerContext);
 					break;
 				}
 
 				case "thread/stop": {
-					await handleThreadStop(id, params, this.routerContext);
+					await handleThreadStop(id, params as unknown as ThreadStopParams, this.routerContext);
 					break;
 				}
 

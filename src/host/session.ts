@@ -19,6 +19,7 @@ export class PiThreadSession {
 	private readyResolve: () => void;
 	private readyReject: (err: Error) => void;
 	public isProcessing = false;
+	private lastCheckpointId: string | null = null;
 
 	constructor(
 		options: SessionOptions,
@@ -56,6 +57,10 @@ export class PiThreadSession {
 	}
 
 	private async handleRunnerEvent(event: RunnerEvent) {
+		if (typeof event.providerCheckpointId === "string" && event.providerCheckpointId.length > 0) {
+			this.lastCheckpointId = event.providerCheckpointId;
+		}
+
 		if (event.type === "agent_end") {
 			try {
 				await this.refreshContextUsage();
@@ -118,6 +123,10 @@ export class PiThreadSession {
 		if (delta) {
 			this.sendNotification("thread/delta", { threadId: this.options.threadId, deltas: [delta] });
 		}
+	}
+
+	public getLastCheckpointId(): string | null {
+		return this.lastCheckpointId;
 	}
 
 	public async getSessionStats(): Promise<SessionStats> {

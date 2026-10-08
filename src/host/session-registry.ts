@@ -11,7 +11,7 @@ export class SessionRegistry {
 
 	public get(threadId: string): PiThreadSession | undefined {
 		const session = this.sessions.get(threadId);
-		if (session && session.runner.exited) {
+		if (session && session.runner?.exited) {
 			this.sessions.delete(threadId);
 			return undefined;
 		}

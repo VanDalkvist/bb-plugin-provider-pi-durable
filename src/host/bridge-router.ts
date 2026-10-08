@@ -12,11 +12,45 @@ export interface BridgeRouterContext {
 	sendError: (id: string | number, code: number, message: string) => void;
 }
 
+export interface TurnStartParams {
+	threadId: string;
+	providerThreadId?: string;
+	cwd?: string;
+	options?: {
+		cwd?: string;
+		[key: string]: unknown;
+	};
+	clientRequestId?: string;
+	input?: unknown;
+	[key: string]: unknown;
+}
+
+export interface TurnSteerParams {
+	threadId: string;
+	clientRequestId?: string;
+	expectedTurnId?: string;
+	input?: unknown;
+	options?: {
+		providerOptions?: Record<string, unknown>;
+		[key: string]: unknown;
+	};
+	providerOptions?: Record<string, unknown>;
+	[key: string]: unknown;
+}
+
+export interface ThreadStopParams {
+	threadId: string;
+	providerThreadId?: string;
+	intent?: "interrupt" | "release";
+	activeTurnId?: string;
+	[key: string]: unknown;
+}
+
 const CREQ_REGEX = /^creq_[23456789abcdefghijkmnpqrstuvwxyz]{10}$/u;
 
 export async function handleTurnStart(
 	id: string | number,
-	params: any,
+	params: TurnStartParams,
 	ctx: BridgeRouterContext,
 ): Promise<void> {
 	const targetCwd = params.cwd || params.options?.cwd;
@@ -62,16 +96,16 @@ export async function handleTurnStart(
 
 export async function handleTurnSteer(
 	id: string | number,
-	params: any,
+	params: TurnSteerParams,
 	ctx: BridgeRouterContext,
 ): Promise<void> {
-	const session = ctx.registry.get(params?.threadId);
+	const session = ctx.registry.get(params.threadId);
 	if (!session) {
 		ctx.sendError(id, -32000, "No active session for thread");
 		return;
 	}
 
-	const providerOptions = params?.options?.providerOptions ?? params?.providerOptions;
+	const providerOptions = params.options?.providerOptions ?? params.providerOptions;
 	if (providerOptions && typeof providerOptions === "object") {
 		session.options.providerOptions = {
 			...session.options.providerOptions,
@@ -79,7 +113,7 @@ export async function handleTurnSteer(
 		};
 	}
 
-	const text = extractInputText(params?.input);
+	const text = extractInputText(params.input);
 	if (!text) {
 		ctx.sendError(id, -32602, "Missing steer text");
 		return;
@@ -87,7 +121,7 @@ export async function handleTurnSteer(
 
 	await session.steer(text);
 
-	if (params?.clientRequestId && CREQ_REGEX.test(params.clientRequestId)) {
+	if (params.clientRequestId && CREQ_REGEX.test(params.clientRequestId)) {
 		ctx.sendNotification("thread/delta", {
 			threadId: params.threadId,
 			deltas: [{
@@ -97,31 +131,27 @@ export async function handleTurnSteer(
 		});
 	}
 
-	ctx.sendResult(id, { threadId: params?.threadId });
+	ctx.sendResult(id, { threadId: params.threadId });
 }
 
 export async function handleThreadStop(
 	id: string | number,
-	params: any,
+	params: ThreadStopParams,
 	ctx: BridgeRouterContext,
 ): Promise<void> {
-	if (params?.intent === "interrupt") {
+	if (params.intent === "interrupt") {
 		const session = ctx.registry.get(params.threadId);
 		if (session) {
-			await session.abort();
-		}
-		if (params?.activeTurnId) {
 			ctx.sendNotification("thread/delta", {
 				threadId: params.threadId,
-				deltas: [{
-					kind: "turn.boundary",
-					providerTurnId: params.activeTurnId,
-					status: "interrupted",
-				}],
+				deltas: [{ kind: "session.ended" }],
 			});
+			await session.abort();
 		}
+		const checkpointId = session?.getLastCheckpointId() ?? null;
+		ctx.sendResult(id, { ok: true, providerCheckpointId: checkpointId });
 	} else {
-		await ctx.registry.stop(params?.threadId);
+		await ctx.registry.stop(params.threadId);
+		ctx.sendResult(id, { ok: true });
 	}
-	ctx.sendResult(id, { ok: true });
 }

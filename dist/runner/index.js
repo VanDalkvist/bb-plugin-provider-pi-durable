@@ -1259,12 +1259,31 @@ var BBEventAdapter = class {
     this.isInThinking = false;
     this.output({
       type: "message_update",
-      assistantMessageEvent: {
-        type: "thinking_end",
-        contentIndex: 0,
-        content: this.currentThinking
-      }
+      assistantMessageEvent: { type: "thinking_end", contentIndex: 0, content: this.currentThinking }
     });
+  }
+  resolveTurnSummary(current) {
+    this.closeThinkingIfNeeded();
+    const tail = current?.conversation?.entries?.at(-1);
+    if (tail?.id !== void 0) {
+      this.lastCheckpointId = String(tail.id);
+    }
+    const finalMsg = this.lastAssistantMessage ?? buildFinalAssistantMessage(
+      current,
+      this.currentText,
+      this.currentThinking
+    );
+    const rawAgentDoc = current?.conversation?.docs?.["pi.agent"];
+    const agentDoc = isAgentDocument(rawAgentDoc) ? rawAgentDoc : {};
+    const cw = this.resolveContextWindow?.(agentDoc.model?.provider, agentDoc.model?.modelId);
+    const cumulativeUsage = extractCumulativeUsage(current);
+    const isAborted = finalMsg.stopReason === "aborted" || (current?.conversation?.entries?.some(
+      (e) => isConversationEntryRecord(e) && e.kind === "pi.assistant" && e.model?.[0]?.stopReason === "aborted"
+    ) ?? false);
+    if (isAborted && finalMsg.stopReason !== "aborted") {
+      finalMsg.stopReason = "aborted";
+    }
+    return { finalMsg, cw, cumulativeUsage, isAborted };
   }
   handleEvent(event, current) {
     switch (event.type) {
@@ -1344,65 +1363,34 @@ var BBEventAdapter = class {
         break;
       }
       case "compaction_start": {
-        this.output({
-          type: "compaction_start",
-          reason: event.reason === "threshold" ? "threshold" : "manual"
-        });
+        this.output({ type: "compaction_start", reason: event.reason === "threshold" ? "threshold" : "manual" });
         break;
       }
       case "compaction_end": {
-        this.output({
-          type: "compaction_end",
-          reason: event.reason === "threshold" ? "threshold" : "manual",
-          aborted: false
-        });
+        this.output({ type: "compaction_end", reason: event.reason === "threshold" ? "threshold" : "manual", aborted: false });
         break;
       }
       case "turn_end": {
-        this.closeThinkingIfNeeded();
-        const tail = current?.conversation?.entries?.at(-1);
-        if (tail?.id !== void 0) {
-          this.lastCheckpointId = String(tail.id);
-        }
-        const finalMsg = this.lastAssistantMessage ?? buildFinalAssistantMessage(
-          current,
-          this.currentText,
-          this.currentThinking
-        );
-        const rawAgentDoc = current?.conversation?.docs?.["pi.agent"];
-        const agentDoc = isAgentDocument(rawAgentDoc) ? rawAgentDoc : {};
-        const cw = this.resolveContextWindow?.(agentDoc.model?.provider, agentDoc.model?.modelId);
-        const cumulativeUsage = extractCumulativeUsage(current);
+        const { finalMsg, cw, cumulativeUsage, isAborted } = this.resolveTurnSummary(current);
         this.output({
           type: "turn_end",
           message: finalMsg,
           contextWindow: cw,
           ...this.lastCheckpointId ? { providerCheckpointId: this.lastCheckpointId } : {},
-          ...cumulativeUsage ? { cumulativeUsage } : {}
+          ...cumulativeUsage ? { cumulativeUsage } : {},
+          ...isAborted ? { aborted: true, stopReason: "aborted" } : {}
         });
         break;
       }
       case "run_end": {
-        this.closeThinkingIfNeeded();
-        const tail = current?.conversation?.entries?.at(-1);
-        if (tail?.id !== void 0) {
-          this.lastCheckpointId = String(tail.id);
-        }
-        const finalMsg = this.lastAssistantMessage ?? buildFinalAssistantMessage(
-          current,
-          this.currentText,
-          this.currentThinking
-        );
-        const rawAgentDoc = current?.conversation?.docs?.["pi.agent"];
-        const agentDoc = isAgentDocument(rawAgentDoc) ? rawAgentDoc : {};
-        const cw = this.resolveContextWindow?.(agentDoc.model?.provider, agentDoc.model?.modelId);
-        const cumulativeUsage = extractCumulativeUsage(current);
+        const { finalMsg, cw, cumulativeUsage, isAborted } = this.resolveTurnSummary(current);
         this.output({
           type: "agent_end",
           messages: [finalMsg],
           contextWindow: cw,
           ...this.lastCheckpointId ? { providerCheckpointId: this.lastCheckpointId } : {},
-          ...cumulativeUsage ? { cumulativeUsage } : {}
+          ...cumulativeUsage ? { cumulativeUsage } : {},
+          ...isAborted ? { aborted: true, stopReason: "aborted" } : {}
         });
         break;
       }
@@ -1416,10 +1404,7 @@ var BBEventAdapter = class {
         break;
       }
       case "auto_retry_end": {
-        this.output({
-          type: "auto_retry_end",
-          attempt: event.attempt
-        });
+        this.output({ type: "auto_retry_end", attempt: event.attempt });
         break;
       }
     }

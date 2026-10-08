@@ -123,8 +123,8 @@ STAGE 2: РАСШИРЕННЫЕ ВОЗМОЖНОСТИ ДВИЖКА И ПОЛН�
   - Cycle 70: Монотонный учет кумулятивного расхода токенов через pi.usage (D-7) [✅ ЗАВЕРШЕНО, v0.2.16]
   - Cycle 71: Устранение блокировок сиротами, Teardown воркеров и BB_DATA_DIR (D-20, Issue #7) [✅ ЗАВЕРШЕНО, v0.2.17]
   - Cycle 72: Визуальные карточки сабагентов через протокольный deltaDelegationShape (type: "delegation") [✅ ЗАВЕРШЕНО, v0.2.18]
-  - Cycle 73: Корректное прерывание хода, inbox-отмена и обработка thread/stop (submission.abort) [⏳ СЛЕДУЮЩИЙ, v0.2.19]
-  - Cycle 74: Паритет жизненного цикла расширений Pi и надёжность MCP-серверов (D-16, D-17, D-18, D-19) [PLANNED, v0.2.20]
+  - Cycle 73: Корректное прерывание хода, inbox-отмена и обработка thread/stop (submission.abort) [✅ ЗАВЕРШЕНО, v0.2.19]
+  - Cycle 74: Паритет жизненного цикла расширений Pi и надёжность MCP-серверов (D-16, D-17, D-18, D-19) [⏳ СЛЕДУЮЩИЙ, v0.2.20]
   - Cycle 75: Мастер-аттестация паритета с нативным provider-pi и conformance-тесты [PLANNED, v0.2.21]
 ```
 
@@ -230,15 +230,19 @@ STAGE 2: РАСШИРЕННЫЕ ВОЗМОЖНОСТИ ДВИЖКА И ПОЛН�
 
 ---
 
-### Cycle 73: Clean Turn Interruption, Inbox Abort & Cancellation (`submission.abort`) [⏳ СЛЕДУЮЩИЙ, v0.2.19]
+### Cycle 73: Clean Turn Interruption, Inbox Abort & Cancellation (`submission.abort`) [✅ ЗАВЕРШЕНО, v0.2.19]
 - **Возможности платформы:** Гарантированное прерывание хода по кнопке Stop / `thread/stop`.
 - **Архитектурный анализ первоисточников:**
   1. При нажатии пользователем Stop в UI BB IDE хост присылает `thread/stop` с `intent: "interrupt"`.
-  2. В ядре `@earendil-works/pi-durable`: активные задачи и входная очередь отменяются через `submission.abort(context)`.
+  2. В нативном `provider-pi` (`~/Projects/bb-reference`): при `intent === "interrupt"` немедленно отправляется дельта `{ kind: "session.ended" }` для закрытия UI-стримов, сессия прерывается, а ответ возвращает `{ ok: true, providerCheckpointId }`.
+  3. В ядре `@earendil-works/pi-durable`: активные задачи и входная очередь отменяются через `submission.abort(context)` / `conversation.abort(context)`, а завершённое ассистентское сообщение получает `stopReason: "aborted"`.
 - **Решение:**
-  1. Обработать команду `thread/stop` (`intent: "interrupt"`), вызывая `submission.abort()` в `docs["pi.inbox"]`.
-  2. Гарантировать эмит дельты `turn.boundary` со статусом `interrupted` и немедленный возврат управления.
-- **Файлы:** `src/host/bridge-router.ts`, `src/runner/session-commands.ts`, `tests/interruption-and-cancellation.test.ts`.
+  1. В `src/host/bridge-router.ts`: обновить `handleThreadStop` — при `intent === "interrupt"` эмитить `{ kind: "session.ended" }`, вызывать `session.abort()`, сохранять сессию в реестре и возвращать `{ ok: true, providerCheckpointId }`; при `intent === "release"` вызывать `ctx.registry.stop()` и возвращать `{ ok: true }`. Устранить ad-hoc генерацию `turn.boundary` из роутера.
+  2. В `src/host/message-delta-translator.ts`: в `translateAgentEnd` транслировать `turn.boundary` со статусом `"interrupted"` при `stopReason === "aborted"` или `event.aborted === true`.
+  3. В `src/host/session.ts`: сохранять `lastCheckpointId` из каждого `RunnerEvent` и предоставить геттер `getLastCheckpointId()`.
+  4. В `src/runner/bridge/bb-event-adapter.ts`: распространять `stopReason: "aborted"` и флаг `aborted: true` в wire-события `turn_end` и `agent_end`.
+  5. В `tests/interruption-and-cancellation.test.ts`: создать детерминированный TDD сьют (7 тестов), проверяющий полный цикл прерывания, валидацию дельт по `threadDeltaSchema` и сохранение чекпоинтов.
+- **Файлы:** `src/host/bridge-router.ts`, `src/host/message-delta-translator.ts`, `src/host/session.ts`, `src/runner/bridge/bb-event-adapter.ts`, `src/runner/bridge/contracts.ts`, `src/host/types.ts`, `tests/interruption-and-cancellation.test.ts`, `tests/bridge-error-handling.test.ts`.
 
 ---
 
