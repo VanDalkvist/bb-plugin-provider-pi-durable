@@ -9,7 +9,7 @@
 **Host Target:** Beyond Boundaries (BB IDE) `>= 0.45`  
 **Status:**
 - **Stage 1 (Foundation Hardening, Territory Decoupling & Host Parity):** ✅ 100% COMPLETED (Cycles 56–66, Releases `v0.2.1` – `v0.2.11`)
-- **Stage 2 (Advanced Engine Capabilities & Extended Parity):** ⏳ IN PROGRESS (Cycles 67–71 ✅ COMPLETED, Cycles 72–75 PLANNED)
+- **Stage 2 (Advanced Engine Capabilities & Extended Parity):** ✅ 100% COMPLETED (Cycles 67–76 ✅ COMPLETED, Releases `v0.2.12` – `v0.2.22`)
 
 ---
 
@@ -96,6 +96,7 @@ Because `@earendil-works/pi-durable` is an execution engine rather than an agent
 | **D-19**| **Глушение UI и диагностических notice расширений** | Ошибки и статусы MCP (`needs-auth`, сбои соединения) тонут в `noOpUIContext` | ✅ **FIXED** (Привязка `runner.setUIContext` к wire notice и логам хоста) | `v0.2.20` (Cycle 74) |
 | **D-20**| **Блокировка сессий сиротами и жесткая привязка к ~/.bb** | Сиротские раннеры вешают `session.sqlite`; `BB_DATA_DIR` не учитывается при поиске раннера | ✅ **FIXED** (session.owner.json, graceful eviction, teardown, Issue #7) | `v0.2.17` (Cycle 71) |
 | **D-21**| **Синтез Git Diff для `write` и очистка префиксов путей** | Pi `write` не генерирует diff; BB IDE показывает `b/<path>` и `+0 -0` | ✅ **FIXED** (Синтез `diff --git`, очистка `b/`/`a/` и нормализация патчей `edit`) | `v0.2.21` (Cycle 75.1) |
+| **D-22**| **Протокол жизненного цикла установки и обновлений** | Захардкоженные заглушки `1.0.4`, невалидный `runResult` и отсутствие `installAction` | ✅ **FIXED** (Динамический `installation-manager`, schema parity, 45s headroom) | `v0.2.22` (Cycle 76) |
 
 ---
 
@@ -128,6 +129,7 @@ STAGE 2: РАСШИРЕННЫЕ ВОЗМОЖНОСТИ ДВИЖКА И ПОЛН�
   - Cycle 74: Паритет жизненного цикла расширений Pi и надёжность MCP-серверов (D-16, D-17, D-18, D-19) [✅ ЗАВЕРШЕНО, v0.2.20]
   - Cycle 75: Мастер-аттестация паритета с нативным provider-pi и conformance-тесты [✅ ЗАВЕРШЕНО, v0.2.21]
   - Cycle 75.1: Синтез Git Diff для write, очистка путей и устранение утечки b/ префикса (D-21) [✅ ЗАВЕРШЕНО, v0.2.21]
+  - Cycle 76: Нативный жизненный цикл установки и обновлений провайдера (D-22, provider/installation/*) [✅ ЗАВЕРШЕНО, v0.2.22]
 ```
 
 ---
@@ -289,7 +291,7 @@ STAGE 2: РАСШИРЕННЫЕ ВОЗМОЖНОСТИ ДВИЖКА И ПОЛН�
 
 ---
 
-### Cycle 76: Native BB IDE Provider Update & Installation Lifecycle (`provider/installation/*`, v0.2.22)
+### Cycle 76: Native BB IDE Provider Update & Installation Lifecycle (`provider/installation/*`, v0.2.22) [✅ COMPLETED, v0.2.22]
 - **Цель:** Починить обновление и проверку версии `pi-durable` средствами Beyond Boundaries IDE (`bb plugin update` и UI-кнопки Update/Install в настройках провайдера).
 - **Архитектурный анализ первоисточников:**
   1. В `src/host/discovery-handler.ts` обработчики `provider/installation/status` и `provider/installation/run` сейчас возвращают захардкоженные заглушки: `"currentVersion": "1.0.4"`, `"needsUpdate": false`, `"installAction": null`, а `npmPackageName` указывает на `@earendil-works/pi-durable` вместо самого плагина `bb-plugin-provider-pi-durable`.
