@@ -868,6 +868,37 @@ Resolve findings F-65-1, F-65-2, and F-65-3:
 - **Passed:** AP-010, AP-012, AP-013, AP-019 (all files 59–205 lines < 250), AP-022, AP-023, AP-027, AP-028 (100/100 tests pass), AP-029 (0 `as any`), AP-034, AP-035, AP-045.
 - **Residual Risk:** None. All 10 suites green, bundle builds cleanly.
 
+---
+
+### Cycle 72: Visual Subagent Delegation Cards (`type: "delegation"`)
+- **Release:** `v0.2.18`
+- **Date:** 2026-10-08
+- **Governing Standard:** `arch-rules.md` (AP-010 – AP-071)
+- **Plan Reference:** `docs/superpowers/plans/2026-10-08-arch-improvement-cycle-72-visual-subagent-delegation.md`
+- **Tests Passing:** 105/105 tests
+
+#### Context & Objectives
+1. **Visual Subagent Delegation:** In Beyond Boundaries IDE, multi-agent workflows and subagent invocations are presented to the user via dedicated interactive **Delegation Cards** (`type: "delegation"`). Previously, subagent tool calls fell through to generic unspecialized raw tool calls (`type: "tool"`), rendering them without Bot icon, delegation title, or expandable child conversation references.
+2. **Primary Source Parity:** Parity with `@earendil-works/pi-durable` subagent execution semantics, extracting `task` from arguments and child `conversationId` from details.
+
+#### Key Implementations
+1. **`src/host/tool-delta-translator.ts`:**
+   - In `buildToolItemShape`: Added explicit branch for `toolName === "subagent"` constructing `{ type: "delegation", childRef, label, background: false, summary }`.
+   - In `translateToolStart`: Attached `presentation` (`{ label: { pending: "Running subagent", completed: "Subagent completed" }, icon: { glyph: "Bot" }, title }`) for delegation shapes.
+   - In `translateToolEnd`: Handled `item.type === "delegation"`, extracting child conversation id from `event.details.conversationId`, truncating `summary` from `resultText` (up to 300 characters), and attaching `presentation` for `item.close`.
+2. **`tests/subagent-delegation.test.ts`:**
+   - Created comprehensive TDD test suite validating `buildToolItemShape`, `translateToolStart`, `translateToolEnd` (successful and faulted executions), wire validation against `threadDeltaSchema`, and non-regression for existing tool contracts (`bash`, `write`, `edit`).
+
+#### Verification & Architecture Compliance
+- **Passed:**
+  - `AP-010`: Clean GoF adapter boundary without leaking host-specific UI details into durable runner.
+  - `AP-019`: `src/host/tool-delta-translator.ts` is 211 lines (< 250 hard limit); `tests/subagent-delegation.test.ts` is 261 lines (< 300 test limit).
+  - `AP-026`: DTO schemas validated strictly against `@get-bb/plugin-sdk/provider-bridge` `threadDeltaSchema`.
+  - `AP-028`: Deterministic test execution (105/105 tests pass, 0 skips, 0 failures).
+  - `AP-029`: Strict TypeScript typing maintained throughout without `any` bypasses.
+- **Residual Risk:** None. All 10 suites green, bundles build cleanly.
+
+
 
 
 
