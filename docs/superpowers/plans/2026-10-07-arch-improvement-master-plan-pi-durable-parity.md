@@ -265,3 +265,21 @@ STAGE 2: РАСШИРЕННЫЕ ВОЗМОЖНОСТИ ДВИЖКА И ПОЛН�
   2. Проверка соответствия лимитам строк (AP-019), строгой типизации (AP-029), отсутствию гонок lockfile (AP-033).
   3. Фиксация стабильного релизного тега.
 - **Файлы:** Полный сьют тестов `tests/*.test.ts`, `docs/arch-improvement/ledger.md`.
+
+---
+
+### Cycle 76: Native BB IDE Provider Update & Installation Lifecycle (`provider/installation/*`, v0.2.22)
+- **Цель:** Починить обновление и проверку версии `pi-durable` средствами Beyond Boundaries IDE (`bb plugin update` и UI-кнопки Update/Install в настройках провайдера).
+- **Архитектурный анализ первоисточников:**
+  1. В `src/host/discovery-handler.ts` обработчики `provider/installation/status` и `provider/installation/run` сейчас возвращают захардкоженные заглушки: `"currentVersion": "1.0.4"`, `"needsUpdate": false`, `"installAction": null`, а `npmPackageName` указывает на `@earendil-works/pi-durable` вместо самого плагина `bb-plugin-provider-pi-durable`.
+  2. Из-за этого десктопный BB IDE считает, что плагин никогда не требует обновления, кнопка Update в настройках провайдера не активна или ломается, а вызов `provider/installation/run` не выполняет реального обновления из реестра npm/marketplace.
+- **Решение:**
+  1. В `src/host/discovery-handler.ts` и новом модуле `src/host/installation-manager.ts`:
+     - Считывать реальную установленную версию плагина из `package.json`.
+     - Запрашивать последнюю версию из реестра (npm/marketplace) с кэшированием TTL.
+     - Корректно выставлять `needsUpdate: true`, `latestVersion`, `currentVersion` и формировать валидный `installAction` (`kind: "update"` / `"install"`).
+  2. Реализовать обработку `provider/installation/run`:
+     - Выполнять реальную команду обновления плагина (или вызов менеджера плагинов BB) с верификацией статуса.
+  3. Написать детерминированные тесты в `tests/provider-installation.test.ts`.
+- **Файлы:** `src/host/discovery-handler.ts`, `src/host/installation-manager.ts`, `tests/provider-installation.test.ts`.
+

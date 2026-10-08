@@ -1,8 +1,8 @@
 # PRD: Архитектурное выравнивание территорий и устранение чужого владения в `bb-plugin-provider-pi-durable`
 
-**Статус:** ⏳ IN PROGRESS (Cycles 61–72 Completed & Verified, Cycles 73–75 Scheduled)  
+**Статус:** ⏳ IN PROGRESS (Cycles 61–72 Completed & Verified, Cycles 73–76 Scheduled)  
 **Дата создания:** 2026-10-07  
-**Дата актуализации:** 2026-10-08 (полная синхронизация нумерации, D-7, D-20, Issue #7, Delegation Cards)  
+**Дата актуализации:** 2026-10-08 (полная синхронизация нумерации, D-7, D-20, Issue #7, Delegation Cards, BB Update Lifecycle)  
 **Автор:** Lead Architect & Agent Systems Engineer  
 **Реализовано в релизах:** `v0.2.7` (Cycles 61–62), `v0.2.8` (Cycle 63), `v0.2.9` (Cycle 64), `v0.2.10` (Cycle 65), `v0.2.11` (Cycle 66), `v0.2.12` (Cycle 67), `v0.2.13` (Cycle 68), `v0.2.14` (Cycle 68.1), `v0.2.15` (Cycle 69), `v0.2.16` (Cycle 70), `v0.2.17` (Cycle 71), `v0.2.18` (Cycle 72)  
 
@@ -138,11 +138,18 @@ src/
   - В `translateToolStart` добавлена презентация с бот-иконкой (`glyph: "Bot"`).
   - В `translateToolEnd` реализовано извлечение `conversationId` из `event.details.conversationId` для обновления `childRef`, усечение резюме до 300 символов и сохранение презентации карточки. Все дельты валидируются runtime Zod-схемой `threadDeltaSchema`. 105/105 тестов зеленые.
 
-### Срез 11: Прерывание хода и отмена очереди (Cycle 73, v0.2.19) [⏳ СЛЕДУЮЩИЙ, v0.2.19]
+### Срез 11: Прерывание хода и отмена очереди (Cycle 73, v0.2.19) [⏳ В РАБОТЕ, v0.2.19]
 - Прерывание по `thread/stop` (`intent: "interrupt"`) через `submission.abort` в `docs["pi.inbox"]`.
 
 ### Срез 12: Паритет жизненного цикла расширений Pi и надёжность MCP (D-16..D-19) [Cycle 74, v0.2.20]
 - Ожидание `waitForDirectServers`, динамический промпт на `before_agent_start`, хуки `tool_call`/`tool_result`.
+
+### Срез 13: Итоговый аудит паритета и E2E верификация (Cycle 75, v0.2.21)
+- Комплексная валидация всех сквозных пользовательских сценариев против нативного провайдера.
+
+### Срез 14: Нативное обновление плагина средствами BB IDE (Cycle 76, v0.2.22)
+- **Проблема:** Сейчас в `src/host/discovery-handler.ts` методы `provider/installation/status` и `provider/installation/run` возвращают захардкоженные заглушки (`currentVersion: "1.0.4"`, `needsUpdate: false`, `npmPackageName: "@earendil-works/pi-durable"`). Из-за этого обновление плагина через BB IDE сломано: BB не видит доступных апдейтов и не может выполнить реальный `installAction`.
+- **Решение:** Динамическое определение версии из `package.json`, проверка обновлений в реестре, генерация честного `installAction` и выполнение обновления в `provider/installation/run`.
 
 ---
 
