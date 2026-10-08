@@ -122,8 +122,8 @@ STAGE 2: РАСШИРЕННЫЕ ВОЗМОЖНОСТИ ДВИЖКА И ПОЛН�
   - Cycle 69: Чекпоинт-форки тредов, перемотка истории и редактирование сообщений (thread/fork) [✅ ЗАВЕРШЕНО, v0.2.15]
   - Cycle 70: Монотонный учет кумулятивного расхода токенов через pi.usage (D-7) [✅ ЗАВЕРШЕНО, v0.2.16]
   - Cycle 71: Устранение блокировок сиротами, Teardown воркеров и BB_DATA_DIR (D-20, Issue #7) [✅ ЗАВЕРШЕНО, v0.2.17]
-  - Cycle 72: Визуальные карточки сабагентов через протокольный deltaDelegationShape (type: "delegation") [⏳ СЛЕДУЮЩИЙ, v0.2.18]
-  - Cycle 73: Корректное прерывание хода, inbox-отмена и обработка thread/stop (submission.abort) [PLANNED, v0.2.19]
+  - Cycle 72: Визуальные карточки сабагентов через протокольный deltaDelegationShape (type: "delegation") [✅ ЗАВЕРШЕНО, v0.2.18]
+  - Cycle 73: Корректное прерывание хода, inbox-отмена и обработка thread/stop (submission.abort) [⏳ СЛЕДУЮЩИЙ, v0.2.19]
   - Cycle 74: Паритет жизненного цикла расширений Pi и надёжность MCP-серверов (D-16, D-17, D-18, D-19) [PLANNED, v0.2.20]
   - Cycle 75: Мастер-аттестация паритета с нативным provider-pi и conformance-тесты [PLANNED, v0.2.21]
 ```
@@ -216,21 +216,21 @@ STAGE 2: РАСШИРЕННЫЕ ВОЗМОЖНОСТИ ДВИЖКА И ПОЛН�
 
 ---
 
-### Cycle 72: Visual Subagent Delegation Cards via Protocol Schema (`type: "delegation"`) [⏳ СЛЕДУЮЩИЙ, v0.2.18]
+### Cycle 72: Visual Subagent Delegation Cards via Protocol Schema (`type: "delegation"`) [✅ ЗАВЕРШЕНО, v0.2.18]
 - **Возможности платформы:** Визуализация сабагентов через протокол BB `@bb/provider-bridge-protocol`.
 - **Архитектурный анализ первоисточников:**
   1. Протокол моста BB содержит каноническую схему `deltaDelegationShapeSchema`:
      `{ type: "delegation", childRef: string, label: string, background: boolean, summary?: string }`.
   2. Плагин провайдера **НЕ должен** строить собственную платформу оркестрации агентов (это нарушает границы Территории 4). Его задача — чисто транслировать выполнение инструмента `subagent` в протокольную карточку делегирования.
 - **Решение:**
-  1. При запуске под-сессии тула `subagent` эмитить `item.open` с формой `delegation` (`label`, `childRef: childConversationId`).
-  2. Вкладывать логи и мысли дочернего агента внутрь элемента делегации.
-  3. Закрывать элемент через `item.close` с итоговым резюме.
-- **Файлы:** `src/runner/upstream/subagent.ts`, `src/runner/bridge/delegation-adapter.ts`, `src/host/tool-delta-translator.ts`, `tests/delegation.test.ts`.
+  1. При запуске под-сессии тула `subagent` эмитить `item.open` с формой `delegation` (`label`, `childRef: childConversationId`), и Bot icon presentation.
+  2. Обновлять `childRef` и `summary` (до 300 символов) при получении `tool_execution_end`.
+  3. Закрывать элемент через `item.close` с итоговым резюме и сохранением Bot icon presentation.
+- **Файлы:** `src/host/tool-delta-translator.ts`, `tests/subagent-delegation.test.ts`.
 
 ---
 
-### Cycle 73: Clean Turn Interruption, Inbox Abort & Cancellation (`submission.abort`)
+### Cycle 73: Clean Turn Interruption, Inbox Abort & Cancellation (`submission.abort`) [⏳ СЛЕДУЮЩИЙ, v0.2.19]
 - **Возможности платформы:** Гарантированное прерывание хода по кнопке Stop / `thread/stop`.
 - **Архитектурный анализ первоисточников:**
   1. При нажатии пользователем Stop в UI BB IDE хост присылает `thread/stop` с `intent: "interrupt"`.
