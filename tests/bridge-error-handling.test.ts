@@ -67,8 +67,9 @@ test("ProviderBridge thread/stop with intent 'interrupt' emits session.ended, ab
 			aborted = true;
 		},
 		getLastCheckpointId: () => "chk_interrupted_1",
-	} as any;
-	(bridge as any).registry.sessions.set("thr_test", mockSession);
+	} as unknown as PiThreadSession;
+	const bridgeInternal = bridge as unknown as { registry: { sessions: Map<string, PiThreadSession> } };
+	bridgeInternal.registry.sessions.set("thr_test", mockSession);
 
 	await bridge.handleLine(JSON.stringify({
 		id: "stop_1",
@@ -95,7 +96,7 @@ test("ProviderBridge thread/stop with intent 'interrupt' emits session.ended, ab
 	assert.equal(response.result.providerCheckpointId, "chk_interrupted_1");
 
 	// Verify session remains in registry
-	assert.equal((bridge as any).registry.sessions.has("thr_test"), true);
+	assert.equal(bridgeInternal.registry.sessions.has("thr_test"), true);
 });
 
 test("ProviderBridge turn/steer emits input.accepted without providerTurnId", async () => {

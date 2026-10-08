@@ -1277,9 +1277,12 @@ var BBEventAdapter = class {
     const agentDoc = isAgentDocument(rawAgentDoc) ? rawAgentDoc : {};
     const cw = this.resolveContextWindow?.(agentDoc.model?.provider, agentDoc.model?.modelId);
     const cumulativeUsage = extractCumulativeUsage(current);
-    const isAborted = finalMsg.stopReason === "aborted" || (current?.conversation?.entries?.some(
-      (e) => isConversationEntryRecord(e) && e.kind === "pi.assistant" && e.model?.[0]?.stopReason === "aborted"
-    ) ?? false);
+    const entries = current?.conversation?.entries ?? [];
+    const lastAssistantEntry = [...entries].reverse().find(
+      (e) => isConversationEntryRecord(e) && e.kind === "pi.assistant"
+    );
+    const isLastAssistantAborted = lastAssistantEntry?.model?.[0]?.stopReason === "aborted";
+    const isAborted = finalMsg.stopReason === "aborted" || (isLastAssistantAborted ?? false);
     if (isAborted && finalMsg.stopReason !== "aborted") {
       finalMsg.stopReason = "aborted";
     }

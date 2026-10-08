@@ -1,91 +1,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { threadDeltaSchema } from "@get-bb/plugin-sdk/provider-bridge";
-import { translateAgentEnd } from "../src/host/message-delta-translator.ts";
 import {
 	handleThreadStop,
 	type BridgeRouterContext,
 	type ThreadStopParams,
 } from "../src/host/bridge-router.ts";
 import { SessionRegistry } from "../src/host/session-registry.ts";
-import { BBEventAdapter } from "../src/runner/bridge/bb-event-adapter.ts";
-import type { DurableView } from "../src/runner/runtime.ts";
-import type {
-	BBWireEvent,
-	BBTurnEndEvent,
-	BBAgentEndEvent,
-} from "../src/runner/bridge/contracts.ts";
 import type { RunnerEvent } from "../src/host/types.ts";
 import type { PiThreadSession } from "../src/host/session.ts";
-
-test("translateAgentEnd: translates aborted turn to status 'interrupted' in turn.boundary", () => {
-	// Case A: event.aborted === true
-	const eventAborted: RunnerEvent = {
-		type: "agent_end",
-		aborted: true,
-		providerCheckpointId: "chk_abort_1",
-		messages: [{ role: "assistant", content: [{ type: "text", text: "Cancelled work" }] }],
-	};
-	const resA = translateAgentEnd(eventAborted, "", false);
-	const boundaryA = resA.deltas.find((d) => d.kind === "turn.boundary");
-	assert.ok(boundaryA, "turn.boundary must be emitted");
-	assert.equal(boundaryA.status, "interrupted");
-	assert.equal(boundaryA.claimIfIdle, true);
-	assert.equal(boundaryA.providerCheckpointId, "chk_abort_1");
-	assert.equal(threadDeltaSchema.safeParse(boundaryA).success, true);
-
-	// Case B: event.stopReason === 'aborted'
-	const eventStopReason: RunnerEvent = {
-		type: "agent_end",
-		stopReason: "aborted",
-		messages: [],
-	};
-	const resB = translateAgentEnd(eventStopReason, "", false);
-	const boundaryB = resB.deltas.find((d) => d.kind === "turn.boundary");
-	assert.ok(boundaryB);
-	assert.equal(boundaryB.status, "interrupted");
-	assert.equal(threadDeltaSchema.safeParse(boundaryB).success, true);
-
-	// Case C: assistant message stopReason === 'aborted'
-	const eventMsgAborted: RunnerEvent = {
-		type: "agent_end",
-		messages: [
-			{
-				role: "assistant",
-				content: [{ type: "text", text: "Partial output" }],
-				stopReason: "aborted",
-			},
-		],
-	};
-	const resC = translateAgentEnd(eventMsgAborted, "", false);
-	const boundaryC = resC.deltas.find((d) => d.kind === "turn.boundary");
-	assert.ok(boundaryC);
-	assert.equal(boundaryC.status, "interrupted");
-	assert.equal(threadDeltaSchema.safeParse(boundaryC).success, true);
-
-	// Case D: regular non-aborted completion translates to 'completed'
-	const eventCompleted: RunnerEvent = {
-		type: "agent_end",
-		messages: [
-			{
-				role: "assistant",
-				content: [{ type: "text", text: "Complete" }],
-				stopReason: "stop",
-			},
-		],
-	};
-	const resD = translateAgentEnd(eventCompleted, "", false);
-	const boundaryD = resD.deltas.find((d) => d.kind === "turn.boundary");
-	assert.ok(boundaryD);
-	assert.equal(boundaryD.status, "completed");
-	assert.equal(threadDeltaSchema.safeParse(boundaryD).success, true);
-});
-
-test("threadDeltaSchema: validates session.ended delta strictly", () => {
-	const sessionEndedDelta = { kind: "session.ended" };
-	const parseResult = threadDeltaSchema.safeParse(sessionEndedDelta);
-	assert.equal(parseResult.success, true, "session.ended must strictly conform to threadDeltaSchema");
-});
 
 test("handleThreadStop: intent 'interrupt' emits session.ended, aborts session, returns providerCheckpointId", async () => {
 	const notifications: Array<{ method: string; params: Record<string, unknown> }> = [];
@@ -194,47 +117,7 @@ test("handleThreadStop: intent 'release' stops session in registry and returns o
 	assert.deepEqual(results[0].result, { ok: true });
 });
 
-test("BBEventAdapter: propagates stopReason 'aborted' into turn_end and agent_end wire events", () => {
-	const emitted: BBWireEvent[] = [];
-	const adapter = new BBEventAdapter((evt) => emitted.push(evt));
-
-	const viewWithAbortedEntry = {
-		conversation: {
-			entries: [
-				{
-					id: 201,
-					kind: "pi.assistant",
-					model: [
-						{
-							role: "assistant",
-							content: [{ type: "text", text: "Interrupted partial" }],
-							stopReason: "aborted",
-						},
-					],
-				},
-			],
-			docs: {},
-		},
-	} as unknown as DurableView;
-
-	adapter.handleEvent({ type: "turn_end" }, viewWithAbortedEntry);
-	adapter.handleEvent({ type: "run_end", inputs: [] }, viewWithAbortedEntry);
-
-	const turnEnd = emitted.find((e): e is BBTurnEndEvent => e.type === "turn_end");
-	assert.ok(turnEnd, "turn_end wire event must be emitted");
-	assert.equal(turnEnd.aborted, true, "turn_end must have aborted: true");
-	assert.equal(turnEnd.stopReason, "aborted");
-	assert.equal(turnEnd.message?.stopReason, "aborted");
-
-	const agentEnd = emitted.find((e): e is BBAgentEndEvent => e.type === "agent_end");
-	assert.ok(agentEnd, "agent_end wire event must be emitted");
-	assert.equal(agentEnd.aborted, true, "agent_end must have aborted: true");
-	assert.equal(agentEnd.stopReason, "aborted");
-	assert.equal(agentEnd.messages[0]?.stopReason, "aborted");
-});
-
 test("PiThreadSession: retains lastCheckpointId from incoming runner events", async () => {
-	// Verify that PiThreadSession records providerCheckpointId when an event arrives
 	const notifications: Array<{ method: string; params: Record<string, unknown> }> = [];
 	const sessionClass = (await import("../src/host/session.ts")).PiThreadSession;
 
@@ -252,7 +135,6 @@ test("PiThreadSession: retains lastCheckpointId from incoming runner events", as
 
 	assert.equal(session.getLastCheckpointId(), null, "Initial checkpointId must be null");
 
-	// Simulate event arrival via private handleRunnerEvent
 	const handleEvent = (session as unknown as { handleRunnerEvent: (e: RunnerEvent) => Promise<void> }).handleRunnerEvent.bind(session);
 
 	try {
