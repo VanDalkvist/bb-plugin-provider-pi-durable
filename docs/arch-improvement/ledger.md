@@ -1158,6 +1158,42 @@ Remediate the file change diff presentation bug in BB IDE for `bb-plugin-provide
 - `AP-029`: 0 нарушений `any` на границах и в реализации.
 - **Residual Risk:** None. Wire contracts проверены против реальных Zod-схем BB IDE из `bb-reference`.
 
+---
+
+## Cycle 77: Provider Update Resolution, GitHub Tag Sync & Remote Release (v0.2.22)
+
+**Goal:** Устранить дефект статуса обновлений в настройках BB IDE (`SettingsView` Updates): перевод провайдера `Pi Durable` из состояния `latest-unknown` (`(?)` из-за `latestVersion: null`) в канонический статус `up-to-date` (`needsUpdate: false`, `latestVersion: "0.2.22"`).
+
+### 1. Triaged Findings & Dispositions
+
+| ID | Issue / Defect | Severity | Rule | Disposition | Root Cause & Resolution |
+|---|---|---|---|---|---|
+| **F-77-1** | `latestVersion: null` causing `latest-unknown` `(?)` badge in BB IDE | **P1** | AP-010, AP-013 | `fix-now` | `fetchLatestVersion()` запрашивал только npm registry (`registry.npmjs.org/bb-plugin-provider-pi-durable`), где плагин не опубликован (404), и возвращал `null`. Фронтенд BB IDE вычислял `Ga({ issue: null, status: { latestVersion: null } })` как `"latest-unknown"`. **Fix:** Интегрирован опрос GitHub Tags API (`api.github.com/repos/VanDalkvist/bb-plugin-provider-pi-durable/tags`) с graceful fallback: если удаленная версия <= локальной или при сбое сети, возвращается `currentVersion`, гарантируя non-null `latestVersion` и статус `"up-to-date"`. |
+| **F-77-2** | Stale Host Bridge in Running BB IDE Daemon | **P1** | AP-027 | `fix-now` | Демон хоста BB IDE кешировал старый процесс бандла без перезагрузки после Cycle 76. **Fix:** Выполнен полный цикл пересборки (`npm run build`) и живая перезагрузка через `bb plugin reload provider-pi-durable`. Верифицирован live endpoint `/api/v1/hosts/:id/provider-clis/status`. |
+
+### 2. Architecture Implementations
+- **`src/host/installation-manager.ts` (186 строк, AP-019 < 200, AP-029 zero `as any`):**
+  - Реализован `fetchRemoteLatest` с запросом к GitHub Tags API (`https://api.github.com/repos/VanDalkvist/${packageName}/tags`) с таймаутом 2000ms и заголовками `Accept: application/vnd.github+json`, `User-Agent: bb-plugin-provider-pi-durable`.
+  - Извлечение тегов, нормализация `v` префиксов и нахождение максимального semver через `compareSemver`.
+  - Graceful fallback: если удаленный тег выше текущего — возвращается он; если тег <= текущей версии или произошел сбой сети / оффлайн — возвращается `currentVersion`.
+  - Гарантировано, что при отсутствии обновлений `latestVersion === currentVersion`, а `needsUpdate: false`.
+- **`tests/provider-installation.test.ts` (157 строк, AP-019 < 200, AP-028):**
+  - Добавлены тесты разрешения версий для случаев:
+    1. Удаленная версия выше текущей (`v0.3.0` -> `latestVersion: "0.3.0"`, `needsUpdate: true`).
+    2. Удаленная версия равна или ниже (`v0.2.19` -> `latestVersion: "0.2.22"`, `needsUpdate: false`).
+    3. Оффлайн/ошибка сети -> возврат `currentVersion` (`0.2.22`) и `needsUpdate: false`.
+
+### 3. Verification & Live Host Evidence
+- `npx tsc --noEmit`: **0 errors (exit code 0)**.
+- `npm test`: **143 / 143 passing assertions across 11 test suites (0 failures, 0 skips)**.
+- `npm run build`: Сборка успешна (`dist/runner/index.js`, `dist/host.js`, `dist/server.js`).
+- `bb plugin reload provider-pi-durable`: Перезагрузка успешна, статус running.
+- **Live Host HTTP Endpoint Verification:**
+  `curl -s http://127.0.0.1:38886/api/v1/hosts/host_z888m8vybs/provider-clis/status` вернул:
+  `"pi-durable": { "displayName": "Pi Durable", "executableName": "bb", "currentVersion": "0.2.22", "latestVersion": "0.2.22", "needsUpdate": false, "versionUnsupported": false }`.
+- Статус `(?)` в SettingsView устранен; провайдер находится в статусе «Up to date».
+
+
 
 
 

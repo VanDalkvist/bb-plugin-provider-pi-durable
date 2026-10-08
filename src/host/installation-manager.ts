@@ -2,12 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-export interface ProviderInstallationAction {
-	kind: "install" | "update";
-	label: "Install" | "Update";
-	command: string;
-}
-
+export interface ProviderInstallationAction { kind: "install" | "update"; label: "Install" | "Update"; command: string; }
 export type ProviderInstallationSource = "notInstalled" | "npmGlobal" | "external";
 
 export interface ProviderInstallationStatus {
@@ -28,27 +23,20 @@ export interface ProviderInstallationStatus {
 export type ProviderInstallationRunResult =
 	| {
 			available: true;
-			command: {
-				command: string;
-				args: string[];
-				displayCommand: string;
-			};
+			command: { command: string; args: string[]; displayCommand: string };
 			verification:
 				| { kind: "installed" }
 				| { kind: "version_changed"; previousVersion: string }
 				| { kind: "version_at_least"; version: string };
 	  }
-	| {
-			available: false;
-			message: string;
-	  };
+	| { available: false; message: string };
 
 const PLUGIN_PACKAGE_NAME = "bb-plugin-provider-pi-durable";
 const PLUGIN_EXECUTABLE_NAME = "bb";
 const MINIMUM_SUPPORTED_VERSION = "0.2.0";
 
 let cachedPluginVersion: string | null = null;
-let cachedLatestVersion: { version: string | null; fetchedAt: number } | null = null;
+let cachedLatestVersion: { version: string; fetchedAt: number } | null = null;
 const LATEST_CACHE_TTL_MS = 60000;
 
 export function resolvePluginVersion(): string {
@@ -64,16 +52,12 @@ export function resolvePluginVersion(): string {
 			if (existsSync(candidate)) {
 				const parsed = JSON.parse(readFileSync(candidate, "utf8")) as { name?: string; version?: string };
 				if (parsed.name === PLUGIN_PACKAGE_NAME && typeof parsed.version === "string" && parsed.version.length > 0) {
-					cachedPluginVersion = parsed.version;
-					return cachedPluginVersion;
+					return (cachedPluginVersion = parsed.version);
 				}
 			}
 		}
-	} catch {
-		// intentional fallback if file read or parse fails
-	}
-	cachedPluginVersion = "0.2.22";
-	return cachedPluginVersion;
+	} catch {}
+	return (cachedPluginVersion = "0.2.22");
 }
 
 export function resetPluginVersionCacheForTesting(): void {
@@ -93,49 +77,70 @@ export function compareSemver(a: string, b: string): number {
 	return 0;
 }
 
-export async function fetchLatestVersion(packageName = PLUGIN_PACKAGE_NAME): Promise<string | null> {
+async function fetchJsonWithTimeout<T>(url: string, headers: Record<string, string>, fetchFn: typeof fetch): Promise<T | null> {
+	try {
+		const controller = new AbortController();
+		const timer = setTimeout(() => controller.abort(), 2000);
+		const res = await fetchFn(url, { signal: controller.signal, headers }).finally(() => clearTimeout(timer));
+		if (res.ok) return (await res.json()) as T;
+	} catch {}
+	return null;
+}
+
+async function fetchRemoteLatest(packageName: string, fetchFn: typeof fetch): Promise<string | null> {
+	const tags = await fetchJsonWithTimeout<Array<{ name?: string }>>(
+		`https://api.github.com/repos/VanDalkvist/${packageName}/tags`,
+		{ Accept: "application/vnd.github+json", "User-Agent": packageName },
+		fetchFn,
+	);
+	if (Array.isArray(tags)) {
+		let max: string | null = null;
+		for (const item of tags) {
+			const tag = item?.name?.replace(/^v/, "");
+			if (tag && /^\d+\.\d+\.\d+/.test(tag) && (max === null || compareSemver(tag, max) > 0)) max = tag;
+		}
+		if (max !== null) return max;
+	}
+	const npm = await fetchJsonWithTimeout<{ "dist-tags"?: { latest?: string } }>(
+		`https://registry.npmjs.org/${packageName}`,
+		{ Accept: "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8" },
+		fetchFn,
+	);
+	return typeof npm?.["dist-tags"]?.latest === "string" ? npm["dist-tags"].latest : null;
+}
+
+export async function fetchLatestVersion(
+	packageName = PLUGIN_PACKAGE_NAME,
+	fetchFn: typeof fetch = globalThis.fetch,
+): Promise<string> {
 	const now = Date.now();
 	if (cachedLatestVersion !== null && now - cachedLatestVersion.fetchedAt < LATEST_CACHE_TTL_MS) {
 		return cachedLatestVersion.version;
 	}
-	try {
-		const controller = new AbortController();
-		const timer = setTimeout(() => controller.abort(), 2000);
-		const res = await fetch(`https://registry.npmjs.org/${packageName}`, {
-			signal: controller.signal,
-			headers: { Accept: "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8" },
-		});
-		clearTimeout(timer);
-		if (res.ok) {
-			const data = (await res.json()) as { "dist-tags"?: { latest?: string } };
-			const latest = typeof data?.["dist-tags"]?.latest === "string" ? data["dist-tags"].latest : null;
-			cachedLatestVersion = { version: latest, fetchedAt: now };
-			return latest;
-		}
-	} catch {
-		// safe offline / timeout fallback
-	}
-	cachedLatestVersion = { version: null, fetchedAt: now };
-	return null;
+	const currentVersion = resolvePluginVersion();
+	const remoteLatest = await fetchRemoteLatest(packageName, fetchFn);
+	const resolved =
+		remoteLatest !== null && compareSemver(remoteLatest, currentVersion) > 0
+			? remoteLatest
+			: currentVersion;
+
+	cachedLatestVersion = { version: resolved, fetchedAt: now };
+	return resolved;
 }
 
 export async function getProviderInstallationStatus(
-	options: { checkUpdates?: boolean } = {},
+	options: { checkUpdates?: boolean; fetchFn?: typeof fetch } = {},
 ): Promise<ProviderInstallationStatus> {
 	const currentVersion = resolvePluginVersion();
-	const latestVersion = options.checkUpdates !== false ? await fetchLatestVersion() : null;
+	const latestVersion =
+		options.checkUpdates !== false
+			? await fetchLatestVersion(PLUGIN_PACKAGE_NAME, options.fetchFn)
+			: null;
 	const needsUpdate =
-		latestVersion !== null && currentVersion !== null && compareSemver(latestVersion, currentVersion) > 0;
+		latestVersion !== null && compareSemver(latestVersion, currentVersion) > 0;
 	const versionUnsupported =
 		MINIMUM_SUPPORTED_VERSION !== null &&
-		currentVersion !== null &&
 		compareSemver(currentVersion, MINIMUM_SUPPORTED_VERSION) < 0;
-
-	const installAction: ProviderInstallationAction = {
-		kind: "update",
-		label: "Update",
-		command: "bb plugin update provider-pi-durable",
-	};
 
 	return {
 		executableName: PLUGIN_EXECUTABLE_NAME,
@@ -147,7 +152,11 @@ export async function getProviderInstallationStatus(
 		minimumSupportedVersion: MINIMUM_SUPPORTED_VERSION,
 		npmPackageName: PLUGIN_PACKAGE_NAME,
 		npmGlobalPackageVersion: null,
-		installAction,
+		installAction: {
+			kind: "update",
+			label: "Update",
+			command: "bb plugin update provider-pi-durable",
+		},
 		needsUpdate,
 		versionUnsupported,
 	};

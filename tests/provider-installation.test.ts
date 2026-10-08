@@ -127,4 +127,31 @@ describe("Native Provider Installation Lifecycle (Cycle 76)", () => {
 		assert.notEqual(runRes, null);
 		assert.equal(providerInstallationRunResultSchema.safeParse(runRes).success, true);
 	});
+
+	it("getProviderInstallationStatus sets needsUpdate: true when remote version is higher", async () => {
+		const { resetPluginVersionCacheForTesting } = await import("../src/host/installation-manager.ts");
+		resetPluginVersionCacheForTesting();
+		const mockFetch: typeof fetch = async () => new Response(JSON.stringify([{ name: "v0.3.0" }]), { status: 200 });
+		const status = await getProviderInstallationStatus({ checkUpdates: true, fetchFn: mockFetch });
+		assert.equal(status.latestVersion, "0.3.0");
+		assert.equal(status.needsUpdate, true);
+	});
+
+	it("getProviderInstallationStatus returns currentVersion and needsUpdate: false when remote is older or equal", async () => {
+		const { resetPluginVersionCacheForTesting } = await import("../src/host/installation-manager.ts");
+		resetPluginVersionCacheForTesting();
+		const mockFetch: typeof fetch = async () => new Response(JSON.stringify([{ name: "v0.2.19" }]), { status: 200 });
+		const status = await getProviderInstallationStatus({ checkUpdates: true, fetchFn: mockFetch });
+		assert.equal(status.latestVersion, "0.2.22");
+		assert.equal(status.needsUpdate, false);
+	});
+
+	it("getProviderInstallationStatus falls back to currentVersion when offline or remote fails", async () => {
+		const { resetPluginVersionCacheForTesting } = await import("../src/host/installation-manager.ts");
+		resetPluginVersionCacheForTesting();
+		const mockFetch: typeof fetch = async () => { throw new Error("Offline network"); };
+		const status = await getProviderInstallationStatus({ checkUpdates: true, fetchFn: mockFetch });
+		assert.equal(status.latestVersion, "0.2.22");
+		assert.equal(status.needsUpdate, false);
+	});
 });
