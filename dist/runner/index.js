@@ -36,13 +36,38 @@ import {
   createWriteToolDefinition,
   formatSkillsForPrompt
 } from "@earendil-works/pi-coding-agent";
+var DynamicPromptSections = class {
+  sections = {};
+  revision = 0;
+  getSections() {
+    return { ...this.sections };
+  }
+  updateSections(sections) {
+    Object.assign(this.sections, sections);
+    this.revision++;
+  }
+  getRevision() {
+    return this.revision;
+  }
+};
 var CANONICAL_TOOL_DEFS = {
   read: createReadToolDefinition(),
   write: createWriteToolDefinition(),
   edit: createEditToolDefinition(),
   bash: createBashToolDefinition()
 };
-var KEYS = ["preamble", "tools", "rules", "docs", "addendum", "project_context", "skills", "cwd"];
+var KEYS = [
+  "preamble",
+  "tools",
+  "rules",
+  "docs",
+  "addendum",
+  "project_context",
+  "skills",
+  "cwd",
+  "mcp_servers",
+  "dynamic_sections"
+];
 function resolveContextFiles(options) {
   if (options.contextFiles && options.contextFiles.length > 0) {
     return options.contextFiles;
@@ -137,16 +162,32 @@ ${formatSkillsForPrompt(skills, "read")}
     sections.cwd = `<cwd>
 ${cwd.replace(/\\/g, "/")}
 </cwd>`;
+    if (options.dynamicSections) {
+      const extra = options.dynamicSections.getSections();
+      if (extra.mcp_servers) {
+        sections.mcp_servers = `<mcp_servers>
+${extra.mcp_servers}
+</mcp_servers>`;
+      }
+      const otherEntries = Object.entries(extra).filter(([k]) => k !== "mcp_servers");
+      if (otherEntries.length > 0) {
+        sections.dynamic_sections = otherEntries.map(([name, text]) => `<${name}>
+${text}
+</${name}>`).join("\n\n");
+      }
+    }
     return sections;
   };
   const built = /* @__PURE__ */ new WeakMap();
   const getOrBuild = (input) => {
-    let sections = built.get(input);
-    if (sections === void 0) {
-      sections = buildSections(input);
-      built.set(input, sections);
+    const currentRev = options.dynamicSections?.getRevision?.() ?? 0;
+    const cached = built.get(input);
+    if (cached === void 0 || cached.revision !== currentRev) {
+      const sections = buildSections(input);
+      built.set(input, { revision: currentRev, sections });
+      return sections;
     }
-    return sections;
+    return cached.sections;
   };
   return defineExtension({
     name: "pi-prompt",
@@ -555,7 +596,24 @@ function createDurableController(ctx) {
     return model;
   };
   return {
-    submit: (text, whenBusy) => command(async () => watchAnswer(await ctx.getCurrent().submit({ type: "input", content: text, whenBusy }, runtimeContext))),
+    submit: (text, whenBusy) => command(async () => {
+      if (ctx.extensionRunner && ctx.dynamicSections) {
+        try {
+          const before = await ctx.extensionRunner.emitBeforeAgentStart(text, void 0, {
+            cwd: ctx.cwd ?? process.cwd()
+          });
+          if (before?.systemPromptOptions?.sections) {
+            ctx.dynamicSections.updateSections(before.systemPromptOptions.sections);
+          }
+        } catch (err) {
+          ctx.notice(
+            "warning",
+            `before_agent_start error: ${err instanceof Error ? err.message : String(err)}`
+          );
+        }
+      }
+      return watchAnswer(await ctx.getCurrent().submit({ type: "input", content: text, whenBusy }, runtimeContext));
+    }),
     compact: (instructions) => command(async () => {
       const id = await ctx.getCurrent().compact(instructions, runtimeContext);
       void ctx.opened.waitForTask(id, runtimeContext).then(async (receipt) => {
@@ -641,12 +699,27 @@ function hasOutput(api) {
 function createStandardExtensionFactories() {
   return [createCodemodeExtension({ mode: "auto" }), createToolSearchExtension(), createMcpExtension()];
 }
-function adaptExtensionTool(toolDef, executeToolFn, createToolContext) {
+function adaptExtensionTool(toolDef, executeToolFn, createToolContext, getExtensionRunner) {
   return defineTool({
     name: toolDef.name,
     description: toolDef.description,
     parameters: toolDef.parameters,
     async execute(args2, api) {
+      const runner = getExtensionRunner?.();
+      if (runner?.hasHandlers("tool_call")) {
+        const hookResult = await runner.emitToolCall({
+          type: "tool_call",
+          toolName: toolDef.name,
+          toolCallId: api.callId,
+          input: args2 ?? {}
+        });
+        if (hookResult?.block) {
+          return {
+            content: [{ type: "text", text: `Tool execution blocked: ${hookResult.reason ?? "policy"}` }],
+            isError: true
+          };
+        }
+      }
       const ctx = createToolContext ? createToolContext(api.callId) : {
         tools: [],
         executeTool: async (name, nestedArgs, options) => executeToolFn(api.callId, name, nestedArgs, options)
@@ -663,6 +736,17 @@ function adaptExtensionTool(toolDef, executeToolFn, createToolContext) {
         },
         ctx
       );
+      if (runner?.hasHandlers("tool_result")) {
+        await runner.emitToolResult({
+          type: "tool_result",
+          toolName: toolDef.name,
+          toolCallId: api.callId,
+          input: args2 ?? {},
+          content: result.content,
+          details: result.details ?? void 0,
+          isError: result.isError
+        });
+      }
       return {
         content: result.content,
         isError: result.isError,
@@ -679,6 +763,14 @@ async function setupExtensionRunner(options) {
   const sessionManager = SessionManager.create(options.cwd);
   const modelRegistry = new ModelRegistry(options.modelRuntime);
   const runner = new ExtensionRunner(options.extensions, options.runtime, options.cwd, sessionManager, modelRegistry);
+  if (options.onNotice) {
+    const notifyFn = options.onNotice;
+    runner.setUIContext({
+      notify: (message, type = "info") => {
+        notifyFn(type, message);
+      }
+    });
+  }
   runner.bindCore(
     {
       getActiveTools: () => [],
@@ -704,7 +796,7 @@ async function setupExtensionRunner(options) {
 }
 
 // src/runner/extension-mount.ts
-function createNestedToolExecutor(registry) {
+function createNestedToolExecutor(registry, getExtensionRunner) {
   return async (callerId, name, args2) => {
     const target = registry.snapshot().tools().find((t) => t.tool.name === name);
     if (!target) {
@@ -713,6 +805,26 @@ function createNestedToolExecutor(registry) {
         result: { content: [{ type: "text", text: `Tool ${name} not found` }], details: {} },
         isError: true
       };
+    }
+    const runner = getExtensionRunner?.();
+    if (runner?.hasHandlers("tool_call")) {
+      const hookResult = await runner.emitToolCall({
+        type: "tool_call",
+        toolName: name,
+        toolCallId: `${callerId}/nested`,
+        parentToolCallId: callerId,
+        input: args2 ?? {}
+      });
+      if (hookResult?.block) {
+        return {
+          toolCall: { type: "toolCall", id: `${callerId}/nested`, name, arguments: args2 },
+          result: {
+            content: [{ type: "text", text: `Tool execution blocked: ${hookResult.reason ?? "policy"}` }],
+            details: {}
+          },
+          isError: true
+        };
+      }
     }
     try {
       const res = await target.tool.execute(
@@ -723,6 +835,18 @@ function createNestedToolExecutor(registry) {
       );
       const rawContent = res.content;
       const content = Array.isArray(rawContent) ? rawContent : [{ type: "text", text: String(rawContent ?? "") }];
+      if (runner?.hasHandlers("tool_result")) {
+        await runner.emitToolResult({
+          type: "tool_result",
+          toolName: name,
+          toolCallId: `${callerId}/nested`,
+          parentToolCallId: callerId,
+          input: args2 ?? {},
+          content,
+          details: res.details,
+          isError: !!res.isError
+        });
+      }
       return {
         toolCall: { type: "toolCall", id: `${callerId}/nested`, name, arguments: args2 },
         result: { content, details: res.details },
@@ -738,14 +862,14 @@ function createNestedToolExecutor(registry) {
     }
   };
 }
-async function mountExtensionBridge(location, modelRuntime, extensionsResult, registry, executeToolFn, report) {
+async function mountExtensionBridge(location, modelRuntime, extensionsResult, registry, executeToolFn, report, dynamicSections, onNotice) {
   let extensionRunner;
   try {
     const syncToolsToRegistry = () => {
       if (!extensionRunner) return;
       const createToolContext = (callId) => extensionRunner.createToolContext(callId, void 0);
       const adapted = extensionRunner.getAllRegisteredTools().map(
-        (t) => adaptExtensionTool(t.definition, executeToolFn, createToolContext)
+        (t) => adaptExtensionTool(t.definition, executeToolFn, createToolContext, () => extensionRunner)
       );
       installExtensionTools(registry, adapted);
     };
@@ -760,18 +884,30 @@ async function mountExtensionBridge(location, modelRuntime, extensionsResult, re
         description: t.tool.description ?? "",
         parameters: t.tool.parameters
       })),
-      onToolsChanged: syncToolsToRegistry
+      onToolsChanged: syncToolsToRegistry,
+      onNotice
     });
+    try {
+      const beforeStart = await extensionRunner.emitBeforeAgentStart("", void 0, { cwd: location.cwd });
+      if (beforeStart?.systemPromptOptions?.sections && dynamicSections) {
+        dynamicSections.updateSections(beforeStart.systemPromptOptions.sections);
+      }
+    } catch (err) {
+      report(err);
+    }
     syncToolsToRegistry();
   } catch (error) {
     report(error);
   }
-  return async () => {
-    if (extensionRunner) {
-      try {
-        await extensionRunner.emit({ type: "session_shutdown", reason: "shutdown" });
-      } catch (err) {
-        console.warn("[ExtensionBridge] Cleanup session_shutdown failed:", err);
+  return {
+    extensionRunner,
+    cleanup: async () => {
+      if (extensionRunner) {
+        try {
+          await extensionRunner.emit({ type: "session_shutdown", reason: "shutdown" });
+        } catch (err) {
+          console.warn("[ExtensionBridge] Cleanup session_shutdown failed:", err);
+        }
       }
     }
   };
@@ -863,23 +999,29 @@ async function loadHarnessEnvironment(location, options, envs) {
     const m = settingsManager.getDefaultModel();
     return p && m ? { provider: p, modelId: m } : void 0;
   };
+  const dynamicSections = new DynamicPromptSections();
   const settings = createHarnessSettings(settingsManager, getActiveModel);
   const registry = createCodingRegistry(settingsManager, location.cwd, {
     ...options.prompt,
-    resourceLoader
+    resourceLoader,
+    dynamicSections
   });
   registry.install(Subagent);
   const pendingReports = [];
   const report = (error) => pendingReports.push(error);
-  const executeToolFn = createNestedToolExecutor(registry);
-  const cleanup = await mountExtensionBridge(
+  let runnerRef;
+  const executeToolFn = createNestedToolExecutor(registry, () => runnerRef);
+  const mounted = await mountExtensionBridge(
     location,
     modelRuntime,
     extensionsResult,
     registry,
     executeToolFn,
-    report
+    report,
+    dynamicSections,
+    (level, message) => pendingReports.push({ kind: "notice", level, message })
   );
+  runnerRef = mounted.extensionRunner;
   const harness = await Harness.open(
     await openNodeSqliteStorage(location.database),
     { models: modelRuntime, registry, settings, env: envs.env, onReport: report },
@@ -899,7 +1041,9 @@ async function loadHarnessEnvironment(location, options, envs) {
     setActiveModelRef: (ref) => {
       activeModelRef = ref;
     },
-    cleanup
+    cleanup: mounted.cleanup,
+    extensionRunner: mounted.extensionRunner,
+    dynamicSections
   };
 }
 
@@ -1023,7 +1167,10 @@ async function openDurable(options = {}) {
         unsubscribeTasks = fn;
       },
       closeTasks,
-      setActiveModelRef: (ref) => envState2.setActiveModelRef(ref)
+      setActiveModelRef: (ref) => envState2.setActiveModelRef(ref),
+      extensionRunner: envState2.extensionRunner,
+      dynamicSections: envState2.dynamicSections,
+      cwd: location.cwd
     });
     const saved = agentOf(state.conversation).model;
     if (!saved) notice("warning", "No model configured; select one with /model.");

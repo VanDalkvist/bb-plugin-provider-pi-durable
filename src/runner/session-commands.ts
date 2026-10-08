@@ -10,8 +10,23 @@ export interface CommandResponder {
 	error: (id: string | undefined, command: string, message: string) => void;
 }
 
+interface SessionAgentDoc {
+	model?: { provider?: string; id?: string; modelId?: string };
+	thinkingLevel?: import("@earendil-works/pi-ai").ModelThinkingLevel;
+}
+
+export interface RunnerCommandPayload {
+	type?: string;
+	id?: string;
+	message?: string;
+	streamingBehavior?: string;
+	provider?: string;
+	modelId?: string;
+	level?: import("@earendil-works/pi-ai").ModelThinkingLevel;
+}
+
 export async function handleActiveSessionCommand(
-	cmd: any,
+	cmd: RunnerCommandPayload,
 	durable: OpenDurableResult,
 	modelRuntime: ModelRuntime,
 	args: CliArgs,
@@ -49,7 +64,7 @@ export async function handleActiveSessionCommand(
 		}
 		case "get_state": {
 			const current = durable.view.current();
-			const agentDoc = (current.conversation.docs["pi.agent"] ?? {}) as any;
+			const agentDoc = (current.conversation.docs["pi.agent"] ?? {}) as SessionAgentDoc;
 			const modelObj = agentDoc.model
 				? {
 						provider: agentDoc.model.provider,
@@ -86,7 +101,7 @@ export async function handleActiveSessionCommand(
 		}
 		case "get_session_stats": {
 			const current = durable.view.current();
-			const agentDoc = (current.conversation.docs["pi.agent"] ?? {}) as any;
+			const agentDoc = (current.conversation.docs["pi.agent"] ?? {}) as SessionAgentDoc;
 			let contextWindow = 128000;
 			const provider = agentDoc.model?.provider ?? args.provider;
 			const modelId = agentDoc.model?.modelId ?? args.model;

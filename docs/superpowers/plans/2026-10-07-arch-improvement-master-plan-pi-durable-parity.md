@@ -90,10 +90,10 @@ Because `@earendil-works/pi-durable` is an execution engine rather than an agent
 | **D-13**| **Молчаливые системные сбои** | При краше раннера или ошибке CWD эмитится `provider.error` | ✅ **FIXED** (`child.on("error")`, fail-fast start, `settlesTurn: true`) | `v0.2.1` (Cycle 56) |
 | **D-14**| **Синхронизация Context Meter** | Точный учет контекстного окна модели в реальном времени | ✅ **FIXED** (Синхронный эмит `contextWindow` на `agent_end`) | `v0.2.2` (Cycle 57), `v0.2.4` (Cycle 59) |
 | **D-15**| **Невидимость тулов `edit`/`write` и зависание steer** | `write` -> `add`, `edit` -> `update`; steer без `providerTurnId` | ✅ **FIXED** (Zod-валидные дельты, исключение 409-конфликта) | `v0.2.3` (Cycle 58) |
-| **D-16**| **Гонка старта и потеря Direct MCP серверов** | Тяжелые MCP-серверы (`gbrain`, 3.5–4.5с) не успевают к старту первого хода | ⏳ **SCOPED (NEW)** (Ожидание `waitForDirectServers` на старте сессии) | Stage 2 (Cycle 74) |
-| **D-17**| **Статический промпт без динамики расширений** | Расширения обогащают промпт (`mcp_servers`, Ambient Recall) через `before_agent_start` | ⏳ **SCOPED (NEW)** (Эмит `before_agent_start` и мердж секций промпта) | Stage 2 (Cycle 74) |
-| **D-18**| **Отсутствие хуков `tool_call`/`tool_result` в runner** | Ленивое ожидание серверов в `codemode` и guardrails (`skill-guardian`) не работают | ⏳ **SCOPED (NEW)** (Проброс `tool_call` и `tool_result` в `extensionRunner`) | Stage 2 (Cycle 74) |
-| **D-19**| **Глушение UI и диагностических notice расширений** | Ошибки и статусы MCP (`needs-auth`, сбои соединения) тонут в `noOpUIContext` | ⏳ **SCOPED (NEW)** (Привязка `runner.setUIContext` к wire notice и логам хоста) | Stage 2 (Cycle 74) |
+| **D-16**| **Гонка старта и потеря Direct MCP серверов** | Тяжелые MCP-серверы (`gbrain`, 3.5–4.5с) не успевают к старту первого хода | ✅ **FIXED** (Ожидание `waitForDirectServers` на старте сессии) | `v0.2.20` (Cycle 74) |
+| **D-17**| **Статический промпт без динамики расширений** | Расширения обогащают промпт (`mcp_servers`, Ambient Recall) через `before_agent_start` | ✅ **FIXED** (Эмит `before_agent_start` и мердж секций промпта) | `v0.2.20` (Cycle 74) |
+| **D-18**| **Отсутствие хуков `tool_call`/`tool_result` в runner** | Ленивое ожидание серверов в `codemode` и guardrails (`skill-guardian`) не работают | ✅ **FIXED** (Проброс `tool_call` и `tool_result` в `extensionRunner`) | `v0.2.20` (Cycle 74) |
+| **D-19**| **Глушение UI и диагностических notice расширений** | Ошибки и статусы MCP (`needs-auth`, сбои соединения) тонут в `noOpUIContext` | ✅ **FIXED** (Привязка `runner.setUIContext` к wire notice и логам хоста) | `v0.2.20` (Cycle 74) |
 | **D-20**| **Блокировка сессий сиротами и жесткая привязка к ~/.bb** | Сиротские раннеры вешают `session.sqlite`; `BB_DATA_DIR` не учитывается при поиске раннера | ✅ **FIXED** (session.owner.json, graceful eviction, teardown, Issue #7) | `v0.2.17` (Cycle 71) |
 
 ---
@@ -124,8 +124,8 @@ STAGE 2: РАСШИРЕННЫЕ ВОЗМОЖНОСТИ ДВИЖКА И ПОЛН�
   - Cycle 71: Устранение блокировок сиротами, Teardown воркеров и BB_DATA_DIR (D-20, Issue #7) [✅ ЗАВЕРШЕНО, v0.2.17]
   - Cycle 72: Визуальные карточки сабагентов через протокольный deltaDelegationShape (type: "delegation") [✅ ЗАВЕРШЕНО, v0.2.18]
   - Cycle 73: Корректное прерывание хода, inbox-отмена и обработка thread/stop (submission.abort) [✅ ЗАВЕРШЕНО, v0.2.19]
-  - Cycle 74: Паритет жизненного цикла расширений Pi и надёжность MCP-серверов (D-16, D-17, D-18, D-19) [⏳ СЛЕДУЮЩИЙ, v0.2.20]
-  - Cycle 75: Мастер-аттестация паритета с нативным provider-pi и conformance-тесты [PLANNED, v0.2.21]
+  - Cycle 74: Паритет жизненного цикла расширений Pi и надёжность MCP-серверов (D-16, D-17, D-18, D-19) [✅ ЗАВЕРШЕНО, v0.2.20]
+  - Cycle 75: Мастер-аттестация паритета с нативным provider-pi и conformance-тесты [⏳ СЛЕДУЮЩИЙ, v0.2.21]
 ```
 
 ---

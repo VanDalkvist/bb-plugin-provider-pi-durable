@@ -15,11 +15,36 @@ export interface ResourceLoaderLike {
 	getSkills?: () => Skill[];
 }
 
+export interface DynamicSectionsHolder {
+	getSections(): Record<string, string>;
+	updateSections(sections: Record<string, string>): void;
+	getRevision?(): number;
+}
+
+export class DynamicPromptSections implements DynamicSectionsHolder {
+	private readonly sections: Record<string, string> = {};
+	private revision = 0;
+
+	getSections(): Record<string, string> {
+		return { ...this.sections };
+	}
+
+	updateSections(sections: Record<string, string>): void {
+		Object.assign(this.sections, sections);
+		this.revision++;
+	}
+
+	getRevision(): number {
+		return this.revision;
+	}
+}
+
 export interface PromptOptions {
 	systemPromptPath?: string;
 	appendSystemPromptPath?: string;
 	contextFiles?: Array<{ path: string; content: string }>;
 	resourceLoader?: ResourceLoaderLike;
+	dynamicSections?: DynamicSectionsHolder;
 }
 
 const CANONICAL_TOOL_DEFS = {
@@ -29,7 +54,18 @@ const CANONICAL_TOOL_DEFS = {
 	bash: createBashToolDefinition(),
 };
 
-const KEYS = ["preamble", "tools", "rules", "docs", "addendum", "project_context", "skills", "cwd"] as const;
+const KEYS = [
+	"preamble",
+	"tools",
+	"rules",
+	"docs",
+	"addendum",
+	"project_context",
+	"skills",
+	"cwd",
+	"mcp_servers",
+	"dynamic_sections",
+] as const;
 
 function resolveContextFiles(options: PromptOptions): Array<{ path: string; content: string }> {
 	if (options.contextFiles && options.contextFiles.length > 0) {
@@ -132,17 +168,33 @@ export function createPiPrompt(
 		}
 
 		sections.cwd = `<cwd>\n${cwd.replace(/\\/g, "/")}\n</cwd>`;
+
+		if (options.dynamicSections) {
+			const extra = options.dynamicSections.getSections();
+			if (extra.mcp_servers) {
+				sections.mcp_servers = `<mcp_servers>\n${extra.mcp_servers}\n</mcp_servers>`;
+			}
+			const otherEntries = Object.entries(extra).filter(([k]) => k !== "mcp_servers");
+			if (otherEntries.length > 0) {
+				sections.dynamic_sections = otherEntries
+					.map(([name, text]) => `<${name}>\n${text}\n</${name}>`)
+					.join("\n\n");
+			}
+		}
+
 		return sections;
 	};
 
-	const built = new WeakMap<PromptInput, Record<string, string>>();
+	const built = new WeakMap<PromptInput, { revision: number; sections: Record<string, string> }>();
 	const getOrBuild = (input: PromptInput): Record<string, string> => {
-		let sections = built.get(input);
-		if (sections === undefined) {
-			sections = buildSections(input);
-			built.set(input, sections);
+		const currentRev = options.dynamicSections?.getRevision?.() ?? 0;
+		const cached = built.get(input);
+		if (cached === undefined || cached.revision !== currentRev) {
+			const sections = buildSections(input);
+			built.set(input, { revision: currentRev, sections });
+			return sections;
 		}
-		return sections;
+		return cached.sections;
 	};
 
 	return defineExtension({

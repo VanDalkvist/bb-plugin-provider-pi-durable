@@ -46,12 +46,29 @@ export function adaptExtensionTool(
 	toolDef: ToolDefinition,
 	executeToolFn: NestedToolExecutor,
 	createToolContext?: (callId: string) => ExtensionToolContext,
+	getExtensionRunner?: () => ExtensionRunner | undefined,
 ): ToolRegistration {
 	return defineTool({
 		name: toolDef.name,
 		description: toolDef.description,
 		parameters: toolDef.parameters,
 		async execute(args, api) {
+			const runner = getExtensionRunner?.();
+			if (runner?.hasHandlers("tool_call")) {
+				const hookResult = await runner.emitToolCall({
+					type: "tool_call",
+					toolName: toolDef.name,
+					toolCallId: api.callId,
+					input: (args ?? {}) as Record<string, unknown>,
+				});
+				if (hookResult?.block) {
+					return {
+						content: [{ type: "text", text: `Tool execution blocked: ${hookResult.reason ?? "policy"}` }],
+						isError: true,
+					};
+				}
+			}
+
 			const ctx = createToolContext
 				? createToolContext(api.callId)
 				: ({
@@ -76,6 +93,18 @@ export function adaptExtensionTool(
 				ctx,
 			);
 
+			if (runner?.hasHandlers("tool_result")) {
+				await runner.emitToolResult({
+					type: "tool_result",
+					toolName: toolDef.name,
+					toolCallId: api.callId,
+					input: (args ?? {}) as Record<string, unknown>,
+					content: result.content,
+					details: (result.details ?? undefined) as JsonValue | undefined,
+					isError: result.isError,
+				});
+			}
+
 			return {
 				content: result.content,
 				isError: result.isError,
@@ -99,6 +128,7 @@ export interface SetupExtensionRunnerOptions {
 	executeToolFn: NestedToolExecutor;
 	getCallableTools?: () => Array<{ name: string; description: string; parameters: unknown }>;
 	onToolsChanged?: () => void;
+	onNotice?: (level: "info" | "warning" | "error", message: string) => void;
 }
 
 /** Initializes ExtensionRunner and binds actions and nested tool execution. */
@@ -106,6 +136,15 @@ export async function setupExtensionRunner(options: SetupExtensionRunnerOptions)
 	const sessionManager = SessionManager.create(options.cwd);
 	const modelRegistry = new ModelRegistry(options.modelRuntime);
 	const runner = new ExtensionRunner(options.extensions, options.runtime, options.cwd, sessionManager, modelRegistry);
+
+	if (options.onNotice) {
+		const notifyFn = options.onNotice;
+		runner.setUIContext({
+			notify: (message: string, type: "info" | "warning" | "error" = "info") => {
+				notifyFn(type, message);
+			},
+		} as unknown as import("@earendil-works/pi-coding-agent").ExtensionUIContext);
+	}
 
 	runner.bindCore(
 		{

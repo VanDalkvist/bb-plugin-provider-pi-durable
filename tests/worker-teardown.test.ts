@@ -46,7 +46,7 @@ describe("Worker Teardown and Graceful Termination (Cycle 71, AP-027)", () => {
 	it("escalates to SIGKILL if child process does not exit on SIGTERM within 500ms", async () => {
 		const temp = mkdtempSync(join(tmpdir(), "stubborn-runner-"));
 		const fakeRunner = join(temp, "stubborn-script.js");
-		writeFileSync(fakeRunner, "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000);");
+		writeFileSync(fakeRunner, "process.on('SIGTERM', () => {}); console.log(JSON.stringify({ type: 'ready' })); setInterval(() => {}, 1000);");
 
 		const savedRunnerPath = process.env.PI_DURABLE_RUNNER_PATH;
 		process.env.PI_DURABLE_RUNNER_PATH = fakeRunner;
@@ -67,7 +67,14 @@ describe("Worker Teardown and Graceful Termination (Cycle 71, AP-027)", () => {
 			const child = (runner as any).child;
 			assert.ok(child.pid);
 
-			await new Promise((resolve) => setTimeout(resolve, 200));
+			// Ensure stubborn script has booted and installed SIGTERM handler
+			await new Promise<void>((resolve) => {
+				const timer = setTimeout(resolve, 1000);
+				child.stdout?.once("data", () => {
+					clearTimeout(timer);
+					resolve();
+				});
+			});
 
 			const killStart = Date.now();
 			runner.kill();

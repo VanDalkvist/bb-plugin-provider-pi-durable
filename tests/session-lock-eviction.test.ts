@@ -115,8 +115,17 @@ describe("Session Lock Eviction and Ownership Tracking (Cycle 71, D-20)", () => 
 			mkdirSync(targetDir, { recursive: true });
 
 			// Spawn child that ignores SIGTERM
-			const stubborn = spawn(process.execPath, ["-e", "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000);"]);
+			const stubborn = spawn(process.execPath, ["-e", "process.on('SIGTERM', () => {}); console.log('ready'); setInterval(() => {}, 1000);"]);
 			assert.ok(stubborn.pid);
+
+			// Ensure stubborn process has booted and installed SIGTERM handler
+			await new Promise<void>((resolve) => {
+				const timer = setTimeout(resolve, 1000);
+				stubborn.stdout.once("data", () => {
+					clearTimeout(timer);
+					resolve();
+				});
+			});
 
 			mkdirSync(`${targetDir}.lock`, { recursive: true });
 			writeFileSync(

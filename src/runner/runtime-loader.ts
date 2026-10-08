@@ -19,6 +19,7 @@ import { Subagent } from "./upstream/subagent-tool.ts";
 import { Harness, type ModelRef } from "@earendil-works/pi-durable";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { type OpenDurableOptions, runtimeContext } from "./runtime-types.ts";
+import { DynamicPromptSections } from "./prompt.ts";
 
 export interface LoadedHarnessEnvironment {
 	modelRuntime: ModelRuntime;
@@ -31,6 +32,8 @@ export interface LoadedHarnessEnvironment {
 	getActiveModel: () => ModelRef | undefined;
 	setActiveModelRef: (ref: ModelRef | undefined) => void;
 	cleanup?: () => Promise<void>;
+	extensionRunner?: import("@earendil-works/pi-coding-agent").ExtensionRunner;
+	dynamicSections?: DynamicPromptSections;
 }
 
 function registerPendingProviders(modelRuntime: ModelRuntime, runtime: ExtensionRuntime): void {
@@ -72,25 +75,31 @@ export async function loadHarnessEnvironment(
 		return p && m ? { provider: p, modelId: m } : undefined;
 	};
 
+	const dynamicSections = new DynamicPromptSections();
 	const settings = createHarnessSettings(settingsManager, getActiveModel);
 	const registry = createCodingRegistry(settingsManager, location.cwd, {
 		...options.prompt,
 		resourceLoader,
+		dynamicSections,
 	});
 	registry.install(Subagent);
 
 	const pendingReports: unknown[] = [];
 	const report = (error: unknown) => pendingReports.push(error);
 
-	const executeToolFn = createNestedToolExecutor(registry);
-	const cleanup = await mountExtensionBridge(
+	let runnerRef: import("@earendil-works/pi-coding-agent").ExtensionRunner | undefined;
+	const executeToolFn = createNestedToolExecutor(registry, () => runnerRef);
+	const mounted = await mountExtensionBridge(
 		location,
 		modelRuntime,
 		extensionsResult,
 		registry,
 		executeToolFn,
 		report,
+		dynamicSections,
+		(level, message) => pendingReports.push({ kind: "notice", level, message }),
 	);
+	runnerRef = mounted.extensionRunner;
 
 	const harness = await Harness.open(
 		await openNodeSqliteStorage(location.database),
@@ -113,6 +122,8 @@ export async function loadHarnessEnvironment(
 		pendingReports,
 		getActiveModel,
 		setActiveModelRef: (ref) => { activeModelRef = ref; },
-		cleanup,
+		cleanup: mounted.cleanup,
+		extensionRunner: mounted.extensionRunner,
+		dynamicSections,
 	};
 }

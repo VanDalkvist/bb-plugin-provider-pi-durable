@@ -146,6 +146,9 @@ export async function openDurable(options: OpenDurableOptions = {}): Promise<Ope
 			setUnsubscribeTasks: (fn) => { unsubscribeTasks = fn; },
 			closeTasks,
 			setActiveModelRef: (ref) => envState.setActiveModelRef(ref),
+			extensionRunner: envState.extensionRunner,
+			dynamicSections: envState.dynamicSections,
+			cwd: location.cwd,
 		});
 
 		const saved = agentOf(state.conversation).model;

@@ -30,6 +30,9 @@ export interface ControllerContext {
 	setUnsubscribeTasks: (fn: () => void) => void;
 	closeTasks: () => void;
 	setActiveModelRef: (ref: ModelRef) => void;
+	extensionRunner?: import("@earendil-works/pi-coding-agent").ExtensionRunner;
+	dynamicSections?: import("./prompt.ts").DynamicPromptSections;
+	cwd?: string;
 }
 
 export function createDurableController(ctx: ControllerContext): DurableController {
@@ -61,7 +64,24 @@ export function createDurableController(ctx: ControllerContext): DurableControll
 
 	return {
 		submit: (text, whenBusy) =>
-			command(async () => watchAnswer(await ctx.getCurrent().submit({ type: "input", content: text, whenBusy }, runtimeContext))),
+			command(async () => {
+				if (ctx.extensionRunner && ctx.dynamicSections) {
+					try {
+						const before = await ctx.extensionRunner.emitBeforeAgentStart(text, undefined, {
+							cwd: ctx.cwd ?? process.cwd(),
+						});
+						if (before?.systemPromptOptions?.sections) {
+							ctx.dynamicSections.updateSections(before.systemPromptOptions.sections);
+						}
+					} catch (err) {
+						ctx.notice(
+							"warning",
+							`before_agent_start error: ${err instanceof Error ? err.message : String(err)}`,
+						);
+					}
+				}
+				return watchAnswer(await ctx.getCurrent().submit({ type: "input", content: text, whenBusy }, runtimeContext));
+			}),
 
 		compact: (instructions) =>
 			command(async () => {

@@ -170,7 +170,7 @@ describe("Startup Readiness & Fail-Fast Handshake (Issue #3)", () => {
 			// Runner in --no-session will execute models discovery and emit ready over FD 3
 			await Promise.race([
 				session.readyPromise,
-				new Promise((_, reject) => setTimeout(() => reject(new Error("Catalogue ready timed out")), 5000)),
+				new Promise((_, reject) => setTimeout(() => reject(new Error("Catalogue ready timed out")), 10000)),
 			]);
 			assert.equal(receivedReady, true, "Catalogue mode must become ready without opening SQLite session");
 		} finally {

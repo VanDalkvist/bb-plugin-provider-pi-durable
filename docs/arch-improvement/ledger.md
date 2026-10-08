@@ -948,7 +948,51 @@ Resolve findings F-65-1, F-65-2, and F-65-3:
   - File size audit (`wc -l`): All source and test files strictly < 240 lines (hard limit < 250 lines).
 - **Residual Risk:** None. All multi-turn conversation states are strictly isolated.
 
-- **Residual Risk:** None. All 10 suites green, bundles build cleanly.
+---
+
+### Cycle 74: Pi Extension Lifecycle & MCP Engine Parity (D-16, D-17, D-18, D-19)
+- **Release:** `v0.2.20`
+- **Date:** 2026-10-08
+- **Governing Standard:** `arch-rules.md` (AP-010 – AP-071)
+- **Plan Reference:** `docs/superpowers/plans/2026-10-07-arch-improvement-cycle-74-extension-lifecycle-and-mcp-parity.md`
+- **Tests Passing:** 118/118 tests (10 suites, 0 failures, 0 skips)
+
+#### Context & Objectives
+1. **Target Divergences Reconciled:**
+   - **D-16 (Startup Race):** Direct MCP servers (e.g. Bun/PostgreSQL `gbrain` taking 3.5–4.5s) were not awaited before runner announced readiness, missing initial turn availability.
+   - **D-17 (Dynamic System Prompt):** System prompt was static, omitting dynamic extension sections (`mcp_servers`, ambient recall) generated on `before_agent_start`.
+   - **D-18 (Tool Execution Hooks & Lazy MCP Waiting):** Missing `tool_call` and `tool_result` lifecycle hooks prevented `codemode` from triggering lazy on-demand MCP connection (`scriptNeedsServer`) and bypassed extension guardrails.
+   - **D-19 (Diagnostics & UI Notices):** `setUIContext({ notify })` was unconfigured, silently swallowing MCP connection failures and authentication notices.
+
+#### Key Implementations
+1. **`src/runner/prompt.ts`:**
+   - Introduced `DynamicSectionsHolder` and `DynamicPromptSections` with revision tracking to invalidate cached section renders.
+   - Added `"mcp_servers"` and `"dynamic_sections"` to canonical `KEYS`.
+   - In `buildSections`, dynamic sections (`mcp_servers` and arbitrary extension sections) are wrapped in standard XML tags (`<mcp_servers>`, `<tag>`) and merged into Durable sections.
+2. **`src/runner/extension-bridge.ts`:**
+   - In `adaptExtensionTool`: wrapped execution in `runner.emitToolCall` before execution and `runner.emitToolResult` after execution. Handled guardrail execution blocking (`hookResult.block`).
+   - In `setupExtensionRunner`: bound `runner.setUIContext({ notify: (message, type) => options.onNotice?.(type, message) })` for forward notice integration.
+3. **`src/runner/extension-mount.ts`:**
+   - In `createNestedToolExecutor`: wrapped nested tool execution (`${callerId}/nested`) in `runner.emitToolCall` and `runner.emitToolResult`.
+   - In `mountExtensionBridge`: invoked `await extensionRunner.emitBeforeAgentStart("", undefined, { cwd })` at startup to synchronize direct MCP servers (`waitForDirectServers`) and capture initial prompt sections before declaring registry tools.
+   - Returned `MountedExtensionBridge` with `extensionRunner` and `cleanup`.
+4. **`src/runner/runtime-loader.ts` & `src/runner/runtime-controller.ts`:**
+   - Initialized `DynamicPromptSections`, wired it into `createCodingRegistry` and `mountExtensionBridge`.
+   - In `controller.submit`: invoked `await extensionRunner.emitBeforeAgentStart(text, undefined, { cwd })` on every user message submission to dynamically refresh prompt sections per turn.
+5. **Zero `as any` (AP-029) & Strict Modularity (AP-019):**
+   - Cleaned up remaining `as any` in `src/runner/session-commands.ts` using strict `SessionAgentDoc` and `RunnerCommandPayload` interfaces.
+   - Added dedicated TDD suites `tests/mcp-prompt-sync.test.ts` (92 lines) and `tests/mcp-tool-hooks.test.ts` (128 lines).
+   - All source and test files remain strictly < 205 lines (< 250 hard limit).
+
+#### Verification & Architecture Compliance
+- **Passed:**
+  - `AP-010`: Clear GoF adapter boundary across 4 territories.
+  - `AP-012`: Fail-safe error propagation for extension hooks without halting runtime.
+  - `AP-019`: All source files < 205 lines (hard limit < 250).
+  - `AP-026`: Direct server synchronization and tool definition contracts preserved.
+  - `AP-028`: 118/118 tests pass cleanly across 10 test suites.
+  - `AP-029`: Strict TypeScript with zero `as any` in entire `src/` directory.
+- **Residual Risk:** None. All dynamic extensions and direct MCP servers cleanly synchronized.
 
 
 
