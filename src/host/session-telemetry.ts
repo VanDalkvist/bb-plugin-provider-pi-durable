@@ -36,7 +36,7 @@ export function createReadyDeferred(): ReadyDeferred {
 	return { promise, resolve: resolveFn, reject: rejectFn };
 }
 
-export async function waitForReady(readyPromise: Promise<void>, timeoutMs = 20000): Promise<void> {
+export async function waitForReady(readyPromise: Promise<void>, timeoutMs = 45000): Promise<void> {
 	let timer: NodeJS.Timeout | null = null;
 	try {
 		await Promise.race([

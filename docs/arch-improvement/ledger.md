@@ -1129,6 +1129,36 @@ Remediate the file change diff presentation bug in BB IDE for `bb-plugin-provide
 - `AP-029`: Strict TypeScript with zero `as any` across newly added modules and updated test files.
 - **Residual Risk:** None. Diff synthesis and clean path relativization confirmed with 100% deterministic test coverage.
 
+## Cycle 76: Native BB IDE Provider Update & Installation Lifecycle (`provider/installation/*`, v0.2.22)
+
+**Goal:** Реализовать 100% конформность жизненного цикла установки и обновления провайдера (`provider/installation/status` и `provider/installation/run`) протоколам BB IDE (`providerInstallationStatusSchema` и `providerInstallationRunResultSchema`), динамическое разрешение версии из `package.json`, расширение таймаута готовности до 45s и строгое устранение `params: any`.
+
+### Changes & Architecture Implementations:
+1. **Dynamic Installation Lifecycle Module (`src/host/installation-manager.ts`):**
+   - Реализованы `getProviderInstallationStatus(options)` и `getProviderInstallationRun(action)`.
+   - Динамическое вычисление версии через `resolvePluginVersion()` с чтением манифеста плагина и мемоизацией.
+   - Замена захардкоженного `"1.0.4"` и фиктивного `@earendil-works/pi-durable` на канонический `bb-plugin-provider-pi-durable` и исполняемый файл `bb`.
+   - Семантическое версионирование (`compareSemver`) для флагов `needsUpdate` и `versionUnsupported` (`minimumSupportedVersion: "0.2.0"`).
+   - Безопасная проверка обновлений на NPM registry с graceful timeout fallback.
+   - Строгий возврат discriminated union для `providerInstallationRunResultSchema` (`available: true` с верификацией `version_changed` или `version_at_least`).
+2. **Type Safety & Strict Boundaries (`src/host/discovery-handler.ts`, AP-029):**
+   - Устранено `params: any` в сигнатуре `handleDiscoveryRequest`, заменено на `params: unknown` со строгим сужением типов.
+   - Делегирование методов `provider/installation/status` и `provider/installation/run` в `installation-manager.ts`.
+3. **Headroom Telemetry Readiness (`src/host/session-telemetry.ts`):**
+   - Увеличен дефолтный таймаут `waitForReady` с 20s до 45s (`timeoutMs = 45000`) для предотвращения ложных таймаутов при тяжелых холодных стартах раннера и MCP ворктри.
+4. **Package Bump & Test Suite (`package.json`, `tests/provider-installation.test.ts`):**
+   - Версия плагина поднята до `0.2.22`.
+   - Добавлен независимый юнит-тест `tests/provider-installation.test.ts` (130 строк, AP-019), валидирующий строгие Zod-схемы из BB IDE wire contracts.
+
+#### Verification & Architecture Compliance:
+- `npx tsc --noEmit`: **0 errors (exit code 0)**.
+- `npm run build`: **Success** (`dist/runner/index.js`, `dist/host.js`, `dist/server.js`).
+- `npm test`: **140 / 140 tests passing across 11 test suites (0 failures, 0 skips)**.
+- `AP-019`: Все новые и измененные файлы строго в рамках лимитов (`installation-manager.ts` = 177 строк, `discovery-handler.ts` = 67 строк, `tests/provider-installation.test.ts` = 130 строк).
+- `AP-029`: 0 нарушений `any` на границах и в реализации.
+- **Residual Risk:** None. Wire contracts проверены против реальных Zod-схем BB IDE из `bb-reference`.
+
+
 
 
 

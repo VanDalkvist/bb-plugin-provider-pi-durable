@@ -1,5 +1,9 @@
 import type { ModelCatalog } from "./catalog.ts";
 import {
+	getProviderInstallationStatus,
+	getProviderInstallationRun,
+} from "./installation-manager.ts";
+import {
 	PROVIDER_BRIDGE_PROTOCOL_VERSION,
 	THREAD_DELTA_GRAMMAR_V2,
 	THREAD_DELTA_GRAMMAR_V3,
@@ -7,7 +11,7 @@ import {
 
 export async function handleDiscoveryRequest(
 	method: string,
-	params: any,
+	params: unknown,
 	catalog: ModelCatalog,
 ): Promise<Record<string, unknown> | null> {
 	switch (method) {
@@ -40,27 +44,22 @@ export async function handleDiscoveryRequest(
 		case "provider/usage":
 			return { supported: false };
 
-		case "provider/installation/status":
-			return {
-				executableName: "pi-durable",
-				executablePath: process.execPath,
-				installed: true,
-				installSource: "external",
-				currentVersion: "1.0.4",
-				latestVersion: null,
-				minimumSupportedVersion: "1.0.0",
-				npmPackageName: "@earendil-works/pi-durable",
-				npmGlobalPackageVersion: null,
-				installAction: null,
-				needsUpdate: false,
-				versionUnsupported: false,
-			};
+		case "provider/installation/status": {
+			const statusParams = typeof params === "object" && params !== null
+				? (params as { checkUpdates?: boolean })
+				: {};
+			const status = await getProviderInstallationStatus(statusParams);
+			return status as unknown as Record<string, unknown>;
+		}
 
-		case "provider/installation/run":
-			return {
-				status: "verified",
-				currentVersion: "1.0.4",
-			};
+		case "provider/installation/run": {
+			const runParams = typeof params === "object" && params !== null
+				? (params as { action?: "install" | "update" })
+				: {};
+			const action = runParams.action ?? "update";
+			const runResult = await getProviderInstallationRun(action);
+			return runResult as unknown as Record<string, unknown>;
+		}
 
 		default:
 			return null;
