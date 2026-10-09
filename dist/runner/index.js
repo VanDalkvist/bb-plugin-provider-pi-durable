@@ -604,7 +604,8 @@ function createDurableController(ctx) {
       if (ctx.extensionRunner && ctx.dynamicSections) {
         try {
           const before = await ctx.extensionRunner.emitBeforeAgentStart(text, void 0, {
-            cwd: ctx.cwd ?? process.cwd()
+            cwd: ctx.cwd ?? process.cwd(),
+            sections: ctx.dynamicSections.getSections()
           });
           if (before?.systemPromptOptions?.sections) {
             ctx.dynamicSections.updateSections(before.systemPromptOptions.sections);
@@ -797,9 +798,16 @@ async function setupExtensionRunner(options) {
   }
   runner.bindCore(
     {
-      getActiveTools: () => [],
-      getAllTools: () => [],
-      getSettings: () => ({}),
+      getActiveTools: () => options.getCallableTools ? options.getCallableTools().map((t) => t.name) : [],
+      getAllTools: () => runner.getAllRegisteredTools().map((t) => ({
+        name: t.definition.name,
+        description: t.definition.description,
+        parameters: t.definition.parameters
+      })),
+      getSettings: () => ({
+        ...options.settingsManager?.getGlobalSettings() ?? {},
+        ...options.settingsManager?.getProjectSettings() ?? {}
+      }),
       refreshTools: () => {
         options.onToolsChanged?.();
       }
@@ -899,7 +907,7 @@ function createNestedToolExecutor(registry, getExtensionRunner) {
     }
   };
 }
-async function mountExtensionBridge(location, modelRuntime, extensionsResult, registry, executeToolFn, report, dynamicSections, onNotice) {
+async function mountExtensionBridge(location, modelRuntime, extensionsResult, registry, executeToolFn, report, dynamicSections, onNotice, settingsManager) {
   let extensionRunner;
   try {
     const syncToolsToRegistry = () => {
@@ -922,10 +930,16 @@ async function mountExtensionBridge(location, modelRuntime, extensionsResult, re
         parameters: t.tool.parameters
       })),
       onToolsChanged: syncToolsToRegistry,
-      onNotice
+      onNotice,
+      settingsManager
     });
     try {
-      const beforeStart = await extensionRunner.emitBeforeAgentStart("", void 0, { cwd: location.cwd });
+      const currentTools = registry.snapshot().tools().map((t) => t.tool.name);
+      const beforeStart = await extensionRunner.emitBeforeAgentStart("", void 0, {
+        cwd: location.cwd,
+        selectedTools: currentTools,
+        sections: dynamicSections?.getSections() ?? {}
+      });
       if (beforeStart?.systemPromptOptions?.sections && dynamicSections) {
         dynamicSections.updateSections(beforeStart.systemPromptOptions.sections);
       }
@@ -1063,7 +1077,8 @@ async function loadHarnessEnvironment(location, options, envs) {
       } else {
         pendingReports.push({ kind: "notice", level, message });
       }
-    }
+    },
+    settingsManager
   );
   runnerRef = mounted.extensionRunner;
   const harness = await Harness.open(

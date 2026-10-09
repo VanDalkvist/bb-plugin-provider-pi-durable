@@ -1,6 +1,7 @@
 import { requireExtensionPath } from "./paths.ts";
 import { RunnerProcess } from "./runner-process.ts";
 import type { AvailableModelDescriptor, ModelScope } from "./types.ts";
+import { inspectPiEnvironment, type PiDiagnosticsReport } from "../runner/diagnostics.ts";
 
 export class ModelCatalog {
 	private cwd: string;
@@ -125,13 +126,20 @@ export class ModelCatalog {
 		return result;
 	}
 
+	public async getDiagnostics(): Promise<PiDiagnosticsReport> {
+		return inspectPiEnvironment({ cwd: this.cwd });
+	}
+
 	public async getHealth(): Promise<{ status: "ready" | "unauthenticated" | "unknown"; statusMessage?: string }> {
 		try {
-			const models = await this.listModels();
-			if (models.length > 0) {
-				return { status: "ready" };
+			const report = await this.getDiagnostics();
+			if (report.status === "error") {
+				return { status: "unknown", statusMessage: report.summary };
 			}
-			return { status: "unauthenticated", statusMessage: "No authenticated models available in Pi." };
+			if (report.models.total === 0) {
+				return { status: "unauthenticated", statusMessage: "No authenticated models available in Pi." };
+			}
+			return { status: "ready", statusMessage: report.summary };
 		} catch (err) {
 			const msg = err instanceof Error ? err.message : String(err);
 			return { status: "unknown", statusMessage: msg };

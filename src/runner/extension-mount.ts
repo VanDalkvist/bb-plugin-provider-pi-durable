@@ -112,6 +112,7 @@ export async function mountExtensionBridge(
 	report: (err: unknown) => void,
 	dynamicSections?: DynamicSectionsHolder,
 	onNotice?: (level: "info" | "warning" | "error", message: string) => void,
+	settingsManager?: import("@earendil-works/pi-coding-agent").SettingsManager,
 ): Promise<MountedExtensionBridge> {
 	let extensionRunner: ExtensionRunner | undefined;
 	try {
@@ -138,10 +139,16 @@ export async function mountExtensionBridge(
 				})),
 			onToolsChanged: syncToolsToRegistry,
 			onNotice,
+			settingsManager,
 		});
 
 		try {
-			const beforeStart = await extensionRunner.emitBeforeAgentStart("", undefined, { cwd: location.cwd });
+			const currentTools = registry.snapshot().tools().map((t) => t.tool.name);
+			const beforeStart = await extensionRunner.emitBeforeAgentStart("", undefined, {
+				cwd: location.cwd,
+				selectedTools: currentTools,
+				sections: dynamicSections?.getSections() ?? {},
+			});
 			if (beforeStart?.systemPromptOptions?.sections && dynamicSections) {
 				dynamicSections.updateSections(beforeStart.systemPromptOptions.sections);
 			}

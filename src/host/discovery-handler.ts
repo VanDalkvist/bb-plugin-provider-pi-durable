@@ -41,6 +41,11 @@ export async function handleDiscoveryRequest(
 			return health as Record<string, unknown>;
 		}
 
+		case "provider/diagnostics": {
+			const diagnostics = await catalog.getDiagnostics();
+			return diagnostics as unknown as Record<string, unknown>;
+		}
+
 		case "provider/usage":
 			return { supported: false };
 

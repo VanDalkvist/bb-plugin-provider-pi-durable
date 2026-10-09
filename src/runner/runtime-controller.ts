@@ -69,6 +69,7 @@ export function createDurableController(ctx: ControllerContext): DurableControll
 					try {
 						const before = await ctx.extensionRunner.emitBeforeAgentStart(text, undefined, {
 							cwd: ctx.cwd ?? process.cwd(),
+							sections: ctx.dynamicSections.getSections(),
 						});
 						if (before?.systemPromptOptions?.sections) {
 							ctx.dynamicSections.updateSections(before.systemPromptOptions.sections);

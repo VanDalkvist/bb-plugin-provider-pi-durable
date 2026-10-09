@@ -106,6 +106,7 @@ export async function loadHarnessEnvironment(
 				pendingReports.push({ kind: "notice", level, message });
 			}
 		},
+		settingsManager,
 	);
 	runnerRef = mounted.extensionRunner;
 

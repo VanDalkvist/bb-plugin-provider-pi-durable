@@ -1,3 +1,8 @@
+import { rpcContract } from "./src/rpc/contract.ts";
+import { inspectPiEnvironment } from "./src/runner/diagnostics.ts";
+
+export { rpcContract };
+
 export default function plugin(bb: any) {
   bb.settings?.define?.({
     hideThinking: {
@@ -5,6 +10,13 @@ export default function plugin(bb: any) {
       label: "Hide thoughts",
       description: "Hide reasoning thought blocks from the timeline entirely.",
       default: false,
+    },
+  });
+
+  bb.rpc?.register?.(rpcContract, {
+    diagnostics_get: async () => {
+      const report = await inspectPiEnvironment();
+      return { report };
     },
   });
 

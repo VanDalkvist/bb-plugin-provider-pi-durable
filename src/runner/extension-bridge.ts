@@ -149,6 +149,7 @@ export interface SetupExtensionRunnerOptions {
 	getCallableTools?: () => Array<{ name: string; description: string; parameters: unknown }>;
 	onToolsChanged?: () => void;
 	onNotice?: (level: "info" | "warning" | "error", message: string) => void;
+	settingsManager?: import("@earendil-works/pi-coding-agent").SettingsManager;
 }
 
 /** Initializes ExtensionRunner and binds actions and nested tool execution. */
@@ -168,9 +169,17 @@ export async function setupExtensionRunner(options: SetupExtensionRunnerOptions)
 
 	runner.bindCore(
 		{
-			getActiveTools: () => [],
-			getAllTools: () => [],
-			getSettings: () => ({}),
+			getActiveTools: () => (options.getCallableTools ? options.getCallableTools().map((t) => t.name) : []),
+			getAllTools: () =>
+				runner.getAllRegisteredTools().map((t) => ({
+					name: t.definition.name,
+					description: t.definition.description,
+					parameters: t.definition.parameters,
+				})),
+			getSettings: () => ({
+				...(options.settingsManager?.getGlobalSettings() ?? {}),
+				...(options.settingsManager?.getProjectSettings() ?? {}),
+			}),
 			refreshTools: () => {
 				options.onToolsChanged?.();
 			},
