@@ -12,7 +12,7 @@ V1 deliberately does not support fork/checkpoint-preserving child identity, arbi
 
 ## Blocking admission gap
 
-The installed `@earendil-works/pi-durable` submission path resumes scheduling before committing a new root input. A valid root prompt can fail on a pre-commit storage operation while restored root, child, and sibling tasks already execute. The adapter's command acknowledgement and local `executionStarted` flag may remain false, but neither reverses those task handler entries. The isolated [memory-only reproduction](native-durable-subagent-admission-proof.md) asserts this behavior using public SDK APIs, injected `MemoryStorage.mintId()` failure, and pure synthetic tasks; it does not create an application child or contact a provider.
+The installed `@earendil-works/pi-durable` **1.0.4** submission path resumes scheduling before committing a new root input. A valid root prompt can fail on a pre-commit storage operation while restored root, child, and sibling tasks already execute. The adapter's command acknowledgement and local `executionStarted` flag may remain false, but neither reverses those task handler entries. The isolated [memory-only reproduction](native-durable-subagent-admission-proof.md) asserts this behavior using public SDK APIs, injected `MemoryStorage.mintId()` failure, and pure synthetic tasks; it does not create an application child or contact a provider.
 
 Maintainer input is needed on a supported public SDK operation that atomically admits the root input before any restored execution becomes eligible (or an explicitly changed acceptance contract). A private scheduler patch, fabricated submission transaction, hiding task kinds, or a second BB scheduler is not a safe substitute. Until the SDK boundary is settled and independently reviewed, the implementation remains **BLOCK** regardless of passing local tests.
 
@@ -22,5 +22,23 @@ Maintainer input is needed on a supported public SDK operation that atomically a
 2. Resolve the SDK admission contract and add a regression: a valid text input rejected before commit must yield zero committed root submissions **and zero restored handler entries**, while accepted retry, cancellation, sibling isolation, and restart behavior remain sound.
 3. Reconcile unrelated baseline/extension SDK compatibility with the current upstream implementation; do not copy an older extension lifecycle over upstream's newer code. On this historical base, a safe memory/injected 20-file test selection passed 118/118, but no-emit typecheck currently reports seven baseline SDK-compatibility diagnostics. Neither proves feature acceptance.
 4. Obtain independent integrated review and separate permission for any real BB/provider/process/socket/persistent-store smoke test. No build, installation, deployment, or live activation is part of this draft.
+
+The exact bounded, memory/injected 20-file check used on this extracted branch (118 passed, 0 failed) was:
+
+```sh
+timeout 60s node --test \
+  tests/bb-event-adapter.test.ts tests/bridge-error-handling.test.ts \
+  tests/native-child-authority.test.ts tests/native-child-bb-sync.test.ts \
+  tests/native-child-discovery.test.ts tests/native-child-host-service.test.ts \
+  tests/native-child-inspection.test.ts tests/native-child-transport.test.ts \
+  tests/native-child-views.test.ts tests/native-root-launch-attestor.test.ts \
+  tests/native-server-admission.test.ts tests/native-view-discovery.test.ts \
+  tests/native-view-registry.test.ts tests/native-view-router.test.ts \
+  tests/native-view-session.test.ts tests/prompt-adapter.test.ts \
+  tests/runner-process-termination.test.ts tests/runtime-controller.test.ts \
+  tests/session-commands.test.ts tests/shared-owner.test.ts
+```
+
+Dependencies were already present through a **local, read-only `node_modules` link** into the isolated checkout; that link was neither committed nor published. No dependency installation, build, full `npm test`, `ModelRuntime.create()`, or live model/provider/application-child/process/socket/persistent-store check was performed. This 118/118 result does **not** resolve the SDK admission failure or the seven no-emit diagnostics above.
 
 The public issue and Draft PR description should explicitly link this blocker and describe the remaining integration work. The branch is a proposal for collaboration, not a ready-for-merge fix.
