@@ -12,7 +12,7 @@ import {
 	type ExecutionEnvs,
 	type ModelThinkingLevel,
 } from "./harness-setup.ts";
-import { createStandardExtensionFactories } from "./extension-bridge.ts";
+import { configureSubagentHost, createStandardExtensionFactories } from "./extension-bridge.ts";
 import { createNestedToolExecutor, mountExtensionBridge } from "./extension-mount.ts";
 import { getAgentDir, type SessionLocation } from "./upstream/session-storage.ts";
 import { Subagent } from "./upstream/subagent-tool.ts";
@@ -50,6 +50,8 @@ export async function loadHarnessEnvironment(
 	options: OpenDurableOptions,
 	envs: ExecutionEnvs,
 ): Promise<LoadedHarnessEnvironment> {
+	// Must precede extension loading: pi-subagents resolves its detached SDK host once on import.
+	configureSubagentHost();
 	const modelRuntime = await ModelRuntime.create();
 	const settingsManager = SettingsManager.create(location.cwd);
 	const resourceLoader = new DefaultResourceLoader({
@@ -64,7 +66,10 @@ export async function loadHarnessEnvironment(
 	registerPendingProviders(modelRuntime, extensionsResult.runtime);
 	configureHarnessHttp(settingsManager);
 
-	let activeModelRef: ModelRef | undefined;
+	const initial = location.created
+		? await findInitialAgentModel(settingsManager, modelRuntime, options.cli)
+		: undefined;
+	let activeModelRef: ModelRef | undefined = initial?.model;
 	const getActiveModel = () => {
 		if (activeModelRef) return activeModelRef;
 		const p = settingsManager.getDefaultProvider();
@@ -97,11 +102,6 @@ export async function loadHarnessEnvironment(
 		{ models: modelRuntime, registry, settings, env: envs.env, onReport: report },
 		runtimeContext,
 	);
-
-	const initial = location.created
-		? await findInitialAgentModel(settingsManager, modelRuntime, options.cli)
-		: undefined;
-	if (initial?.model) activeModelRef = initial.model;
 
 	return {
 		modelRuntime,

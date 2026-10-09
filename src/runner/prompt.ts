@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
+import { isAbsolute, resolve } from "node:path";
 import { defineExtension, type PromptInput, section } from "@earendil-works/pi-durable";
 import {
 	createBashToolDefinition,
@@ -8,26 +9,31 @@ import {
 	formatSkillsForPrompt,
 	type SettingsManager,
 	type Skill,
+	type ResourceLoader,
 } from "@earendil-works/pi-coding-agent";
 
 export interface ResourceLoaderLike {
-	getAgentsFiles?: () => { agentsFiles: Array<{ path: string; content: string }> };
-	getSkills?: () => Skill[];
+	getAgentsFiles?: ResourceLoader["getAgentsFiles"];
+	getSkills?: ResourceLoader["getSkills"];
 }
 
 export interface PromptOptions {
 	systemPromptPath?: string;
+	/** The upstream CLI accepts literal text or a file locator under this flag. */
 	appendSystemPromptPath?: string;
+	readAppendPrompt?: (value: string, cwd: string) => string;
 	contextFiles?: Array<{ path: string; content: string }>;
 	resourceLoader?: ResourceLoaderLike;
 }
 
-const CANONICAL_TOOL_DEFS = {
-	read: createReadToolDefinition(),
-	write: createWriteToolDefinition(),
-	edit: createEditToolDefinition(),
-	bash: createBashToolDefinition(),
-};
+function canonicalToolDefinitions(cwd: string) {
+	return {
+		read: createReadToolDefinition(cwd),
+		write: createWriteToolDefinition(cwd),
+		edit: createEditToolDefinition(cwd),
+		bash: createBashToolDefinition(cwd),
+	};
+}
 
 const KEYS = ["preamble", "tools", "rules", "docs", "addendum", "project_context", "skills", "cwd"] as const;
 
@@ -43,12 +49,12 @@ function resolveContextFiles(options: PromptOptions): Array<{ path: string; cont
 
 function resolveSkills(options: PromptOptions): Skill[] {
 	if (options.resourceLoader?.getSkills) {
-		return options.resourceLoader.getSkills() ?? [];
+		return options.resourceLoader.getSkills().skills;
 	}
 	return [];
 }
 
-function buildRules(selectedTools: string[]): string {
+function buildRules(selectedTools: string[], defs: ReturnType<typeof canonicalToolDefinitions>): string {
 	const rules: string[] = [];
 	const seen = new Set<string>();
 	const addRule = (rule: string): void => {
@@ -63,7 +69,7 @@ function buildRules(selectedTools: string[]): string {
 	}
 
 	for (const name of selectedTools) {
-		const def = CANONICAL_TOOL_DEFS[name as keyof typeof CANONICAL_TOOL_DEFS];
+		const def = defs[name as keyof typeof defs];
 		if (def?.promptGuidelines) {
 			for (const guideline of def.promptGuidelines) {
 				addRule(guideline);
@@ -86,19 +92,29 @@ function tryReadPromptFile(path?: string, label?: string): string | undefined {
 	}
 }
 
+export function resolveAppendPrompt(value: string, cwd: string): string {
+	const file = resolve(cwd, value);
+	// Explicit locators must not silently turn into instructions if unreadable or absent.
+	const explicitPath = isAbsolute(value) || /^\.{1,2}[\\/]/u.test(value);
+	if (!explicitPath && !existsSync(file)) return value;
+	return readFileSync(file, "utf8").trim();
+}
+
 export function createPiPrompt(
 	_settings: SettingsManager,
 	fallbackCwd: string,
 	options: PromptOptions = {},
 ) {
 	const systemPromptOverride = tryReadPromptFile(options.systemPromptPath, "system-prompt");
-	const appendPrompt = tryReadPromptFile(options.appendSystemPromptPath, "append-system-prompt");
+	const appendPrompt = options.appendSystemPromptPath === undefined ? undefined
+		: (options.readAppendPrompt ?? resolveAppendPrompt)(options.appendSystemPromptPath, fallbackCwd);
 
 	const buildSections = (input: PromptInput): Record<string, string> => {
 		const cwd = input.env?.cwd ?? input.agent.cwd ?? fallbackCwd;
 		const contextFiles = resolveContextFiles(options);
 		const skills = resolveSkills(options);
 		const selectedTools = input.agent.tools.map((t) => t.name);
+		const toolDefs = canonicalToolDefinitions(cwd);
 
 		const sections: Record<string, string> = {};
 
@@ -109,11 +125,11 @@ export function createPiPrompt(
 				"You are an expert coding assistant operating inside pi, a coding agent harness. You help users by reading files, executing commands, editing code, and writing new files.";
 
 			const visibleTools = selectedTools
-				.filter((name) => name in CANONICAL_TOOL_DEFS)
-				.map((name) => `- ${name}: ${CANONICAL_TOOL_DEFS[name as keyof typeof CANONICAL_TOOL_DEFS].promptSnippet}`);
+				.filter((name) => name in toolDefs)
+				.map((name) => `- ${name}: ${toolDefs[name as keyof typeof toolDefs].promptSnippet}`);
 			sections.tools = `<tools>\n${visibleTools.join("\n")}\n\nIn addition to the tools above, you may have access to other custom tools depending on the project.\n</tools>`;
 
-			sections.rules = `<rules>\n${buildRules(selectedTools)}\n</rules>`;
+			sections.rules = `<rules>\n${buildRules(selectedTools, toolDefs)}\n</rules>`;
 		}
 
 		if (appendPrompt) {

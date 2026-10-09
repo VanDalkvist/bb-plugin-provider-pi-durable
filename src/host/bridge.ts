@@ -1,5 +1,6 @@
 import { getSharedCatalog } from "./catalog.ts";
 import { SessionRegistry } from "./session-registry.ts";
+import { resolveNativeViewConnection } from "./native-view-session.ts";
 import { handleDiscoveryRequest } from "./discovery-handler.ts";
 import {
 	sendJsonRpcResult,
@@ -17,11 +18,12 @@ export class ProviderBridge {
 	private sendRaw: (json: string) => void;
 	private registry: SessionRegistry;
 
-	constructor(sendRaw: (json: string) => void) {
+	constructor(sendRaw: (json: string) => void, dependencies: {
+		createRegistry?: (notify: (method: string, params: Record<string, unknown>) => void) => SessionRegistry;
+	} = {}) {
 		this.sendRaw = sendRaw;
-		this.registry = new SessionRegistry((method, params) => {
-			this.sendNotification(method, params);
-		});
+		const notify = (method: string, params: Record<string, unknown>) => this.sendNotification(method, params);
+		this.registry = dependencies.createRegistry?.(notify) ?? new SessionRegistry(notify);
 	}
 
 	public sendResult(id: string | number, result: Record<string, unknown>) {
@@ -77,7 +79,8 @@ export class ProviderBridge {
 				case "thread/start":
 				case "thread/resume": {
 					const threadId = params.threadId;
-					const providerThreadId = params.providerThreadId || `pi_durable_${Date.now()}`;
+					const connection = resolveNativeViewConnection({ threadId, providerThreadId: params.providerThreadId, providerOptions: params.options?.providerOptions ?? params.providerOptions, environment: params.shellEnvOverrides ?? params.options?.envVars });
+					const providerThreadId = connection?.expected.providerThreadId ?? params.providerThreadId ?? `pi_durable_${Date.now()}`;
 					await this.registry.createOrGet(threadId, providerThreadId, params);
 					this.sendResult(id, { providerThreadId, sessionRestorable: true });
 					break;
@@ -85,6 +88,9 @@ export class ProviderBridge {
 
 				case "thread/fork": {
 					const threadId = params.threadId;
+					const connection = resolveNativeViewConnection({ threadId, providerOptions: params.options?.providerOptions ?? params.providerOptions, environment: params.shellEnvOverrides ?? params.options?.envVars });
+					// A new native SID has no source transcript. Never advertise an empty view as a fork.
+					if (connection) throw new Error("Native Durable fork unsupported: source transcript identity is not preserved");
 					const providerThreadId = `pi_durable_${Date.now()}`;
 					await this.registry.createOrGet(threadId, providerThreadId, params);
 					this.sendResult(id, { providerThreadId, sessionRestorable: true });

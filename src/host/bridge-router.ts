@@ -1,4 +1,5 @@
 import type { SessionRegistry } from "./session-registry.ts";
+import { NativeViewSession, resolveNativeViewConnection } from "./native-view-session.ts";
 import {
 	extractInputText,
 	isCompactCommand,
@@ -20,24 +21,41 @@ export async function handleTurnStart(
 	ctx: BridgeRouterContext,
 ): Promise<void> {
 	const targetCwd = params.cwd || params.options?.cwd;
-	const providerThreadId = params.providerThreadId || `pi_durable_${Date.now()}`;
-	const session = await ctx.registry.reconcileCwd(params.threadId, targetCwd)
-		?? await ctx.registry.createOrGet(params.threadId, providerThreadId, params);
+	const connection = resolveNativeViewConnection({ threadId: params.threadId, providerThreadId: params.providerThreadId,
+		providerOptions: params.options?.providerOptions ?? params.providerOptions,
+		environment: params.shellEnvOverrides ?? params.options?.envVars });
+	const current = ctx.registry.get(params.threadId);
+	const providerThreadId = connection?.expected.providerThreadId ?? params.providerThreadId ?? current?.options.providerThreadId ?? `pi_durable_${Date.now()}`;
+	// Never bypass admission just because an existing session was cached.
+	const session = connection || current instanceof NativeViewSession
+		? await ctx.registry.createOrGet(params.threadId, providerThreadId, { ...params, cwd: targetCwd })
+		: await ctx.registry.reconcileCwd(params.threadId, targetCwd)
+			?? await ctx.registry.createOrGet(params.threadId, providerThreadId, params);
 
 	if (isCompactCommand(params.input)) {
-		if (params.clientRequestId && CREQ_REGEX.test(params.clientRequestId)) {
-			ctx.sendNotification("thread/delta", {
-				threadId: params.threadId,
-				deltas: [{ kind: "input.accepted", clientRequestId: params.clientRequestId }],
-			});
-		}
-		ctx.sendResult(id, { threadId: params.threadId });
+		const accepted = () => {
+			if (params.clientRequestId && CREQ_REGEX.test(params.clientRequestId)) {
+				ctx.sendNotification("thread/delta", {
+					threadId: params.threadId,
+					deltas: [{ kind: "input.accepted", clientRequestId: params.clientRequestId }],
+				});
+			}
+		};
 		const instructions = extractCompactInstructions(params.input);
-		try {
+		if (session instanceof NativeViewSession) {
 			await session.compact(instructions);
 			await session.refreshContextUsage();
-		} catch (err) {
-			console.error(`[ProviderBridge] Compaction failed for thread ${params.threadId}:`, err);
+			accepted();
+			ctx.sendResult(id, { threadId: params.threadId });
+		} else {
+			accepted();
+			ctx.sendResult(id, { threadId: params.threadId });
+			try {
+				await session.compact(instructions);
+				await session.refreshContextUsage();
+			} catch (err) {
+				console.error(`[ProviderBridge] Compaction failed for thread ${params.threadId}:`, err);
+			}
 		}
 		return;
 	}
@@ -72,7 +90,7 @@ export async function handleTurnSteer(
 	}
 
 	const providerOptions = params?.options?.providerOptions ?? params?.providerOptions;
-	if (providerOptions && typeof providerOptions === "object") {
+	if (!(session instanceof NativeViewSession) && providerOptions && typeof providerOptions === "object") {
 		session.options.providerOptions = {
 			...session.options.providerOptions,
 			...providerOptions,
@@ -121,7 +139,12 @@ export async function handleThreadStop(
 			});
 		}
 	} else {
-		await ctx.registry.stop(params?.threadId);
+		const session = ctx.registry.get(params?.threadId);
+		try {
+			if (session instanceof NativeViewSession) await session.abort();
+		} finally {
+			await ctx.registry.stop(params?.threadId);
+		}
 	}
 	ctx.sendResult(id, { ok: true });
 }

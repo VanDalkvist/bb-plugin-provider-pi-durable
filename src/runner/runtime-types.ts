@@ -60,6 +60,8 @@ export interface DurableController {
 }
 
 export interface OpenDurableOptions {
+	/** Retained native root opens paused; only an authenticated root submission may enable scheduling. */
+	readonly deferResume?: boolean;
 	readonly cwd?: string;
 	readonly continueSession?: boolean;
 	readonly session?: string;

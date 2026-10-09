@@ -24,6 +24,16 @@ interface RawAssistantEntryMessage {
 	[key: string]: unknown;
 }
 
+function agentModel(doc: unknown): { provider?: string; modelId?: string } {
+	if (!isAgentDocument(doc)) return {};
+	const model = doc.model;
+	if (typeof model !== "object" || model === null || Array.isArray(model)) return {};
+	return {
+		provider: typeof model.provider === "string" ? model.provider : undefined,
+		modelId: typeof model.modelId === "string" ? model.modelId : undefined,
+	};
+}
+
 function extractToolResult(modelItem: unknown): { result: string; isError: boolean } {
 	const msg = typeof modelItem === "object" && modelItem !== null ? (modelItem as RawToolResultMessage) : undefined;
 	const isError = msg?.isError ?? false;
@@ -50,6 +60,7 @@ export class BBEventAdapter {
 	private currentText = "";
 	private currentThinking = "";
 	private isInThinking = false;
+	private thinkingIndex = 0;
 
 	constructor(
 		output: (event: BBWireEvent) => void,
@@ -66,7 +77,7 @@ export class BBEventAdapter {
 			type: "message_update",
 			assistantMessageEvent: {
 				type: "thinking_end",
-				contentIndex: 0,
+				contentIndex: this.thinkingIndex,
 				content: this.currentThinking,
 			},
 		});
@@ -78,6 +89,7 @@ export class BBEventAdapter {
 				this.currentText = "";
 				this.currentThinking = "";
 				this.isInThinking = false;
+				this.thinkingIndex = 0;
 				this.lastAssistantMessage = undefined;
 				this.output({ type: "agent_start" });
 				break;
@@ -92,17 +104,18 @@ export class BBEventAdapter {
 				for (const change of event.changes) {
 					if (change.type === "thinking_delta") {
 						this.isInThinking = true;
+						this.thinkingIndex = change.contentIndex ?? 0;
 						this.currentThinking += change.delta;
 						this.output({
 							type: "message_update",
-							assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: change.delta },
+							assistantMessageEvent: { type: "thinking_delta", contentIndex: change.contentIndex ?? 0, delta: change.delta },
 						});
 					} else if (change.type === "text_delta") {
 						this.closeThinkingIfNeeded();
 						this.currentText += change.delta;
 						this.output({
 							type: "message_update",
-							assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: change.delta },
+							assistantMessageEvent: { type: "text_delta", contentIndex: change.contentIndex ?? 0, delta: change.delta },
 						});
 					}
 				}
@@ -191,8 +204,8 @@ export class BBEventAdapter {
 					this.currentThinking,
 				);
 				const rawAgentDoc = current?.conversation?.docs?.["pi.agent"];
-				const agentDoc = isAgentDocument(rawAgentDoc) ? rawAgentDoc : {};
-				const cw = this.resolveContextWindow?.(agentDoc.model?.provider, agentDoc.model?.modelId);
+				const model = agentModel(rawAgentDoc);
+				const cw = this.resolveContextWindow?.(model.provider, model.modelId);
 				this.output({ type: "turn_end", message: finalMsg, contextWindow: cw });
 				break;
 			}
@@ -205,8 +218,8 @@ export class BBEventAdapter {
 					this.currentThinking,
 				);
 				const rawAgentDoc = current?.conversation?.docs?.["pi.agent"];
-				const agentDoc = isAgentDocument(rawAgentDoc) ? rawAgentDoc : {};
-				const cw = this.resolveContextWindow?.(agentDoc.model?.provider, agentDoc.model?.modelId);
+				const model = agentModel(rawAgentDoc);
+				const cw = this.resolveContextWindow?.(model.provider, model.modelId);
 				this.output({ type: "agent_end", messages: [finalMsg], contextWindow: cw });
 				break;
 			}

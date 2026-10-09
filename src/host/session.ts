@@ -45,6 +45,8 @@ export class PiThreadSession {
 		});
 	}
 
+	public get exited(): boolean { return this.runner.exited; }
+
 	public async start(): Promise<void> {
 		try {
 			await waitForReady(this.readyPromise);

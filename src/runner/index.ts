@@ -1,4 +1,5 @@
 import { setupRunnerModels } from "./model-setup.ts";
+import { configureSubagentHost } from "./extension-bridge.ts";
 import { attachJsonlLineReader, serializeJsonLine } from "./jsonl.ts";
 import { openDurable, type OpenDurableOptions, type OpenDurableResult } from "./runtime.ts";
 import { ROOT_CONVERSATION_ID, watchEvents } from "@earendil-works/pi-durable";
@@ -7,6 +8,8 @@ import { BBEventAdapter } from "./bridge/bb-event-adapter.ts";
 import type { BBWireEvent } from "./bridge/contracts.ts";
 import { parseCliArgs } from "./cli-args.ts";
 import { handleActiveSessionCommand } from "./session-commands.ts";
+import { NativeChildViews } from "./native-child-views.ts";
+import { NativeChildDiscoveryObserver } from "./native-child-discovery.ts";
 import { getPiDurableVersion } from "./version.ts";
 import { createBridgeSender, initBridgeInboundChannel } from "./bridge-channel.ts";
 
@@ -27,7 +30,11 @@ function output(data: unknown): void {
 const sendToBridge = createBridgeSender();
 
 async function main() {
+	// Model discovery also imports ambient extensions; configure the SDK before that first import.
+	configureSubagentHost();
 	let activeDurable: OpenDurableResult | null = null;
+	let activeChildViews: NativeChildViews | undefined;
+	let activeDiscovery: NativeChildDiscoveryObserver | undefined;
 	let isTerminating = false;
 
 	const handleExit = async (signalOrReason: string) => {
@@ -35,7 +42,8 @@ async function main() {
 		isTerminating = true;
 		if (activeDurable) {
 			try {
-				await activeDurable.close();
+				try { activeDiscovery?.close(); await activeChildViews?.close(); }
+				finally { await activeDurable.close(); }
 			} catch (err) {
 				console.error(`[Runner] Error releasing durable lock on ${signalOrReason}:`, err);
 			}
@@ -100,8 +108,12 @@ async function main() {
 		return;
 	}
 
+	// The retained host inserts this private marker only after an authenticated root configure.
+	const parentThreadId = process.env.BB_PI_DURABLE_PARENT_THREAD_ID;
+	const rootScheduling = parentThreadId ? { executionStarted: false } : undefined;
 	// Active durable session mode
 	const durableOptions: OpenDurableOptions = {
+		deferResume: Boolean(parentThreadId),
 		cwd: args.cwd,
 		continueSession: args.continueSession,
 		session: args.session,
@@ -114,6 +126,16 @@ async function main() {
 
 	const durable = await openDurable(durableOptions);
 	activeDurable = durable;
+	const childViews = new NativeChildViews(durable, output);
+	activeChildViews = childViews;
+	if (parentThreadId) {
+		activeDiscovery = new NativeChildDiscoveryObserver(durable.harness, {
+			durableSessionId: durable.view.current().session.id,
+			parentThreadId,
+			parentConversationId: ROOT_CONVERSATION_ID,
+		}, BACKGROUND_CONTEXT, async (discovery) => output({ type: "native-child-discovered", discovery }),
+			(err) => console.error("Native child discovery observer error:", err));
+	}
 
 	// Setup native Pi Durable event stream adapter
 	const adapter = new BBEventAdapter(
@@ -146,7 +168,12 @@ async function main() {
 		}
 
 		try {
-			await handleActiveSessionCommand(cmd, durable, modelRuntime, args, { success, error });
+			if (cmd.type === "native-child-view-attach" || cmd.type === "native-child-view-detach") {
+				await childViews.handle(cmd);
+				success(cmd.id, cmd.type, { attached: cmd.type === "native-child-view-attach" });
+				return;
+			}
+			await handleActiveSessionCommand(cmd, durable, modelRuntime, args, { success, error }, activeDiscovery, rootScheduling);
 		} catch (err) {
 			error(cmd.id, cmd.type, err instanceof Error ? err.message : String(err));
 		}

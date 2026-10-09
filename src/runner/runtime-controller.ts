@@ -35,8 +35,13 @@ export interface ControllerContext {
 export function createDurableController(ctx: ControllerContext): DurableController {
 	let queue = Promise.resolve();
 	const command = (operation: () => Promise<void>): Promise<void> => {
-		queue = queue.then(operation).catch(ctx.fail);
-		return queue;
+		const result = queue.then(operation);
+		// Report the failure, but keep only the *queue tail* recovered. The caller must
+		// receive this operation's rejection rather than acknowledging failed work.
+		queue = result.then(undefined, (error: unknown) => {
+			try { ctx.fail(error); } catch { /* A notice failure cannot strand later commands. */ }
+		});
+		return result;
 	};
 
 	const watchAnswer = (submission: Submission): void => {
@@ -92,7 +97,7 @@ export function createDurableController(ctx: ControllerContext): DurableControll
 				}, ctx.fail);
 			}),
 
-		abort: () => ctx.getCurrent().abort(runtimeContext).catch(ctx.fail),
+		abort: () => command(() => ctx.getCurrent().abort(runtimeContext)),
 
 		cycleThinking: () =>
 			command(async () => {
@@ -115,9 +120,9 @@ export function createDurableController(ctx: ControllerContext): DurableControll
 			command(async () => {
 				const model = ctx.modelRuntime.getModel(ref.provider, ref.modelId);
 				if (model === undefined) throw new Error(`Unknown model: ${ref.provider}/${ref.modelId}`);
-				ctx.setActiveModelRef(ref);
 				const thinking: ModelThinkingLevel = agentOf(ctx.getState().conversation).thinkingLevel ?? "off";
 				await ctx.getCurrent().configure({ model: ref, thinkingLevel: clampThinkingLevel(model, thinking) }, runtimeContext);
+				ctx.setActiveModelRef(ref);
 			}),
 
 		toggleTasks: () =>

@@ -152,15 +152,15 @@ export function translateAgentEnd(
 		});
 	}
 
-	const rawMsg = event.message ?? (event.messages as unknown[])?.[0];
-	deltas.push(...translateAgentEndUsage(rawMsg, event.contextWindow));
+	const rawMsg = event.message ?? (Array.isArray(event.messages) ? event.messages[0] : undefined);
+	deltas.push(...translateAgentEndUsage(rawMsg, typeof event.contextWindow === "number" ? event.contextWindow : undefined));
 
 	let boundarySent = turnBoundarySent;
 	if (!boundarySent) {
 		boundarySent = true;
 		deltas.push({
 			kind: "turn.boundary",
-			status: "completed",
+			status: event.status === "failed" || event.status === "interrupted" ? event.status : "completed",
 			claimIfIdle: true,
 		});
 	}

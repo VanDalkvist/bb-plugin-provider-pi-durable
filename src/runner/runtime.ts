@@ -40,14 +40,19 @@ async function loadSummaries(harness: Harness, rootId: ConversationId): Promise<
 	return summaries;
 }
 
+export function resumeSchedulerOnOpen(harness: Pick<Harness, "resume">, options: Pick<OpenDurableOptions, "deferResume">): void {
+	if (!options.deferResume) harness.resume();
+}
+
 export async function openDurable(options: OpenDurableOptions = {}): Promise<OpenDurableResult> {
 	const location = await selectSession(options.cwd ?? process.cwd(), options.continueSession ?? false, options.session);
 	const envs = new ExecutionEnvs(location.cwd);
 	let harness: Harness | undefined;
+	let envState: Awaited<ReturnType<typeof loadHarnessEnvironment>> | undefined;
 
 	try {
-		const envState = await loadHarnessEnvironment(location, options, envs);
-		const { modelRuntime, settingsManager } = envState;
+		envState = await loadHarnessEnvironment(location, options, envs);
+		const { modelRuntime, settingsManager, setActiveModelRef } = envState;
 		harness = envState.harness;
 
 		const root = await harness.root(runtimeContext, {
@@ -145,7 +150,7 @@ export async function openDurable(options: OpenDurableOptions = {}): Promise<Ope
 			setTasks: (t) => { tasks = t; },
 			setUnsubscribeTasks: (fn) => { unsubscribeTasks = fn; },
 			closeTasks,
-			setActiveModelRef: (ref) => envState.setActiveModelRef(ref),
+			setActiveModelRef,
 		});
 
 		const saved = agentOf(state.conversation).model;
@@ -156,7 +161,9 @@ export async function openDurable(options: OpenDurableOptions = {}): Promise<Ope
 		if (envState.fallbackMessage) notice("info", envState.fallbackMessage);
 
 		await controller.toggleTasks();
-		harness.resume();
+		// Native retained roots must not execute restored children merely on open/configure/reconnect.
+		// An actual authenticated root prompt calls Durable's submission API, which resumes scheduling.
+		resumeSchedulerOnOpen(harness, options);
 
 		let closing: Promise<void> | undefined;
 		return {
@@ -170,6 +177,7 @@ export async function openDurable(options: OpenDurableOptions = {}): Promise<Ope
 			harness,
 			close() {
 				return closing ??= (async () => {
+					await envState?.cleanup?.();
 					unsubscribeConversation();
 					unsubscribeCommits();
 					conversation.dispose();
@@ -177,7 +185,6 @@ export async function openDurable(options: OpenDurableOptions = {}): Promise<Ope
 					try {
 						await opened.close(runtimeContext);
 						await envs.cleanup(runtimeContext);
-						await envState.cleanup?.();
 					} finally {
 						await location.release();
 					}

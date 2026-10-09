@@ -25,9 +25,14 @@ export interface BBToolExecutionEndEvent {
 	isError: boolean;
 }
 
+export interface BBThinkingEndEvent {
+	type: "message_update";
+	assistantMessageEvent: { type: "thinking_end"; contentIndex: number; content: string };
+}
+
 export interface BBThinkingDeltaEvent {
 	type: "message_update";
-	assistantMessageEvent: { type: "thinking_delta"; contentIndex: 0; delta: string };
+	assistantMessageEvent: { type: "thinking_delta"; contentIndex: number; delta: string };
 }
 
 export interface BBTextDeltaEvent {
@@ -35,7 +40,7 @@ export interface BBTextDeltaEvent {
 	assistantMessageEvent: { type: "text_delta"; contentIndex: number; delta: string };
 }
 
-export type BBMessageUpdateEvent = BBThinkingDeltaEvent | BBTextDeltaEvent;
+export type BBMessageUpdateEvent = BBThinkingDeltaEvent | BBThinkingEndEvent | BBTextDeltaEvent;
 
 export interface BBAssistantMessageUsage {
 	input?: number;
@@ -59,7 +64,7 @@ export interface BBAssistantMessage {
 		| { type: "thinking"; thinking: string }
 		| { type: "toolCall"; id: string; name: string; arguments: Record<string, unknown> }
 	>;
-	stopReason?: "stop" | "toolUse" | "length" | "aborted" | "error";
+	stopReason?: "stop" | "toolUse" | "length" | "aborted" | "error" | "pending" | "deferred";
 	usage?: BBAssistantMessageUsage;
 }
 
@@ -82,6 +87,7 @@ export interface BBAgentEndEvent {
 	messages: BBAssistantMessage[];
 	providerCheckpointId?: string;
 	contextWindow?: number;
+	status?: "completed" | "failed" | "interrupted";
 }
 
 export interface BBCompactionStartEvent {
@@ -168,7 +174,11 @@ export interface LiveToolSlotRecord {
 }
 
 export function isAgentDocument(doc: unknown): doc is AgentDocument {
-	return typeof doc === "object" && doc !== null;
+	if (typeof doc !== "object" || doc === null || Array.isArray(doc)) return false;
+	if (!("model" in doc) || doc.model === undefined) return true;
+	return typeof doc.model === "object" && doc.model !== null && !Array.isArray(doc.model)
+		&& (!("provider" in doc.model) || typeof doc.model.provider === "string")
+		&& (!("modelId" in doc.model) || typeof doc.model.modelId === "string");
 }
 
 export function isUsageDocument(doc: unknown): doc is UsageDocument {

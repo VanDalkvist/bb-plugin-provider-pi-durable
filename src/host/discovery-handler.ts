@@ -19,7 +19,7 @@ export async function handleDiscoveryRequest(
 					threadArchive: false,
 					threadRename: false,
 					threadGoalClear: false,
-					fork: "checkpoint",
+					fork: "none",
 					approvalEnforcedBy: "runtime",
 					grammarVersions: [THREAD_DELTA_GRAMMAR_V2, THREAD_DELTA_GRAMMAR_V3],
 					steerMode: "inject",

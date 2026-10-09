@@ -1,4 +1,6 @@
 import type { JsonValue } from "@earendil-works/chord";
+import { fileURLToPath } from "node:url";
+import { dirname } from "node:path";
 import {
 	createCodemodeExtension,
 	createMcpExtension,
@@ -34,6 +36,14 @@ export function hasOutput(api: unknown): api is { output(text: string): void } {
 		"output" in api &&
 		typeof (api as { output: unknown }).output === "function"
 	);
+}
+
+/** Resolve the detached native subagent's Pi SDK host before loading extensions. */
+export function configureSubagentHost(env: NodeJS.ProcessEnv = process.env): void {
+	const key = "PI_SUBAGENTS_PI_CODING_AGENT_PACKAGE_ROOT";
+	if (!env[key]?.trim()) {
+		env[key] = dirname(dirname(fileURLToPath(import.meta.resolve("@earendil-works/pi-coding-agent"))));
+	}
 }
 
 /** Returns the standard built-in extension factories provided by Pi. */

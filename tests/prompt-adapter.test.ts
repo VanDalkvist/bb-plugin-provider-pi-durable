@@ -120,6 +120,27 @@ describe("Prompt Adapter (Cycle 61 - AP-010, AP-018)", () => {
 		assert.ok(rendered.includes("Direct agents context"));
 	});
 
+	it("preserves trusted inline append instructions before the first root turn", () => {
+		const extension = createPiPrompt(SettingsManager.inMemory(), "/memory/workspace", { appendSystemPromptPath: "Trusted BB inline instructions" });
+		const addendum = extension.sections?.find((part) => part.key === "addendum");
+		assert.ok(addendum);
+		assert.equal(addendum.render(createMockPromptInput({ cwd: "/memory/workspace" }), {} as any),
+			"<addendum>\nTrusted BB inline instructions\n</addendum>");
+	});
+
+	it("uses an injected memory-only prompt reader for trusted text-or-path", () => {
+		const observed: Array<[string, string]> = [];
+		const extension = createPiPrompt(SettingsManager.inMemory(), "/memory/workspace", {
+			appendSystemPromptPath: "/memory/workspace/append.md",
+			readAppendPrompt: (value, cwd) => { observed.push([value, cwd]); return "File-backed BB instructions"; },
+		});
+		const addendum = extension.sections?.find((part) => part.key === "addendum");
+		assert.ok(addendum);
+		assert.equal(addendum.render(createMockPromptInput({ cwd: "/memory/workspace" }), {} as any),
+			"<addendum>\nFile-backed BB instructions\n</addendum>");
+		assert.deepEqual(observed, [["/memory/workspace/append.md", "/memory/workspace"]]);
+	});
+
 	it("formats skills when resourceLoader provides skills", () => {
 		const settings = SettingsManager.inMemory();
 		const mockSkill = {
@@ -131,7 +152,7 @@ describe("Prompt Adapter (Cycle 61 - AP-010, AP-018)", () => {
 		};
 		const mockResourceLoader = {
 			getAgentsFiles: () => ({ agentsFiles: [] }),
-			getSkills: () => [mockSkill],
+			getSkills: () => ({ skills: [mockSkill], diagnostics: [] }),
 		};
 
 		const extension = createPiPrompt(settings, "/repo", {
