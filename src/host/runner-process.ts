@@ -2,10 +2,12 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { resolveRunnerPath } from "./paths.ts";
 import { RunnerRpcChannel } from "./runner-rpc-channel.ts";
 import type { RunnerEvent } from "./types.ts";
+import { writeRunnerPrompts, type SessionPrompts } from "./runner-prompts.ts";
 
 export interface RunnerProcessOptions {
 	cwd: string;
 	args: string[];
+	prompts?: SessionPrompts & { scratchDir: string };
 	env?: Record<string, string>;
 	onEvent?: (event: RunnerEvent) => void;
 	onChannelMessage?: (msg: unknown) => void;
@@ -18,16 +20,24 @@ export class RunnerProcess {
 	private child: ChildProcess;
 	private channel = new RunnerRpcChannel();
 	public exited = false;
+	private cleanupPrompts: () => void;
 
 	constructor(options: RunnerProcessOptions) {
 		this.options = options;
 		const runnerPath = process.env.PI_DURABLE_RUNNER_PATH || resolveRunnerPath();
 
-		this.child = spawn(process.execPath, [runnerPath, ...options.args], {
-			cwd: options.cwd,
-			stdio: ["pipe", "pipe", "pipe", "pipe", "pipe"],
-			env: { ...process.env, ...options.env },
-		});
+		const prompts = writeRunnerPrompts(options.prompts);
+		this.cleanupPrompts = prompts.cleanup;
+		try {
+			this.child = spawn(process.execPath, [runnerPath, ...options.args, ...prompts.args], {
+				cwd: options.cwd,
+				stdio: ["pipe", "pipe", "pipe", "pipe", "pipe"],
+				env: { ...process.env, ...options.env },
+			});
+		} catch (error) {
+			this.cleanupPrompts();
+			throw error;
+		}
 
 		this.setupStreams();
 		this.setupLifecycle();
@@ -52,12 +62,14 @@ export class RunnerProcess {
 
 	private setupLifecycle() {
 		this.child.on("error", (err) => {
+			this.cleanupPrompts();
 			this.exited = true;
 			this.channel.failAll(err);
 			this.options.onError?.(err);
 		});
 
 		this.child.on("exit", (code, signal) => {
+			this.cleanupPrompts();
 			this.exited = true;
 			this.channel.failAll(new Error(`Runner process exited (code ${code}, signal ${signal})`));
 			this.options.onExit?.(code, signal);

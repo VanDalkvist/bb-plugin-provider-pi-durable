@@ -1,6 +1,7 @@
 import { requireExtensionPath, requireScratchDir, resolveSessionDir, resolveSessionFilePath } from "./paths.ts";
 import { parseProviderThreadId } from "./composite-id.ts";
 import { PiThreadSession } from "./session.ts";
+import { resolveSessionPrompts } from "./runner-prompts.ts";
 
 export class SessionRegistry {
 	private sendNotification: (method: string, params: Record<string, unknown>) => void;
@@ -90,7 +91,7 @@ export class SessionRegistry {
 				model: resolvedModel,
 				thinkingLevel: rawThinking,
 				shellEnvOverrides: rawEnv,
-				appendSystemPrompt: params.appendSystemPrompt,
+				...resolveSessionPrompts(params),
 				providerOptions,
 			},
 			this.sendNotification,
