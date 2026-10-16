@@ -1,12 +1,12 @@
 {
   "sdkMajor": 0,
-  "sdkVersion": "0.6.37",
+  "sdkVersion": "0.6.49",
   "artifactFormatVersion": 1,
   "pluginId": "provider-pi-durable",
   "pluginVersion": "0.2.29",
   "builtWith": {
-    "bbVersion": "0.46.0",
-    "pluginSdkVersion": "0.6.37"
+    "bbVersion": "0.46.1",
+    "pluginSdkVersion": "0.6.49"
   },
-  "artifactDigest": "e009473b5f020a5a94511661ef47fa850d7cabde5004e16e095a8255d47ef0b7"
+  "artifactDigest": "0ac8a3c7b903724185d348c12c65e1b3a325799405e8687def0a91a4f3424b1d"
 }

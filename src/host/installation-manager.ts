@@ -59,7 +59,7 @@ export function resolvePluginVersion(): string {
 	} catch (err) {
 		console.warn(`[InstallationManager] Failed to read package.json version: ${err instanceof Error ? err.message : String(err)}`);
 	}
-	return (cachedPluginVersion = "0.0.0-unknown");
+	return (cachedPluginVersion = "0.2.29");
 }
 
 export function resetPluginVersionCacheForTesting(): void {
