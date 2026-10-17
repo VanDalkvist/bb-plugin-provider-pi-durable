@@ -71,9 +71,6 @@ export function buildRunnerArgs(options: SessionOptions): string[] {
 	if (options.thinkingLevel) {
 		args.push("--thinking", options.thinkingLevel);
 	}
-	if (options.appendSystemPrompt) {
-		args.push("--append-system-prompt", options.appendSystemPrompt);
-	}
 	return args;
 }
 
