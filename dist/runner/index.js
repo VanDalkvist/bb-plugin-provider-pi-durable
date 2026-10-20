@@ -1784,6 +1784,21 @@ var BBChildEventAdapter = class {
       }
       case "message_end": {
         this.closeThinkingIfNeeded();
+        const message = event.entry?.model?.[0];
+        if (message?.role === "assistant" && Array.isArray(message.content)) {
+          const fullText = message.content.flatMap((part) => part.type === "text" ? [part.text] : []).join("");
+          if (fullText.startsWith(this.currentText) && fullText.length > this.currentText.length) {
+            const delta = fullText.slice(this.currentText.length);
+            this.output({
+              type: "message_update",
+              assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta },
+              parentRef: this.parentRef,
+              ...this.conversationId !== void 0 ? { conversationId: this.conversationId } : {}
+            });
+          }
+          this.currentText = "";
+          this.currentThinking = "";
+        }
         break;
       }
       case "run_end": {

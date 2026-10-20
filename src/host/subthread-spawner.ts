@@ -28,6 +28,7 @@ export interface SubthreadSpawnerOptions {
 export interface ThreadContextRecord {
 	projectId?: string;
 	environmentId?: string;
+	parentThreadId?: string;
 }
 
 export function resolveThreadContextFromDb(threadId: string): ThreadContextRecord | undefined {
@@ -36,11 +37,14 @@ export function resolveThreadContextFromDb(threadId: string): ThreadContextRecor
 		if (!existsSync(dbPath)) return undefined;
 		const db = new DatabaseSync(dbPath, { open: true, readOnly: true });
 		try {
-			const query = db.prepare("SELECT project_id, environment_id FROM threads WHERE id = ?");
-			const row = query.get(threadId) as { project_id?: string; environment_id?: string } | undefined;
+			const query = db.prepare("SELECT project_id, environment_id, parent_thread_id FROM threads WHERE id = ?");
+			const row = query.get(threadId);
+			if (!row || typeof row !== "object") return undefined;
+			const r = row as Record<string, unknown>;
 			return {
-				projectId: row?.project_id,
-				environmentId: row?.environment_id,
+				projectId: typeof r.project_id === "string" ? r.project_id : undefined,
+				environmentId: typeof r.environment_id === "string" ? r.environment_id : undefined,
+				parentThreadId: typeof r.parent_thread_id === "string" ? r.parent_thread_id : undefined,
 			};
 		} finally {
 			db.close();

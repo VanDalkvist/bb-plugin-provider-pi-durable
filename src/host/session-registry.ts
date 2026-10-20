@@ -2,6 +2,37 @@ import { requireExtensionPath, requireScratchDir, resolveSessionDir, resolveSess
 import { parseProviderThreadId } from "./composite-id.ts";
 import { PiThreadSession } from "./session.ts";
 import { resolveSessionPrompts } from "./runner-prompts.ts";
+import { resolveThreadContextFromDb } from "./subthread-spawner.ts";
+import { extractInputText } from "./prompt-input.ts";
+
+export interface SessionCreationParams {
+	cwd?: string;
+	parentThreadId?: string;
+	conversationId?: string;
+	input?: unknown;
+	prompt?: string;
+	task?: string;
+	model?: unknown;
+	thinkingLevel?: unknown;
+	shellEnvOverrides?: NodeJS.ProcessEnv;
+	providerOptions?: Record<string, unknown>;
+	options?: {
+		cwd?: string;
+		parentThreadId?: string;
+		model?: unknown;
+		reasoningLevel?: unknown;
+		thinkingLevel?: unknown;
+		envVars?: NodeJS.ProcessEnv;
+		providerOptions?: Record<string, unknown>;
+		instructions?: string;
+		[key: string]: unknown;
+	};
+	baseInstructions?: string;
+	instructionMode?: string;
+	systemPrompt?: string;
+	appendSystemPrompt?: string;
+	[key: string]: unknown;
+}
 
 export class SessionRegistry {
 	private sendNotification: (method: string, params: Record<string, unknown>) => void;
@@ -23,7 +54,7 @@ export class SessionRegistry {
 	public async createOrGet(
 		threadId: string,
 		providerThreadId: string,
-		params: any,
+		params: SessionCreationParams = {},
 	): Promise<PiThreadSession> {
 		const existing = this.sessions.get(threadId);
 		if (existing && !existing.runner.exited) {
@@ -35,18 +66,47 @@ export class SessionRegistry {
 
 		const { sessionKey, conversationId } = parseProviderThreadId(providerThreadId);
 
-		// Shared Owner routing: check if an active session already exists for this sessionKey
+		// Shared Owner routing: check if thread belongs to an active parent session
+		const rawParent = params.parentThreadId ?? params.options?.parentThreadId;
+		const parentThreadId = typeof rawParent === "string" && rawParent.trim() !== ""
+			? rawParent.trim()
+			: resolveThreadContextFromDb(threadId)?.parentThreadId;
+
 		let sharedSession: PiThreadSession | undefined;
-		for (const active of this.sessions.values()) {
-			if (!active.runner?.exited && parseProviderThreadId(active.options.providerThreadId).sessionKey === sessionKey) {
-				sharedSession = active;
-				break;
+		if (parentThreadId && this.sessions.has(parentThreadId)) {
+			const candidate = this.sessions.get(parentThreadId);
+			if (candidate && !candidate.runner?.exited) {
+				sharedSession = candidate;
+			}
+		}
+
+		// Shared Owner routing: check if an active session already exists for this sessionKey
+		if (!sharedSession) {
+			for (const active of this.sessions.values()) {
+				if (!active.runner?.exited && parseProviderThreadId(active.options.providerThreadId).sessionKey === sessionKey) {
+					sharedSession = active;
+					break;
+				}
 			}
 		}
 
 		if (sharedSession) {
+			const text = extractInputText(params.input)
+				|| (typeof params.prompt === "string" ? params.prompt.trim() : "")
+				|| (typeof params.task === "string" ? params.task.trim() : "");
+
+			const paramConvId = typeof params.conversationId === "string" && params.conversationId.trim() !== ""
+				? params.conversationId.trim()
+				: undefined;
+
+			const targetConversationId = conversationId
+				?? paramConvId
+				?? (text && typeof sharedSession.findSubagentConversationForTask === "function"
+					? sharedSession.findSubagentConversationForTask(text)
+					: undefined);
+
 			this.sessions.set(threadId, sharedSession);
-			sharedSession.registerThread?.(threadId, conversationId);
+			sharedSession.registerThread?.(threadId, targetConversationId);
 			this.sendNotification("thread/identity", {
 				threadId,
 				providerThreadId,
@@ -66,13 +126,30 @@ export class SessionRegistry {
 			if (parts.length >= 2) {
 				resolvedModel = { provider: parts[0], id: parts.slice(1).join("/") };
 			}
-		} else if (rawModel && typeof rawModel === "object") {
-			resolvedModel = rawModel;
+		} else if (typeof rawModel === "object" && rawModel !== null && "provider" in rawModel && "id" in rawModel) {
+			const candidate = rawModel as { provider: unknown; id: unknown };
+			if (typeof candidate.provider === "string" && typeof candidate.id === "string") {
+				resolvedModel = { provider: candidate.provider, id: candidate.id };
+			}
 		}
 
 		const rawThinking = params.thinkingLevel ?? params.options?.reasoningLevel ?? params.options?.thinkingLevel;
+		const resolvedThinking = typeof rawThinking === "string" ? rawThinking : undefined;
+
 		const rawEnv = params.shellEnvOverrides ?? params.options?.envVars;
-		const providerOptions = params.options?.providerOptions ?? params.providerOptions;
+		let resolvedEnv: Record<string, string> | undefined;
+		if (typeof rawEnv === "object" && rawEnv !== null) {
+			const envObj: Record<string, string> = {};
+			for (const [k, v] of Object.entries(rawEnv as Record<string, unknown>)) {
+				if (typeof v === "string") envObj[k] = v;
+			}
+			resolvedEnv = envObj;
+		}
+
+		const rawProviderOptions = params.options?.providerOptions ?? params.providerOptions;
+		const providerOptions = typeof rawProviderOptions === "object" && rawProviderOptions !== null && !Array.isArray(rawProviderOptions)
+			? (rawProviderOptions as Record<string, unknown>)
+			: undefined;
 
 		const sessionDir = resolveSessionDir();
 		const sessionFilePath = resolveSessionFilePath(sessionKey);
@@ -89,8 +166,8 @@ export class SessionRegistry {
 				extensionPath,
 				scratchDir,
 				model: resolvedModel,
-				thinkingLevel: rawThinking,
-				shellEnvOverrides: rawEnv,
+				thinkingLevel: resolvedThinking,
+				shellEnvOverrides: resolvedEnv,
 				...resolveSessionPrompts(params),
 				providerOptions,
 			},
@@ -128,7 +205,7 @@ export class SessionRegistry {
 		await session.closeGracefully();
 		this.sessions.delete(threadId);
 
-		const updatedParams = {
+		const updatedParams: SessionCreationParams = {
 			...session.options,
 			cwd: targetCwd,
 		};
