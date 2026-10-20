@@ -24,11 +24,228 @@ import { createToolSearchExtension } from "@earendil-works/pi-durable/tool-searc
 // src/runner/subagent.ts
 import { Type } from "@earendil-works/pi-ai";
 import {
-  AssistantEntry,
   configure,
   defineExtension,
   defineTool
 } from "@earendil-works/pi-durable";
+
+// src/runner/subagent-docs.ts
+import {
+  AssistantEntry,
+  defineDoc
+} from "@earendil-works/pi-durable";
+var SubagentsDoc = defineDoc({
+  kind: "bb.subagents",
+  version: 1,
+  scope: "conversation",
+  history: "latest",
+  fork: "initial",
+  initial: () => ({ agents: {} })
+});
+function isRecord(value) {
+  return typeof value === "object" && value !== null;
+}
+function extractAssistantText(entry) {
+  if (!isRecord(entry) || !Array.isArray(entry.model) || entry.model.length === 0) return "";
+  const firstMessage = entry.model[0];
+  if (!isRecord(firstMessage) || !Array.isArray(firstMessage.content)) return "";
+  return firstMessage.content.flatMap((p) => isRecord(p) && p.type === "text" && typeof p.text === "string" ? [p.text] : []).join("");
+}
+async function answerText(api, answer, context) {
+  const entry = await api.commit((tx) => tx.entry(AssistantEntry, answer), context);
+  return extractAssistantText(entry);
+}
+
+// src/runner/subagent-delivery.ts
+import {
+  AssistantEntry as AssistantEntry2,
+  defineTask
+} from "@earendil-works/pi-durable";
+
+// src/runner/child-title.ts
+function nativeChildTitle(name, role, model) {
+  const part = (value, limit) => Array.from(
+    value.replace(/[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u2028-\u202e\u2066-\u2069]/gu, " ").replace(/\s+/gu, " ").trim()
+  ).slice(0, limit).join("");
+  const parts = [part(name, 180)];
+  if (role) {
+    const r = part(role, 24);
+    if (r) parts.push(r);
+  }
+  const modelLabel = [model?.provider, model?.modelId].filter(Boolean).join("/");
+  if (modelLabel) {
+    const m = part(modelLabel, 40);
+    if (m) parts.push(m);
+  }
+  return parts.filter(Boolean).join(" \xB7 ");
+}
+
+// src/runner/subagent-delivery.ts
+var BACKGROUND = { ownership: { kind: "conversation" }, background: true };
+var GATHER_MS = 50;
+function asExtensionTask(task, extensionName) {
+  return Object.assign(task, { name: extensionName, tasks: [task] });
+}
+var Anchor = asExtensionTask(
+  defineTask({
+    name: "bb.subagent-anchor",
+    version: 1,
+    initial: () => ({ phase: "done" }),
+    phases: { done: (_t, rt, ctx) => rt.commit(() => ({ status: "terminal", outcome: { status: "completed", result: null } }), ctx) },
+    abort: (_t, rt, ctx) => rt.commit(() => ({ status: "terminal", outcome: { status: "aborted" } }), ctx)
+  }),
+  "bb.subagent-anchor"
+);
+function reporterFor(courier, admit) {
+  const task = defineTask({
+    name: "bb.subagent-reporter",
+    version: 1,
+    initial: () => ({ phase: "deliver" }),
+    phases: {
+      deliver: async (task2, runtime, context) => {
+        const child = await runtime.conversation(task2.input.conversationId, context);
+        await admit?.(child, task2.input.requestId, context);
+        const submission = await child.submit(
+          { type: "input", content: task2.input.task, requestId: task2.input.requestId },
+          context
+        );
+        const settled = await submission.wait(context);
+        return runtime.commit(async (tx) => {
+          const doc = await tx.doc(SubagentsDoc, runtime.conversationId);
+          doc.agents ??= {};
+          const record = doc.agents[task2.input.key] ?? {
+            name: nativeChildTitle(task2.input.task, "worker"),
+            conversationId: task2.input.conversationId,
+            requestId: task2.input.requestId,
+            task: task2.input.task,
+            role: "worker",
+            ownerTaskId: task2.id,
+            background: true
+          };
+          doc.agents[task2.input.key] = record;
+          let text = `Subagent ${record.name} failed: ${settled.status}`;
+          if (settled.status === "unanswered") text += ` (${settled.reason ?? "unknown"})`;
+          if (settled.status === "done" && settled.type === "input") {
+            text = `Subagent ${record.name} answered: ` + extractAssistantText(await tx.entry(AssistantEntry2, settled.answer));
+          }
+          record.report = text;
+          record.settled = true;
+          return { status: "running", checkpoint: { phase: "report", text } };
+        }, context);
+      },
+      report: async (task2, runtime, context) => runtime.commit(async (tx) => {
+        const state = await tx.doc(SubagentsDoc, runtime.conversationId);
+        const reportId = String(task2.id);
+        if (!(state.outbox ?? []).some((report) => report.id === reportId)) {
+          const name = state.agents[task2.input.key]?.name ?? task2.input.key;
+          state.outbox = [...state.outbox ?? [], { id: reportId, name, text: task2.state.checkpoint.text }];
+        }
+        const active = state.courier === void 0 ? void 0 : await tx.task(state.courier);
+        const isIdle = !active || active.state.status !== "pending" && active.state.status !== "running" && active.state.status !== "waiting";
+        if (isIdle) state.courier = await tx.createTask(courier, null, BACKGROUND);
+        return { status: "terminal", outcome: { status: "completed", result: null } };
+      }, context)
+    },
+    abort: (_t, rt, ctx) => rt.commit(() => ({ status: "terminal", outcome: { status: "aborted" } }), ctx)
+  });
+  return asExtensionTask(task, "bb.subagent-reporter");
+}
+function courierFor(admit) {
+  const task = defineTask({
+    name: "bb.subagent-courier",
+    version: 1,
+    initial: () => ({ phase: "gather" }),
+    phases: {
+      gather: async (_task, runtime, context) => {
+        await runtime.sleep(runtime.now() + GATHER_MS, context);
+        await runtime.commit(() => ({ status: "running", checkpoint: { phase: "next" } }), context);
+      },
+      next: async (task2, runtime, context) => runtime.commit(async (tx) => {
+        const state = await tx.doc(SubagentsDoc, runtime.conversationId);
+        if (state.deliveryHold !== void 0) return { status: "running", checkpoint: { phase: "hold" } };
+        if (state.sending === void 0) {
+          const reports = state.outbox ?? [];
+          if (reports.length === 0) {
+            if (state.courier === task2.id) delete state.courier;
+            return { status: "terminal", outcome: { status: "completed", result: null } };
+          }
+          const batch = (state.batchNumber ?? 0) + 1;
+          state.batchNumber = batch;
+          state.outbox = [];
+          state.sending = { requestId: `subagent-batch:${task2.id}:${batch}`, reports };
+        }
+        return { status: "running", checkpoint: { phase: "send" } };
+      }, context),
+      send: async (_task, runtime, context) => {
+        const state = await runtime.snapshot(SubagentsDoc, runtime.conversationId, context);
+        const sending = state?.sending;
+        if (sending === void 0) {
+          await runtime.commit(() => ({ status: "running", checkpoint: { phase: "next" } }), context);
+          return;
+        }
+        const parent = await runtime.conversation(runtime.conversationId, context);
+        try {
+          await admit?.(parent, sending.requestId, context);
+        } catch (error) {
+          if (runtime.signal.aborted || context.abortSignal?.aborted) throw error;
+          const reason = error instanceof Error ? error.message : String(error);
+          await runtime.commit(async (tx) => {
+            const current = await tx.doc(SubagentsDoc, runtime.conversationId);
+            if (current.sending?.requestId === sending.requestId) {
+              current.deliveryHold = { kind: "admission", requestId: sending.requestId, reason };
+            }
+            return { status: "running", checkpoint: { phase: "hold" } };
+          }, context);
+          return;
+        }
+        const prompt = sending.reports.map((r) => r.text).join("\n\n---\n\n");
+        const content = `[Subagent Reports Available]:
+
+${prompt}`;
+        const submission = await parent.submit({
+          type: "input",
+          content,
+          whenBusy: "followUp",
+          requestId: sending.requestId
+        }, context);
+        const settled = await submission.wait(context);
+        await runtime.commit(async (tx) => {
+          const current = await tx.doc(SubagentsDoc, runtime.conversationId);
+          if (current.sending?.requestId !== sending.requestId) return { status: "running", checkpoint: { phase: "next" } };
+          if (settled.status === "done") delete current.sending;
+          else current.deliveryHold = { kind: "uncertain", requestId: sending.requestId, reason: `Delivery outcome uncertain: ${settled.status}` };
+          return { status: "running", checkpoint: { phase: settled.status === "done" ? "next" : "hold" } };
+        }, context);
+      },
+      hold: async (_task, runtime, context) => {
+        const watch = await runtime.watchDoc(SubagentsDoc, runtime.conversationId, context);
+        if (watch === void 0 || watch.value?.deliveryHold === void 0) {
+          await watch?.stop();
+          await runtime.commit(() => ({ status: "running", checkpoint: { phase: "next" } }), context);
+          return;
+        }
+        try {
+          await new Promise((resolve2, reject) => {
+            watch.start((v) => {
+              if (v?.deliveryHold === void 0) resolve2();
+              return Promise.resolve();
+            });
+            void watch.closed.then(() => reject(new Error("Courier hold watch ended")));
+          });
+        } finally {
+          await watch.stop();
+        }
+        await runtime.commit(() => ({ status: "running", checkpoint: { phase: "next" } }), context);
+      }
+    },
+    abort: (_t, rt, ctx) => rt.commit(() => ({ status: "terminal", outcome: { status: "aborted" } }), ctx)
+  });
+  return asExtensionTask(task, "bb.subagent-courier");
+}
+var DefaultCourier = courierFor();
+var DefaultReporter = reporterFor(DefaultCourier);
+
+// src/runner/subagent.ts
 function buildRoleEnvelope(task) {
   return [
     "You are an isolated worker subagent.",
@@ -38,11 +255,6 @@ function buildRoleEnvelope(task) {
     "- Do not attempt repository-wide meta-discovery, git archaeology, or searching for other agents.",
     "- Execute the task and return your final answer concisely."
   ].join("\n");
-}
-async function answerText(api, answer, context) {
-  const entry = await api.commit((tx) => tx.entry(AssistantEntry, answer), context);
-  const message = entry?.model?.[0];
-  return message?.content.flatMap((content) => content.type === "text" ? [content.text] : []).join("") ?? "";
 }
 var Subagent = defineExtension({
   name: "subagent",
@@ -62,20 +274,40 @@ var Subagent = defineExtension({
       replay: "safe",
       execute: async (args2, api, context) => {
         const isBackground = args2.background !== false;
+        const key = `subagent:${api.taskId}`;
+        const requestId = `subagent:${api.taskId}`;
         const child = await api.commit(async (tx) => {
           const existing = (await tx.scanConversations({ ownerTaskId: api.taskId }, 1)).items[0];
-          if (existing !== void 0) return existing.id;
-          const created = await tx.createConversation({ ownership: { kind: "task", taskId: api.taskId } });
-          await configure(tx, created.id, { instructions: buildRoleEnvelope(args2.task) });
-          return created.id;
+          let childId = existing?.id;
+          if (childId === void 0) {
+            const created = await tx.createConversation({ ownership: { kind: "task", taskId: api.taskId } });
+            await configure(tx, created.id, { instructions: buildRoleEnvelope(args2.task) });
+            childId = created.id;
+          }
+          const record = {
+            name: nativeChildTitle(args2.task, "worker"),
+            conversationId: childId,
+            requestId,
+            task: args2.task,
+            role: "worker",
+            ownerTaskId: api.taskId,
+            background: isBackground
+          };
+          if (isBackground && typeof tx.createTask === "function") {
+            record.reporter = await tx.createTask(
+              DefaultReporter,
+              { key, conversationId: childId, task: args2.task, requestId },
+              BACKGROUND
+            );
+          }
+          const state = await tx.doc(SubagentsDoc, api.conversationId);
+          if (state) {
+            state.agents ??= {};
+            state.agents[key] = record;
+          }
+          return childId;
         }, context);
         await api.details({ conversationId: child, task: args2.task, background: isBackground }, context);
-        const handle = await api.conversation(child, context);
-        if (!handle) {
-          throw new Error(`Failed to access subagent conversation: ${child}`);
-        }
-        const request = { type: "input", content: args2.task, requestId: `subagent:${api.taskId}` };
-        const submission = await handle.submit(request, context);
         if (isBackground) {
           return {
             output: [
@@ -87,11 +319,21 @@ var Subagent = defineExtension({
             details: { conversationId: child, background: true, task: args2.task }
           };
         }
+        const handle = await api.conversation(child, context);
+        if (!handle) throw new Error(`Failed to access subagent conversation: ${child}`);
+        const submission = await handle.submit({ type: "input", content: args2.task, requestId }, context);
         const settled = await submission.wait(context);
         if (settled.status !== "done" || settled.type !== "input") {
           throw new Error(`Subagent ${child} failed: ${settled.status}`);
         }
         const text = await answerText(api, settled.answer, context);
+        await api.commit(async (tx) => {
+          const state = await tx.doc(SubagentsDoc, api.conversationId);
+          if (state?.agents?.[key]) {
+            state.agents[key].settled = true;
+            state.agents[key].report = text;
+          }
+        }, context);
         return { output: [{ type: "text", text }], details: { conversationId: child, background: false, task: args2.task } };
       }
     })
@@ -315,6 +557,9 @@ async function createCodingRegistry(settingsManager, cwd, promptOptions) {
   registry.install(createCodemodeExtension({ sandbox: new CodemodeSandbox() }));
   registry.install(createToolSearchExtension());
   registry.install(Subagent);
+  registry.install(Anchor);
+  registry.install(DefaultCourier);
+  registry.install(DefaultReporter);
   registry.install(createPiPrompt(settingsManager, cwd, promptOptions));
   return registry;
 }

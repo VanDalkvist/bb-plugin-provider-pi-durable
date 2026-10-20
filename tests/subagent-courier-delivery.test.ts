@@ -47,7 +47,7 @@ test("Reporter: delivers task to child, formats response, and queues to outbox",
 	const docStore: any = {
 		agents: {
 			"subagent:task_1": {
-				name: "child-subagent:task_1",
+				name: "Verify security patches · worker",
 				conversationId: "conv_child_1",
 				requestId: "subagent:task_1",
 				task: "Verify security patches",
@@ -98,7 +98,7 @@ test("Reporter: delivers task to child, formats response, and queues to outbox",
 	);
 	assert.equal(deliverRes.status, "running");
 	assert.equal(deliverRes.checkpoint.phase, "report");
-	assert.equal(deliverRes.checkpoint.text, "Subagent child-subagent:task_1 answered: Patches verified OK");
+	assert.equal(deliverRes.checkpoint.text, "Subagent Verify security patches · worker answered: Patches verified OK");
 	assert.equal(docStore.agents["subagent:task_1"].settled, true);
 	assert.equal(submitCalledWith.content, "Verify security patches");
 
@@ -133,7 +133,7 @@ test("Reporter: delivers task to child, formats response, and queues to outbox",
 	assert.equal(reportRes.outcome.status, "completed");
 	assert.equal(docStore.outbox.length, 1);
 	assert.equal(docStore.outbox[0].id, "task_reporter_42");
-	assert.equal(docStore.outbox[0].text, "Subagent child-subagent:task_1 answered: Patches verified OK");
+	assert.equal(docStore.outbox[0].text, "Subagent Verify security patches · worker answered: Patches verified OK");
 	assert.equal(createdCourierTask, true);
 	assert.equal(docStore.courier, "task_courier_99");
 });
@@ -202,7 +202,10 @@ test("Courier: sleeps 50ms (gather), batches outbox reports, and submits via fol
 	assert.equal(parentSubmission.type, "input");
 	assert.equal(parentSubmission.whenBusy, "followUp");
 	assert.equal(parentSubmission.requestId, "subagent-batch:task_courier_1:1");
-	assert.equal(parentSubmission.content, "Report A\n\nReport B");
+	assert.equal(
+		parentSubmission.content,
+		"[Subagent Reports Available]:\n\nReport A\n\n---\n\nReport B",
+	);
 	assert.equal(docStore.sending, undefined, "sending must be cleared after successful delivery");
 });
 
@@ -274,10 +277,11 @@ test("Courier: sets deliveryHold on admission failure or uncertain outcome", asy
 });
 
 
-test("Subagent tool: registers record in SubagentsDoc and creates Reporter task on background execution", async () => {
+test("Subagent tool: registers record in SubagentsDoc, uses friendly name, and does not double-submit on background execution", async () => {
 	const tool = Subagent.tools[0];
 	const docStore: any = { agents: {} };
 	let createdTasks: any[] = [];
+	let childConversationSubmitted = false;
 
 	const mockApi: any = {
 		taskId: "task_parent_exec",
@@ -295,11 +299,14 @@ test("Subagent tool: registers record in SubagentsDoc and creates Reporter task 
 			return fn(mockTx);
 		},
 		details: async () => {},
-		conversation: async () => ({
-			submit: async () => ({
-				wait: async () => ({ status: "done", type: "input", answer: "a1" }),
-			}),
-		}),
+		conversation: async () => {
+			childConversationSubmitted = true;
+			return {
+				submit: async () => ({
+					wait: async () => ({ status: "done", type: "input", answer: "a1" }),
+				}),
+			};
+		},
 	};
 
 	const res = await tool.execute(
@@ -309,9 +316,63 @@ test("Subagent tool: registers record in SubagentsDoc and creates Reporter task 
 	);
 
 	assert.ok(res.output[0].text.includes("Subagent spawned in background"));
+	assert.equal(childConversationSubmitted, false, "Must NOT call api.conversation or child.submit in background mode");
 	assert.equal(createdTasks.length, 1);
 	assert.equal(createdTasks[0].input.task, "Background integration job");
 	assert.equal(createdTasks[0].input.conversationId, "conv_child_live");
 	assert.equal(docStore.agents["subagent:task_parent_exec"].reporter, "task_reporter_gen");
 	assert.equal(docStore.agents["subagent:task_parent_exec"].task, "Background integration job");
+	assert.equal(
+		docStore.agents["subagent:task_parent_exec"].name,
+		"Background integration job · worker",
+		"Subagent record name must use nativeChildTitle friendly name",
+	);
+});
+
+test("Subagent tool: foreground execution directly submits and waits for child completion", async () => {
+	const tool = Subagent.tools[0];
+	const docStore: any = { agents: {} };
+	let submitCalled = false;
+	let waitCalled = false;
+
+	const mockApi: any = {
+		taskId: "task_parent_sync",
+		conversationId: "conv_parent_sync",
+		commit: async (fn: any) => {
+			const mockTx: any = {
+				scanConversations: async () => ({ items: [] }),
+				createConversation: async () => ({ id: "conv_child_sync" }),
+				doc: async () => docStore,
+				entry: async () => ({
+					model: [{ role: "assistant", content: [{ type: "text", text: "Sync result OK" }] }],
+				}),
+			};
+			return fn(mockTx);
+		},
+		details: async () => {},
+		conversation: async () => ({
+			submit: async (req: any) => {
+				submitCalled = true;
+				assert.equal(req.content, "Run synchronous computation");
+				return {
+					wait: async () => {
+						waitCalled = true;
+						return { status: "done", type: "input", answer: "ans_sync" };
+					},
+				};
+			},
+		}),
+	};
+
+	const res = await tool.execute(
+		{ task: "Run synchronous computation", background: false },
+		mockApi,
+		{} as any,
+	);
+
+	assert.equal(submitCalled, true, "Foreground subagent must call handle.submit");
+	assert.equal(waitCalled, true, "Foreground subagent must wait for completion");
+	assert.equal(res.output[0].text, "Sync result OK");
+	assert.equal(docStore.agents["subagent:task_parent_sync"].settled, true);
+	assert.equal(docStore.agents["subagent:task_parent_sync"].report, "Sync result OK");
 });

@@ -7,6 +7,7 @@ import {
 } from "@earendil-works/pi-durable";
 import { SubagentsDoc, type SubagentRecord } from "./subagent-docs.ts";
 import { BACKGROUND, DefaultReporter, answerText } from "./subagent-delivery.ts";
+import { nativeChildTitle } from "./child-title.ts";
 
 export function buildRoleEnvelope(task: string): string {
 	return [
@@ -52,7 +53,7 @@ export const Subagent: Extension = defineExtension({
 					}
 
 					const record: SubagentRecord = {
-						name: `child-${key}`,
+						name: nativeChildTitle(args.task, "worker"),
 						conversationId: childId,
 						requestId,
 						task: args.task,
@@ -80,10 +81,6 @@ export const Subagent: Extension = defineExtension({
 
 				await api.details({ conversationId: child, task: args.task, background: isBackground }, context);
 
-				const handle = await api.conversation(child, context);
-				if (!handle) throw new Error(`Failed to access subagent conversation: ${child}`);
-				const submission = await handle.submit({ type: "input", content: args.task, requestId }, context);
-
 				if (isBackground) {
 					return {
 						output: [
@@ -95,6 +92,10 @@ export const Subagent: Extension = defineExtension({
 						details: { conversationId: child, background: true, task: args.task },
 					};
 				}
+
+				const handle = await api.conversation(child, context);
+				if (!handle) throw new Error(`Failed to access subagent conversation: ${child}`);
+				const submission = await handle.submit({ type: "input", content: args.task, requestId }, context);
 
 				const settled = await submission.wait(context);
 				if (settled.status !== "done" || settled.type !== "input") {

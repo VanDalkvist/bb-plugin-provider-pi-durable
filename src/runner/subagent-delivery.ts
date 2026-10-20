@@ -4,6 +4,7 @@ import {
 	type Extension, type Task,
 } from "@earendil-works/pi-durable";
 import { SubagentsDoc, extractAssistantText } from "./subagent-docs.ts";
+import { nativeChildTitle } from "./child-title.ts";
 export { answerText } from "./subagent-docs.ts";
 
 export const BACKGROUND = { ownership: { kind: "conversation" }, background: true } as const;
@@ -49,7 +50,7 @@ export function reporterFor(courier: CourierTask, admit?: SubagentAdmission): Su
 					const doc = await tx.doc(SubagentsDoc, runtime.conversationId);
 					doc.agents ??= {};
 					const record = doc.agents[task.input.key] ?? {
-						name: task.input.key, conversationId: task.input.conversationId, requestId: task.input.requestId,
+						name: nativeChildTitle(task.input.task, "worker"), conversationId: task.input.conversationId, requestId: task.input.requestId,
 						task: task.input.task, role: "worker", ownerTaskId: task.id, background: true,
 					};
 					doc.agents[task.input.key] = record;
@@ -129,8 +130,10 @@ export function courierFor(admit?: Admission): SubagentTaskExtension<null, Couri
 					}, context);
 					return;
 				}
+				const prompt = sending.reports.map((r) => r.text).join("\n\n---\n\n");
+				const content = `[Subagent Reports Available]:\n\n${prompt}`;
 				const submission = await parent.submit({
-					type: "input", content: sending.reports.map((r) => r.text).join("\n\n"),
+					type: "input", content,
 					whenBusy: "followUp", requestId: sending.requestId,
 				}, context);
 				const settled = await submission.wait(context);
