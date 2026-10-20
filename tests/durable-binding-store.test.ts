@@ -191,7 +191,7 @@ test("DurableBindingManager.readOfflineBindings: cold offline recovery from SQLi
 				retired_at INTEGER,
 				record TEXT
 			);
-			CREATE TABLE documentRevisions (
+			CREATE TABLE document_revisions (
 				document_id INTEGER,
 				seq INTEGER,
 				kind TEXT,
@@ -199,7 +199,7 @@ test("DurableBindingManager.readOfflineBindings: cold offline recovery from SQLi
 				content TEXT
 			);
 			INSERT INTO documents VALUES (1, 'bb.native-child-binding', 0, '', 'conversation', 7, 1000, NULL, '{}');
-			INSERT INTO documentRevisions VALUES (1, 1, 'base', 2, '{"binding":{"bbThreadId":"thr_offline_7","conversationId":7}}');
+			INSERT INTO document_revisions VALUES (1, 1, 'base', 2, '{"binding":{"bbThreadId":"thr_offline_7","conversationId":7}}');
 		`);
 		db.close();
 

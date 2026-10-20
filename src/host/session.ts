@@ -57,7 +57,7 @@ export class PiThreadSession {
 	}
 
 	public registerThread(threadId: string, conversationId?: string): void {
-		this.bindings.register(threadId, conversationId);
+		this.bindings.register(threadId, conversationId, this.options.threadId);
 	}
 
 	public unregisterThread(threadId: string): void {

@@ -87,12 +87,16 @@ export class DurableBindingManager {
 		try {
 			db = new DatabaseSync(dbPath, { readOnly: true });
 			const hasDocs = db.prepare("SELECT 1 FROM sqlite_master WHERE type = ? AND name = ?").get("table", "documents");
-			const hasRevs = db.prepare("SELECT 1 FROM sqlite_master WHERE type = ? AND name = ?").get("table", "documentRevisions");
+			const hasRevs = db.prepare("SELECT 1 FROM sqlite_master WHERE type = ? AND name IN (?, ?)").get("table", "document_revisions", "documentRevisions");
 			if (!hasDocs || !hasRevs) return [];
+
+			const revsTable = db.prepare("SELECT 1 FROM sqlite_master WHERE type = ? AND name = ?").get("table", "document_revisions")
+				? "document_revisions"
+				: "documentRevisions";
 
 			const stmt = db.prepare(`
 				SELECT r.content FROM documents d
-				JOIN documentRevisions r ON d.id = r.document_id
+				JOIN ${revsTable} r ON d.id = r.document_id
 				WHERE d.kind = 'bb.native-child-binding' AND d.retired_at IS NULL
 				ORDER BY r.seq DESC
 			`);
