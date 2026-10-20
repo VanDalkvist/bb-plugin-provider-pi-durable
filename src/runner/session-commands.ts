@@ -4,6 +4,7 @@ import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { estimateContextTokens } from "@earendil-works/pi-ai/utils/estimate";
 import type { OpenDurableResult } from "./runtime.ts";
 import type { CliArgs } from "./cli-args.ts";
+import { handleBindingCommand } from "./binding-commands.ts";
 
 export interface CommandResponder {
 	success: (id: string | undefined, command: string, data?: unknown) => void;
@@ -25,6 +26,9 @@ export interface RunnerCommandPayload {
 	instructions?: string;
 	level?: import("@earendil-works/pi-ai").ModelThinkingLevel;
 	conversationId?: string | number;
+	bbThreadId?: string;
+	parentThreadId?: string;
+	sessionId?: string;
 }
 
 export function parseConversationId(id: string | number | undefined | null): import("@earendil-works/pi-durable").ConversationId {
@@ -47,6 +51,9 @@ export async function handleActiveSessionCommand(
 	args: CliArgs,
 	respond: CommandResponder,
 ): Promise<void> {
+	if (await handleBindingCommand(cmd, durable, respond)) {
+		return;
+	}
 	switch (cmd.type) {
 		case "prompt": {
 			if (!cmd.message) {

@@ -10,6 +10,7 @@ import {
 } from "./session-telemetry.ts";
 import { SubagentMirrorManager, type SubagentMirrorRecord } from "./subagent-mirror.ts";
 import { spawnSubthreadInBb } from "./subthread-spawner.ts";
+import { DurableBindingManager } from "./durable-binding-store.ts";
 import type { RunnerEvent, SessionOptions } from "./types.ts";
 
 export type { SubagentMirrorRecord };
@@ -24,8 +25,7 @@ export class PiThreadSession {
 	private readyReject: (err: Error) => void;
 	public isProcessing = false;
 	private lastCheckpointId: string | null = null;
-	private conversationThreadMap = new Map<string, string>();
-	private threadConversationMap = new Map<string, string>();
+	public bindings = new DurableBindingManager();
 	private mirrors = new SubagentMirrorManager();
 	private childTranslators = new Map<string, DeltaTranslator>();
 
@@ -53,23 +53,16 @@ export class PiThreadSession {
 			onError: (err) => this.readyReject(new Error(`Runner failed to launch: ${err.message}`)),
 			onExit: (code, sig) => this.readyReject(new Error(`Runner exited before becoming ready (code ${code}, signal ${sig})`)),
 		});
+		this.bindings.setRpc((cmd) => this.runner.requestOk(cmd));
 	}
 
 	public registerThread(threadId: string, conversationId?: string): void {
-		if (conversationId !== undefined && conversationId !== null && String(conversationId).trim() !== "") {
-			const key = String(conversationId);
-			this.conversationThreadMap.set(key, threadId);
-			this.threadConversationMap.set(threadId, key);
-		}
+		this.bindings.register(threadId, conversationId);
 	}
 
 	public unregisterThread(threadId: string): void {
-		const key = this.threadConversationMap.get(threadId);
-		if (key !== undefined) {
-			this.conversationThreadMap.delete(key);
-			this.threadConversationMap.delete(threadId);
-			this.childTranslators.delete(threadId);
-		}
+		this.bindings.unregister(threadId);
+		this.childTranslators.delete(threadId);
 	}
 
 	private getChildTranslator(threadId: string): DeltaTranslator {
@@ -82,7 +75,7 @@ export class PiThreadSession {
 	}
 
 	public getThreadIdForConversation(conversationId: string | number): string | undefined {
-		return this.conversationThreadMap.get(String(conversationId));
+		return this.bindings.getThreadId(conversationId);
 	}
 
 	public markSubagentActive(id: string | number, meta: { task: string; parentToolCallId?: string }): void {
@@ -96,6 +89,7 @@ export class PiThreadSession {
 	public async start(): Promise<void> {
 		try {
 			await waitForReady(this.readyPromise);
+			await this.bindings.hydrateFromRunner();
 			await this.refreshContextUsage();
 		} catch (err) {
 			this.kill();
@@ -171,7 +165,7 @@ export class PiThreadSession {
 			this.markSubagentCompleted(event.conversationId as string | number);
 		}
 
-		if (isChildEvent && event.type === "agent_end") {
+		if (isChildEvent && (!event.parentRef || event.type === "agent_end")) {
 			return;
 		}
 
