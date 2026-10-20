@@ -62,11 +62,14 @@ export class BBEventAdapter {
 		if (summary.lastCheckpointId) {
 			this.lastCheckpointId = summary.lastCheckpointId;
 		}
+		const isAborted = summary.isAborted;
+		const isError = summary.isError && !isAborted;
 		const base = {
 			contextWindow: summary.cw,
 			...(this.lastCheckpointId ? { providerCheckpointId: this.lastCheckpointId } : {}),
 			...(summary.cumulativeUsage ? { cumulativeUsage: summary.cumulativeUsage } : {}),
-			...(summary.isAborted ? { aborted: true, stopReason: "aborted" } : {}),
+			...(isAborted ? { aborted: true, stopReason: "aborted" } : {}),
+			...(isError ? { stopReason: "error", ...(summary.errorMessage ? { errorMessage: summary.errorMessage } : {}) } : {}),
 		};
 		if (type === "turn_end") {
 			this.output({ type: "turn_end", message: summary.finalMsg, ...base });
@@ -78,17 +81,10 @@ export class BBEventAdapter {
 	public handleEvent(event: AgentEvent, current: DurableView): void {
 		switch (event.type) {
 			case "snapshot": {
-				const snapWithView = event as SnapshotEvent & {
-					view?: { conversation?: { entries?: readonly { id?: string | number }[] } };
-				};
-				const entries =
-					snapWithView.view?.conversation?.entries ??
-					event.entries ??
-					current?.conversation?.entries;
+				const snap = event as SnapshotEvent & { view?: { conversation?: { entries?: readonly { id?: unknown }[] } } };
+				const entries = snap.view?.conversation?.entries ?? event.entries ?? current?.conversation?.entries;
 				const tail = entries?.at(-1);
-				if (tail?.id !== undefined) {
-					this.lastCheckpointId = String(tail.id);
-				}
+				if (tail?.id !== undefined) this.lastCheckpointId = String(tail.id);
 				break;
 			}
 
@@ -153,13 +149,19 @@ export class BBEventAdapter {
 			case "message_end": {
 				this.closeThinkingIfNeeded();
 				const modelItem = event.entry?.model?.[0];
-				const msg: RawAssistantEntryMessage | undefined =
-					typeof modelItem === "object" && modelItem !== null ? (modelItem as RawAssistantEntryMessage) : undefined;
+				const msg = (typeof modelItem === "object" && modelItem !== null) ? (modelItem as RawAssistantEntryMessage) : undefined;
 				if (msg?.role === "assistant") {
+					const errMsg = typeof msg.errorMessage === "string" ? msg.errorMessage : undefined;
+					const stopReason = msg.stopReason ?? (errMsg ? "error" : "stop");
+					let content = msg.content ?? [{ type: "text", text: this.currentText }];
+					if (content.length === 0 && (stopReason === "error" || errMsg)) {
+						content = [{ type: "text", text: errMsg ? `⚠️ ${errMsg}` : "An error occurred during turn generation." }];
+					}
 					this.lastAssistantMessage = {
 						role: "assistant",
-						content: msg.content ?? [{ type: "text", text: this.currentText }],
-						stopReason: msg.stopReason ?? "stop",
+						content,
+						stopReason,
+						...(errMsg ? { errorMessage: errMsg } : {}),
 						usage: msg.usage,
 					};
 					this.output({ type: "message_end", message: this.lastAssistantMessage });

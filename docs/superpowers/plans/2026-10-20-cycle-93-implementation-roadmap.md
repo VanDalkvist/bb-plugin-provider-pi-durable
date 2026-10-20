@@ -133,13 +133,14 @@
   - Modify: `src/runner/index.ts`
   - Test: `tests/task-graph-bridge.test.ts`
 - **Applicable AP Gates:** AP-011 (Lifecycle Cleanup), AP-019 (<200 lines), AP-023 (Zero Leaks), AP-045 (Coalesced Events).
-- [ ] **[S8: Execute Slice]:**
-  - Выполнить честный `git merge --no-ff pr-16` (сохраняя коммиты Diffuzmetall).
-  - Воркер реализует дебаунс 50 мс для снапшотов `tasks_snapshot` в `task-graph-bridge.ts`, возвращает `unsubscribe()` и очищает подписку при teardown.
-  - В `delta-translator.ts` транслирует `tasks_snapshot` в BB контракт `planSteps` через `experimental_planStepsPresentation`.
-  - Убедиться, что `dist/` не коммитится, и добавить тесты на дебаунс.
-- [ ] **[S9: Verify Gate]:** Ревью по `arch-rules-implementation-review`. Проверка отсутствия утечек подписок (AP-011, AP-023), дебаунса 50мс (AP-045), лимитов AP-019.
-- [ ] **[S10: Version Bump]:** Повысить версию до **`0.2.34`** в `package.json`, закоммитить и запушить в `main`.
+- [x] **[S8: Execute Slice]:**
+  - Выполнен честный `git merge --no-ff pr-16` (сохранен коммит Diffuzmetall `ece06ec`).
+  - Воркер реализовал дебаунс 50 мс для `tasks_snapshot`, контроллер `unsubscribe()`, очистку в `handleExit` (коммит `827fcde`).
+  - Устранены замечания продуктового ревью P1/P2/P3: удержание завершенных шагов (`status: "completed"`), предотвращение маскировки сбоев (сохранение `status: "failed"`), финальный снапшот при опустошении графа, добавлено поле `"task"` в `ARG_KEYS` (коммиты `aef88f9`, `2b18dd9`).
+- [x] **[S9: Verify Gate]:** Двухконтурный гейт пройден:
+  - S9a (Architecture Review): **`VERDICT: PASS`** (AP-010, AP-011, AP-012, AP-019 <200 строк, AP-023, AP-028, AP-029).
+  - S9b (Product Review): **`VERDICT: PASS`** (User Journey покрыт на 100%, вечный спиннер устранен, 231/231 тестов зеленые).
+- [x] **[S10: Version Bump]:** Повысить версию до **`0.2.34`** в `package.json`, закоммитить и запушить в `main`.
 
 ---
 

@@ -548,3 +548,45 @@
 
 
 
+
+---
+
+## Cycle 94: Error Handling & Failure Visibility Parity (AP-013, AP-022, AP-026)
+
+**Goal:** Систематически ликвидировать дефект скрытого завершения ходов и пустых сообщений ассистента при ошибках апстрим-API (таймауты 180с, 429 Rate Limits, сетевые сбои, исчерпание квот модели), обеспечив гарантированный показ ошибок пользователю в транскрипте чата и строгую семантику `turn.boundary` (`status: "failed"` с полезной нагрузкой `error: { message }`).
+
+### 1. Triaged Findings & Dispositions
+
+| ID | Issue / Component | Severity | Rule | Disposition | Root Cause & Resolution |
+|---|---|---|---|---|---|
+| **F-94-1** | Подавление ошибок и пустой контент ассистента в `bb-event-adapter.ts` и `assistant-message-builder.ts` | **P0** | AP-013, AP-022 | `fix-now` | При ошибке API до начала генерации текста модель возвращала `content: []`, `stopReason: "error"`, `errorMessage: "..."`. Выражение `msg.content ?? [...]` вычислялось в пустой массив `[]`, отбрасывая текст ошибки. Добавлена генерация блока текста с ошибкой (`⚠️ ${errorMessage}`) и сохранение `errorMessage`. |
+| **F-94-2** | Некорректный статус `completed` вместо `failed` в `turn.boundary` (`message-delta-translator.ts`) | **P0** | AP-026 | `fix-now` | В `translateAgentEnd` `turn.boundary` всегда выставлял `status: "completed"`, если ход не был прерван пользователем (`aborted`). Ошибки игнорировались, а поле `error: { message }` не передавалось. Теперь при `isError` выставляется `status: "failed"` и пробрасывается `error: { message: errorMessage }`. |
+| **F-94-3** | Отсутствие типизации `errorMessage` в контрактах шины (`contracts.ts`, `types.ts`) | **P1** | AP-010, AP-026 | `fix-now` | Добавлено опциональное свойство `errorMessage?: string` в `BBAssistantMessage`, `BBTurnEndEvent`, `BBAgentEndEvent` и `RunnerEvent`. |
+| **F-94-4** | Отсутствие видимого бабла с ошибкой в транскрипте при падении хода до дельт текста | **P2** | AP-013, AP-022 | `fix-now` | Если генерация упала до стриминга дельт (`currentAgentText === ""`), `translateAgentEnd` закрывает канал `agentMessage` строкой ошибки, предотвращая пустые экраны. |
+
+### 2. Architecture Implementations
+- **`src/runner/bridge/contracts.ts` (185 строк, AP-019 < 200):**
+  - Добавлено свойство `errorMessage?: string` в интерфейсы `BBAssistantMessage`, `BBTurnEndEvent`, `BBAgentEndEvent`.
+- **`src/runner/bridge/assistant-message-builder.ts` (171 строка, AP-019 < 200):**
+  - При `lastAssistantMsg.stopReason === "error"` и пустом массиве `content` автоматически создается текстовый блок с текстом ошибки.
+  - Сохраняется `errorMessage` в возвращаемом объекте сообщения.
+- **`src/runner/bridge/turn-summary.ts` (74 строки, AP-019 < 200):**
+  - Добавлено определение `isError` и извлечение `errorMessage` из хвостовых записей диалога, возврат в `TurnSummaryResult`.
+- **`src/runner/bridge/bb-event-adapter.ts` (197 строк, AP-019 < 200):**
+  - В обработчике `message_end` при ошибке гарантируется непустой контент сообщения и проброс `errorMessage`.
+  - В `emitTerminal` передаются `stopReason: "error"` и `errorMessage` в события `turn_end` / `agent_end`.
+- **`src/host/types.ts` (124 строки, AP-019 < 250):**
+  - `RunnerEvent` дополнен полем `errorMessage?: string`.
+- **`src/host/message-delta-translator.ts` (249 строк, AP-019 < 250):**
+  - В `translateAgentEnd` реализована дифференциация статусов `completed`, `failed` и `interrupted`.
+  - При `status: "failed"` формируется дельта `turn.boundary` с `{ error: { message: errorMessage } }`.
+  - Если `currentAgentText` пуст, отправляется `item.textClose` с описанием ошибки.
+  - Оптимизировано открытие reasoning-каналов через `ensureReasoningChannelOpen`.
+- **`tests/error-handling-visibility.test.ts`:**
+  - Написаны и запущены 3 комплексных unit-теста, проверяющие проброс сообщений об ошибках, заполнение контента и формирование дельт `turn.boundary`.
+
+### 3. Verification Evidence
+- `npx tsc --noEmit`: **0 errors (exit code 0)**.
+- `npm test`: **234 / 234 passing assertions across 14 test suites (0 failures, 0 skips)**.
+- `npm run build`: Сборка успешна (`dist/runner/index.js`, `dist/server.js`, `dist/host.js`).
+- Строгое соблюдение AP-019: **100% файлов в `src/runner/` строго < 200 строк, 100% файлов в `src/host/` < 250 строк**.

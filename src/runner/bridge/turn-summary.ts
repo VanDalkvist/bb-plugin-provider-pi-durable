@@ -17,6 +17,8 @@ export interface TurnSummaryResult {
 	cw?: number;
 	cumulativeUsage?: CumulativeUsageMetrics;
 	isAborted: boolean;
+	isError: boolean;
+	errorMessage?: string;
 	lastCheckpointId?: string;
 }
 
@@ -50,9 +52,23 @@ export function resolveTurnSummary(
 	);
 	const isAborted = finalMsg.stopReason === "aborted" || isLastAssistantAborted;
 
+	const rawLastErr = firstModelMsg && "errorMessage" in firstModelMsg ? (firstModelMsg as { errorMessage?: unknown }).errorMessage : undefined;
+	const lastErrStr = typeof rawLastErr === "string" ? rawLastErr : undefined;
+	const isLastAssistantError = Boolean(
+		(firstModelMsg && "stopReason" in firstModelMsg && (firstModelMsg as { stopReason?: string }).stopReason === "error") ||
+		lastErrStr,
+	);
+	const isError = finalMsg.stopReason === "error" || isLastAssistantError;
+	const errorMessage = finalMsg.errorMessage ?? lastErrStr;
+
 	if (isAborted && finalMsg.stopReason !== "aborted") {
 		finalMsg.stopReason = "aborted";
+	} else if (isError && finalMsg.stopReason !== "error") {
+		finalMsg.stopReason = "error";
+	}
+	if (errorMessage && !finalMsg.errorMessage) {
+		finalMsg.errorMessage = errorMessage;
 	}
 
-	return { finalMsg, cw, cumulativeUsage, isAborted, lastCheckpointId };
+	return { finalMsg, cw, cumulativeUsage, isAborted, isError, errorMessage, lastCheckpointId };
 }

@@ -782,84 +782,6 @@ import {
   defineExtension as defineExtension3,
   defineTool as defineTool2
 } from "@earendil-works/pi-durable";
-
-// src/runner/bridge/tool-result-extractor.ts
-var activeToolDetails = /* @__PURE__ */ new Map();
-function extractToolResult(modelItem) {
-  const msg = typeof modelItem === "object" && modelItem !== null ? modelItem : void 0;
-  const isError = msg?.isError ?? false;
-  let result = "";
-  const raw = msg?.content ?? msg?.output;
-  if (Array.isArray(raw)) {
-    result = raw.map((b) => typeof b === "object" && b !== null && typeof b.text === "string" ? b.text : "").filter(Boolean).join("\n");
-  } else if (typeof raw === "string") {
-    result = raw;
-  }
-  return { result, isError };
-}
-function buildToolExecutionUpdate(event, parentRef) {
-  let partialResult = "";
-  if (event.output) {
-    if ("set" in event.output) partialResult = event.output.set;
-    else if ("append" in event.output) partialResult = event.output.append ?? "";
-  }
-  let trimStart;
-  if (event.output && "trimStart" in event.output && typeof event.output.trimStart === "number") {
-    trimStart = event.output.trimStart;
-  }
-  if (event.details !== void 0) {
-    activeToolDetails.set(event.toolCallId, event.details);
-  }
-  if (partialResult || trimStart !== void 0 || event.details !== void 0) {
-    return {
-      type: "tool_execution_update",
-      toolCallId: event.toolCallId,
-      toolName: event.toolName,
-      partialResult,
-      ...trimStart !== void 0 ? { trimStart } : {},
-      ...event.details !== void 0 ? { details: event.details } : {},
-      ...parentRef !== void 0 ? { parentRef } : {}
-    };
-  }
-  return void 0;
-}
-function buildToolExecutionEnd(event, parentRef) {
-  if (event.entry === void 0) {
-    return {
-      type: "tool_execution_end",
-      toolCallId: event.toolCallId,
-      toolName: event.toolName,
-      result: "Tool execution faulted or was orphaned without generating an entry record.",
-      isError: true,
-      ...parentRef !== void 0 ? { parentRef } : {}
-    };
-  }
-  const { result, isError } = extractToolResult(event.entry?.model?.[0]);
-  const entryData = typeof event.entry === "object" && event.entry !== null && "data" in event.entry ? event.entry.data : void 0;
-  const bufferedDetails = activeToolDetails.get(event.toolCallId);
-  activeToolDetails.delete(event.toolCallId);
-  const details = entryData ?? event.details ?? bufferedDetails;
-  return {
-    type: "tool_execution_end",
-    toolCallId: event.toolCallId,
-    toolName: event.toolName,
-    result,
-    isError,
-    ...details !== void 0 ? { details } : {},
-    ...parentRef !== void 0 ? { parentRef } : {}
-  };
-}
-function sanitizeToolResultForAnthropic(blocks, isError) {
-  if (!isError || !Array.isArray(blocks)) return blocks;
-  return blocks.map((block) => {
-    if (block.type === "image") {
-      return { type: "text", text: "[image omitted: error tool results cannot contain images]" };
-    }
-    return block;
-  });
-}
-
-// src/runner/tool-adapter.ts
 function hasOutput(api) {
   return typeof api === "object" && api !== null && "output" in api && typeof api.output === "function";
 }
@@ -925,12 +847,8 @@ function adaptExtensionTool(toolDef, executeToolFn, createToolContext, getExtens
             isError: result.isError ?? false
           });
         }
-        const sanitizedOutput = sanitizeToolResultForAnthropic(
-          result.content,
-          result.isError
-        );
         return {
-          output: sanitizedOutput,
+          output: result.content,
           isError: result.isError,
           details: result.details ?? void 0
         };
@@ -1559,6 +1477,9 @@ function isAgentDocument(doc) {
 function isUsageDocument(doc) {
   return typeof doc === "object" && doc !== null;
 }
+function isToolCallBlock(block) {
+  return typeof block === "object" && block !== null && block.type === "toolCall";
+}
 function isConversationEntryRecord(entry) {
   return typeof entry === "object" && entry !== null;
 }
@@ -1623,13 +1544,19 @@ function buildFinalAssistantMessage(current, lastGenerationText, lastThinkingTex
   );
   const lastAssistantMsg = lastAssistantEntry?.model?.[0];
   if (lastAssistantMsg) {
-    const content = Array.isArray(lastAssistantMsg.content) ? lastAssistantMsg.content : [{ type: "text", text: lastGenerationText }];
-    const stopReason = typeof lastAssistantMsg.stopReason === "string" ? lastAssistantMsg.stopReason : "stop";
+    const rawErr = lastAssistantMsg.errorMessage;
+    const errorMessage = typeof rawErr === "string" ? rawErr : void 0;
+    const stopReason = typeof lastAssistantMsg.stopReason === "string" ? lastAssistantMsg.stopReason : errorMessage ? "error" : "stop";
+    let content = Array.isArray(lastAssistantMsg.content) ? lastAssistantMsg.content : [{ type: "text", text: lastGenerationText }];
+    if (content.length === 0 && (stopReason === "error" || errorMessage)) {
+      content = [{ type: "text", text: errorMessage ? `\u26A0\uFE0F ${errorMessage}` : "An error occurred during turn generation." }];
+    }
     const usage = typeof lastAssistantMsg.usage === "object" && lastAssistantMsg.usage !== null ? lastAssistantMsg.usage : void 0;
     return {
       role: "assistant",
       content,
       stopReason,
+      ...errorMessage ? { errorMessage } : {},
       usage
     };
   }
@@ -1685,10 +1612,89 @@ function resolveTurnSummary(current, currentText, currentThinking, lastAssistant
     firstModelMsg && "stopReason" in firstModelMsg && firstModelMsg.stopReason === "aborted"
   );
   const isAborted = finalMsg.stopReason === "aborted" || isLastAssistantAborted;
+  const rawLastErr = firstModelMsg && "errorMessage" in firstModelMsg ? firstModelMsg.errorMessage : void 0;
+  const lastErrStr = typeof rawLastErr === "string" ? rawLastErr : void 0;
+  const isLastAssistantError = Boolean(
+    firstModelMsg && "stopReason" in firstModelMsg && firstModelMsg.stopReason === "error" || lastErrStr
+  );
+  const isError = finalMsg.stopReason === "error" || isLastAssistantError;
+  const errorMessage = finalMsg.errorMessage ?? lastErrStr;
   if (isAborted && finalMsg.stopReason !== "aborted") {
     finalMsg.stopReason = "aborted";
+  } else if (isError && finalMsg.stopReason !== "error") {
+    finalMsg.stopReason = "error";
   }
-  return { finalMsg, cw, cumulativeUsage, isAborted, lastCheckpointId };
+  if (errorMessage && !finalMsg.errorMessage) {
+    finalMsg.errorMessage = errorMessage;
+  }
+  return { finalMsg, cw, cumulativeUsage, isAborted, isError, errorMessage, lastCheckpointId };
+}
+
+// src/runner/bridge/tool-result-extractor.ts
+var activeToolDetails = /* @__PURE__ */ new Map();
+function extractToolResult(modelItem) {
+  const msg = typeof modelItem === "object" && modelItem !== null ? modelItem : void 0;
+  const isError = msg?.isError ?? false;
+  let result = "";
+  const raw = msg?.content ?? msg?.output;
+  if (Array.isArray(raw)) {
+    result = raw.map((b) => typeof b === "object" && b !== null && typeof b.text === "string" ? b.text : "").filter(Boolean).join("\n");
+  } else if (typeof raw === "string") {
+    result = raw;
+  }
+  return { result, isError };
+}
+function buildToolExecutionUpdate(event, parentRef) {
+  let partialResult = "";
+  if (event.output) {
+    if ("set" in event.output) partialResult = event.output.set;
+    else if ("append" in event.output) partialResult = event.output.append ?? "";
+  }
+  let trimStart;
+  if (event.output && "trimStart" in event.output && typeof event.output.trimStart === "number") {
+    trimStart = event.output.trimStart;
+  }
+  if (event.details !== void 0) {
+    activeToolDetails.set(event.toolCallId, event.details);
+  }
+  if (partialResult || trimStart !== void 0 || event.details !== void 0) {
+    return {
+      type: "tool_execution_update",
+      toolCallId: event.toolCallId,
+      toolName: event.toolName,
+      partialResult,
+      ...trimStart !== void 0 ? { trimStart } : {},
+      ...event.details !== void 0 ? { details: event.details } : {},
+      ...parentRef !== void 0 ? { parentRef } : {}
+    };
+  }
+  return void 0;
+}
+function buildToolExecutionEnd(event, parentRef) {
+  if (event.entry === void 0) {
+    return {
+      type: "tool_execution_end",
+      toolCallId: event.toolCallId,
+      toolName: event.toolName,
+      result: "Tool execution faulted or was orphaned without generating an entry record.",
+      isError: true,
+      ...parentRef !== void 0 ? { parentRef } : {}
+    };
+  }
+  const { result, isError } = extractToolResult(event.entry?.model?.[0]);
+  const entryData = typeof event.entry === "object" && event.entry !== null && "data" in event.entry ? event.entry.data : void 0;
+  const bufferedDetails = activeToolDetails.get(event.toolCallId);
+  activeToolDetails.delete(event.toolCallId);
+  const details = entryData ?? event.details ?? bufferedDetails;
+  return {
+    type: "tool_execution_end",
+    toolCallId: event.toolCallId,
+    toolName: event.toolName,
+    result,
+    isError,
+    ...details !== void 0 ? { details } : {},
+    ...parentRef !== void 0 ? { parentRef } : {}
+  };
 }
 
 // src/runner/bridge/bb-child-event-adapter.ts
@@ -1806,6 +1812,48 @@ var BBChildEventAdapter = class {
   }
 };
 
+// src/runner/bridge/tool-args-resolver.ts
+function resolveToolCallArgs(callId, current) {
+  const rawLive = current.conversation.docs["pi.live"];
+  const live = typeof rawLive === "object" && rawLive !== null ? rawLive : {};
+  const rawBlocks = Array.isArray(live.generation?.message?.content) ? live.generation.message.content : [];
+  const activeCalls = rawBlocks.filter(isToolCallBlock);
+  if (activeCalls.length > 0) {
+    const matched = activeCalls.find((c) => c.id === callId || c.callId === callId);
+    if (matched?.arguments && typeof matched.arguments === "object") {
+      return matched.arguments;
+    }
+  }
+  const entries = current.conversation.entries ?? [];
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const entry = entries[i];
+    if (isConversationEntryRecord(entry) && entry.kind === "pi.assistant" && Array.isArray(entry.model)) {
+      for (const msg of entry.model) {
+        if (Array.isArray(msg?.content)) {
+          for (const part of msg.content) {
+            if (isToolCallBlock(part) && (part.id === callId || part.callId === callId)) {
+              if (part.arguments && typeof part.arguments === "object") {
+                return part.arguments;
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  const rawTools = Array.isArray(live.tools) ? live.tools : [];
+  const slot = rawTools.find((s) => {
+    if (typeof s !== "object" || s === null) return false;
+    const candidate = s;
+    const sid = candidate.callId ?? (candidate.id !== void 0 ? String(candidate.id) : void 0);
+    return sid === callId;
+  });
+  if (slot?.args && typeof slot.args === "object") {
+    return slot.args;
+  }
+  return {};
+}
+
 // src/runner/bridge/bb-event-adapter.ts
 var BBEventAdapter = class {
   output;
@@ -1839,11 +1887,14 @@ var BBEventAdapter = class {
     if (summary.lastCheckpointId) {
       this.lastCheckpointId = summary.lastCheckpointId;
     }
+    const isAborted = summary.isAborted;
+    const isError = summary.isError && !isAborted;
     const base = {
       contextWindow: summary.cw,
       ...this.lastCheckpointId ? { providerCheckpointId: this.lastCheckpointId } : {},
       ...summary.cumulativeUsage ? { cumulativeUsage: summary.cumulativeUsage } : {},
-      ...summary.isAborted ? { aborted: true, stopReason: "aborted" } : {}
+      ...isAborted ? { aborted: true, stopReason: "aborted" } : {},
+      ...isError ? { stopReason: "error", ...summary.errorMessage ? { errorMessage: summary.errorMessage } : {} } : {}
     };
     if (type === "turn_end") {
       this.output({ type: "turn_end", message: summary.finalMsg, ...base });
@@ -1854,12 +1905,10 @@ var BBEventAdapter = class {
   handleEvent(event, current) {
     switch (event.type) {
       case "snapshot": {
-        const snapWithView = event;
-        const entries = snapWithView.view?.conversation?.entries ?? event.entries ?? current?.conversation?.entries;
+        const snap = event;
+        const entries = snap.view?.conversation?.entries ?? event.entries ?? current?.conversation?.entries;
         const tail = entries?.at(-1);
-        if (tail?.id !== void 0) {
-          this.lastCheckpointId = String(tail.id);
-        }
+        if (tail?.id !== void 0) this.lastCheckpointId = String(tail.id);
         break;
       }
       case "run_start": {
@@ -1919,10 +1968,17 @@ var BBEventAdapter = class {
         const modelItem = event.entry?.model?.[0];
         const msg = typeof modelItem === "object" && modelItem !== null ? modelItem : void 0;
         if (msg?.role === "assistant") {
+          const errMsg = typeof msg.errorMessage === "string" ? msg.errorMessage : void 0;
+          const stopReason = msg.stopReason ?? (errMsg ? "error" : "stop");
+          let content = msg.content ?? [{ type: "text", text: this.currentText }];
+          if (content.length === 0 && (stopReason === "error" || errMsg)) {
+            content = [{ type: "text", text: errMsg ? `\u26A0\uFE0F ${errMsg}` : "An error occurred during turn generation." }];
+          }
           this.lastAssistantMessage = {
             role: "assistant",
-            content: msg.content ?? [{ type: "text", text: this.currentText }],
-            stopReason: msg.stopReason ?? "stop",
+            content,
+            stopReason,
+            ...errMsg ? { errorMessage: errMsg } : {},
             usage: msg.usage
           };
           this.output({ type: "message_end", message: this.lastAssistantMessage });
@@ -2292,6 +2348,169 @@ async function startSubagentWatcher(harness, adapter, getCurrentView) {
   };
 }
 
+// src/runner/task-labels.ts
+var MAX_NAME = 48;
+var KIND_NAMES = {
+  "pi.generation": "assistant turn",
+  "pi.compaction": "compacting context"
+};
+var ARG_KEYS = ["command", "task", "path", "file_path", "pattern", "query", "url", "prompt"];
+function clip(text) {
+  const oneLine = text.replace(/\s+/g, " ").trim();
+  return oneLine.length <= MAX_NAME ? oneLine : `${oneLine.slice(0, MAX_NAME - 1)}\u2026`;
+}
+function argumentHint(args2) {
+  if (typeof args2 !== "object" || args2 === null) return void 0;
+  const record = args2;
+  for (const key of ARG_KEYS) {
+    const value = record[key];
+    if (typeof value === "string" && value.trim() !== "") return clip(value);
+  }
+  return void 0;
+}
+function liveOf(view) {
+  const raw = view?.conversation?.docs?.["pi.live"];
+  return typeof raw === "object" && raw !== null ? raw : {};
+}
+function isNested(slot) {
+  return "parentCallId" in slot;
+}
+var TaskNames = class {
+  names = /* @__PURE__ */ new Map();
+  learn(view) {
+    const live = liveOf(view);
+    for (const slot of [...live.tools ?? [], ...live.nestedTools ?? []]) {
+      if (slot.taskId === void 0) continue;
+      const key = String(slot.taskId);
+      if (this.names.has(key)) continue;
+      const args2 = isNested(slot) ? slot.arguments : resolveToolCallArgs(slot.callId, view);
+      const hint = argumentHint(args2);
+      this.names.set(key, clip(hint === void 0 ? slot.name : `${slot.name}: ${hint}`));
+    }
+  }
+  get(taskId) {
+    return this.names.get(taskId);
+  }
+};
+function taskLabel(node, names) {
+  const state = node.state;
+  const call = names?.get(String(node.id));
+  const plain = KIND_NAMES[node.kind];
+  const kind = call ?? plain ?? (node.kind.startsWith("pi.") ? node.kind.slice(3) : node.kind);
+  if (state.status === "waiting") return `${kind} \xB7 waiting on ${state.on.length}`;
+  if (state.status === "completing") return `${kind} \xB7 completing (${state.outcome})`;
+  return call !== void 0 || plain !== void 0 ? kind : `${kind} \xB7 ${state.phase}`;
+}
+
+// src/runner/task-graph-bridge.ts
+var INDENT = "  ";
+function statusOf(node) {
+  const state = node.state;
+  if (state.status === "running") return "active";
+  if (state.status === "completing") return state.outcome === "completed" ? "completed" : "failed";
+  return "pending";
+}
+var ownersMap = /* @__PURE__ */ new WeakMap();
+function taskSteps(graph, names, knownSteps, knownOwners) {
+  const nodes = graph?.tasks ?? {};
+  const known = knownSteps ?? /* @__PURE__ */ new Map();
+  const owners = knownOwners ?? (knownSteps !== void 0 ? ownersMap.get(knownSteps) ?? /* @__PURE__ */ new Map() : /* @__PURE__ */ new Map());
+  if (knownSteps !== void 0 && !ownersMap.has(knownSteps)) {
+    ownersMap.set(knownSteps, owners);
+  }
+  for (const key of Object.keys(nodes)) {
+    const owner = nodes[key]?.owner;
+    owners.set(key, owner === void 0 ? void 0 : String(owner));
+  }
+  if (Object.keys(nodes).length === 0) {
+    for (const step of known.values()) {
+      if (step.status === "active" || step.status === "pending") {
+        step.status = "completed";
+      }
+    }
+  }
+  const allKeys = Array.from(/* @__PURE__ */ new Set([...known.keys(), ...Object.keys(nodes)])).sort((a, b) => Number(a) - Number(b));
+  const children = /* @__PURE__ */ new Map();
+  for (const key of allKeys) {
+    const owner = owners.get(key);
+    if (owner === void 0) continue;
+    const siblings = children.get(owner);
+    if (siblings === void 0) children.set(owner, [key]);
+    else siblings.push(key);
+  }
+  const allKeysSet = new Set(allKeys);
+  const steps = [];
+  const walk = (key, depth) => {
+    const node = nodes[key];
+    if (node !== void 0) {
+      const step = {
+        step: INDENT.repeat(depth) + `#${key} ${taskLabel(node, names)}`,
+        status: statusOf(node)
+      };
+      known.set(key, step);
+      steps.push(step);
+    } else {
+      const existing = known.get(key);
+      if (existing !== void 0) {
+        if (existing.status !== "failed") {
+          existing.status = "completed";
+        }
+        steps.push(existing);
+      }
+    }
+    for (const child of children.get(key) ?? []) walk(child, depth + 1);
+  };
+  for (const key of allKeys) {
+    const owner = owners.get(key);
+    if (owner === void 0 || !allKeysSet.has(owner)) walk(key, 0);
+  }
+  return steps;
+}
+var DEFAULT_TASK_GRAPH_DEBOUNCE_MS = 50;
+function startTaskGraphBridge(view, output2, debounceMs = DEFAULT_TASK_GRAPH_DEBOUNCE_MS) {
+  const names = new TaskNames();
+  const knownSteps = /* @__PURE__ */ new Map();
+  let published = "";
+  let timer;
+  let isUnsubscribed = false;
+  const publish = () => {
+    timer = void 0;
+    if (isUnsubscribed) return;
+    const current = view.current();
+    names.learn(current);
+    const graph = current?.tasks ?? { tasks: {} };
+    const steps = taskSteps(graph, names, knownSteps);
+    const encoded = JSON.stringify(steps);
+    if (steps.length === 0 || encoded === published) return;
+    published = encoded;
+    output2({ type: "tasks_snapshot", steps });
+  };
+  const schedule = () => {
+    if (isUnsubscribed) return;
+    if (timer !== void 0) {
+      clearTimeout(timer);
+      timer = void 0;
+    }
+    if (debounceMs <= 0) {
+      publish();
+      return;
+    }
+    timer = setTimeout(publish, debounceMs);
+  };
+  const unsubscribeView = view.subscribe(schedule);
+  schedule();
+  const unsubscribe = () => {
+    if (isUnsubscribed) return;
+    isUnsubscribed = true;
+    if (timer !== void 0) {
+      clearTimeout(timer);
+      timer = void 0;
+    }
+    unsubscribeView();
+  };
+  return { unsubscribe };
+}
+
 // src/runner/index.ts
 var argv = process.argv.slice(2);
 if (argv.includes("--version") || argv.includes("-v")) {
@@ -2306,10 +2525,18 @@ var sendToBridge = createBridgeSender();
 async function main() {
   let activeDurable = null;
   let activeWatcher = null;
+  let activeTaskBridge = null;
   let isTerminating = false;
   const handleExit = async (signalOrReason) => {
     if (isTerminating) return;
     isTerminating = true;
+    if (activeTaskBridge) {
+      try {
+        activeTaskBridge.unsubscribe();
+      } catch (err) {
+        console.warn(`[Runner] Error unsubscribing task graph bridge on ${signalOrReason}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
     if (activeWatcher) {
       try {
         activeWatcher.close();
@@ -2403,6 +2630,7 @@ async function main() {
   );
   const watcher = await startSubagentWatcher(durable.harness, adapter, () => durable.view.current());
   activeWatcher = watcher;
+  activeTaskBridge = startTaskGraphBridge(durable.view, output);
   attachJsonlLineReader(process.stdin, async (line) => {
     let cmd;
     try {

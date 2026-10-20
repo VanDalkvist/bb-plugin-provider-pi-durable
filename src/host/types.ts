@@ -68,6 +68,7 @@ export interface RunnerEvent {
 	cumulativeUsage?: CumulativeUsageMetrics;
 	aborted?: boolean;
 	stopReason?: string;
+	errorMessage?: string;
 	[key: string]: unknown;
 }
 

@@ -11,6 +11,24 @@ export interface MessageTranslationState {
 	openThinkingChannels?: Set<string>;
 }
 
+function ensureReasoningChannelOpen(
+	channel: string,
+	parentRef: string | undefined,
+	hideThinking: boolean,
+	state: MessageTranslationState,
+	deltas: ThreadDelta[],
+): void {
+	if (!state.openThinkingChannels) state.openThinkingChannels = new Set<string>();
+	if (state.openThinkingChannels.has(channel)) return;
+	state.openThinkingChannels.add(channel);
+	deltas.push({
+		kind: "item.open",
+		key: { channel, ...(parentRef ? { parentRef } : {}) },
+		item: { type: "reasoning", summary: [], content: [], ...(parentRef ? { parentToolCallId: parentRef } : {}) },
+		presentation: { ...REASONING_PRESENTATION, ...(hideThinking ? { suppress: true } : {}) },
+	});
+}
+
 export function translateMessageUpdate(
 	asst: Record<string, unknown> | undefined,
 	state: MessageTranslationState,
@@ -24,49 +42,11 @@ export function translateMessageUpdate(
 	if (asst.type === "thinking_start") {
 		const idx = typeof asst.contentIndex === "number" ? asst.contentIndex : state.currentThinkingIndex;
 		const channel = parentRef ? `${parentRef}:thinking-${idx}` : `thinking-${idx}`;
-		if (!state.openThinkingChannels) {
-			state.openThinkingChannels = new Set<string>();
-		}
-		if (!state.openThinkingChannels.has(channel)) {
-			state.openThinkingChannels.add(channel);
-			deltas.push({
-				kind: "item.open",
-				key: { channel, ...(parentRef ? { parentRef } : {}) },
-				item: {
-					type: "reasoning",
-					summary: [],
-					content: [],
-					...(parentRef ? { parentToolCallId: parentRef } : {}),
-				},
-				presentation: {
-					...REASONING_PRESENTATION,
-					...(hideThinking ? { suppress: true } : {}),
-				},
-			});
-		}
+		ensureReasoningChannelOpen(channel, parentRef, hideThinking, state, deltas);
 	} else if (asst.type === "thinking_delta" && typeof asst.delta === "string") {
 		const idx = typeof asst.contentIndex === "number" ? asst.contentIndex : state.currentThinkingIndex;
 		const channel = parentRef ? `${parentRef}:thinking-${idx}` : `thinking-${idx}`;
-		if (!state.openThinkingChannels) {
-			state.openThinkingChannels = new Set<string>();
-		}
-		if (!state.openThinkingChannels.has(channel)) {
-			state.openThinkingChannels.add(channel);
-			deltas.push({
-				kind: "item.open",
-				key: { channel, ...(parentRef ? { parentRef } : {}) },
-				item: {
-					type: "reasoning",
-					summary: [],
-					content: [],
-					...(parentRef ? { parentToolCallId: parentRef } : {}),
-				},
-				presentation: {
-					...REASONING_PRESENTATION,
-					...(hideThinking ? { suppress: true } : {}),
-				},
-			});
-		}
+		ensureReasoningChannelOpen(channel, parentRef, hideThinking, state, deltas);
 		deltas.push({
 			kind: "item.textDelta",
 			key: { channel, ...(parentRef ? { parentRef } : {}) },
@@ -125,14 +105,9 @@ export function translateMessageEnd(
 ): { deltas: ThreadDelta[]; nextAgentText: string } {
 	const deltas: ThreadDelta[] = [];
 
-	if (openThinkingChannels && openThinkingChannels.size > 0) {
+	if (openThinkingChannels?.size) {
 		for (const channel of openThinkingChannels) {
-			deltas.push({
-				kind: "item.textClose",
-				key: { channel },
-				channel: "reasoningText",
-				text: "",
-			});
+			deltas.push({ kind: "item.textClose", key: { channel }, channel: "reasoningText", text: "" });
 		}
 		openThinkingChannels.clear();
 	}
@@ -142,9 +117,7 @@ export function translateMessageEnd(
 		const textParts = msg.content
 			.filter((p) => p && p.type === "text" && typeof p.text === "string")
 			.map((p) => p.text as string);
-		if (textParts.length > 0) {
-			finalText = textParts.join("");
-		}
+		if (textParts.length > 0) finalText = textParts.join("");
 	}
 
 	if (finalText) {
@@ -164,16 +137,37 @@ export function translateAgentEnd(
 	turnBoundarySent: boolean,
 ): { deltas: ThreadDelta[]; turnBoundarySent: boolean } {
 	const deltas: ThreadDelta[] = [];
-	if (currentAgentText) {
+	const rawMsg = event.message ?? (event.messages as unknown[])?.[0];
+	const msgObj = typeof rawMsg === "object" && rawMsg !== null
+		? (rawMsg as { stopReason?: string; errorMessage?: string })
+		: undefined;
+
+	const isInterrupted =
+		event.aborted === true ||
+		event.stopReason === "aborted" ||
+		msgObj?.stopReason === "aborted";
+
+	const isError =
+		event.stopReason === "error" ||
+		msgObj?.stopReason === "error" ||
+		Boolean(event.errorMessage ?? msgObj?.errorMessage);
+
+	const errorMessage = event.errorMessage ?? msgObj?.errorMessage;
+
+	let textToClose = currentAgentText;
+	if (!textToClose && isError && !isInterrupted) {
+		textToClose = errorMessage ? `⚠️ ${errorMessage}` : "An error occurred during turn generation.";
+	}
+
+	if (textToClose) {
 		deltas.push({
 			kind: "item.textClose",
 			key: { channel: "agentMessage" },
 			channel: "agentMessage",
-			text: currentAgentText,
+			text: textToClose,
 		});
 	}
 
-	const rawMsg = event.message ?? (event.messages as unknown[])?.[0];
 	deltas.push(
 		...translateAgentEndUsage(
 			rawMsg,
@@ -185,13 +179,17 @@ export function translateAgentEnd(
 	let boundarySent = turnBoundarySent;
 	if (!boundarySent) {
 		boundarySent = true;
-		const isInterrupted =
-			event.aborted === true ||
-			event.stopReason === "aborted" ||
-			(rawMsg as { stopReason?: string } | undefined)?.stopReason === "aborted";
+		let status: "completed" | "failed" | "interrupted" = "completed";
+		if (isInterrupted) {
+			status = "interrupted";
+		} else if (isError) {
+			status = "failed";
+		}
+
 		deltas.push({
 			kind: "turn.boundary",
-			status: isInterrupted ? "interrupted" : "completed",
+			status,
+			...(isError && errorMessage ? { error: { message: errorMessage } } : {}),
 			claimIfIdle: true,
 			...(event.providerCheckpointId ? { providerCheckpointId: event.providerCheckpointId } : {}),
 		});
@@ -212,6 +210,10 @@ export function translateAgentEndUsage(
 	const outTok = Number(usage.output ?? 0);
 	const totTok = Number(usage.totalTokens ?? (inTok + outTok));
 	const cwSize = typeof contextWindow === "number" && contextWindow > 0 ? contextWindow : 128000;
+	const cacheRead = Number(usage.cacheRead ?? 0);
+	const cacheWrite = Number(usage.cacheWrite ?? 0);
+	const reasoning = Number(usage.reasoning ?? 0);
+	const cumCached = cumulativeUsage?.cachedInputTokens ?? cacheRead;
 
 	return [
 		{
@@ -220,20 +222,20 @@ export function translateAgentEndUsage(
 			last: {
 				totalTokens: totTok,
 				inputTokens: inTok,
-				cachedInputTokens: Number(usage.cacheRead ?? 0),
-				cacheReadInputTokens: Number(usage.cacheRead ?? 0),
-				cacheWriteInputTokens: Number(usage.cacheWrite ?? 0),
+				cachedInputTokens: cacheRead,
+				cacheReadInputTokens: cacheRead,
+				cacheWriteInputTokens: cacheWrite,
 				outputTokens: outTok,
-				reasoningOutputTokens: Number(usage.reasoning ?? 0),
+				reasoningOutputTokens: reasoning,
 			},
 			total: {
 				totalTokens: cumulativeUsage?.totalTokens ?? totTok,
 				inputTokens: cumulativeUsage?.inputTokens ?? inTok,
-				cachedInputTokens: cumulativeUsage?.cachedInputTokens ?? Number(usage.cacheRead ?? 0),
-				cacheReadInputTokens: cumulativeUsage?.cachedInputTokens ?? Number(usage.cacheRead ?? 0),
-				cacheWriteInputTokens: cumulativeUsage?.cacheWriteInputTokens ?? Number(usage.cacheWrite ?? 0),
+				cachedInputTokens: cumCached,
+				cacheReadInputTokens: cumCached,
+				cacheWriteInputTokens: cumulativeUsage?.cacheWriteInputTokens ?? cacheWrite,
 				outputTokens: cumulativeUsage?.outputTokens ?? outTok,
-				reasoningOutputTokens: Number(usage.reasoning ?? 0),
+				reasoningOutputTokens: reasoning,
 			},
 		},
 		{

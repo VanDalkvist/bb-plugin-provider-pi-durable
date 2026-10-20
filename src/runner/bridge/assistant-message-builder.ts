@@ -110,12 +110,20 @@ export function buildFinalAssistantMessage(
 	const lastAssistantMsg = lastAssistantEntry?.model?.[0] as AssistantMessage | undefined;
 
 	if (lastAssistantMsg) {
-		const content = Array.isArray(lastAssistantMsg.content)
-			? (lastAssistantMsg.content as unknown as BBAssistantMessage["content"])
-			: [{ type: "text" as const, text: lastGenerationText }];
+		const rawErr = (lastAssistantMsg as { errorMessage?: unknown }).errorMessage;
+		const errorMessage = typeof rawErr === "string" ? rawErr : undefined;
 		const stopReason = typeof lastAssistantMsg.stopReason === "string"
 			? (lastAssistantMsg.stopReason as BBAssistantMessage["stopReason"])
-			: "stop";
+			: (errorMessage ? "error" : "stop");
+
+		let content = Array.isArray(lastAssistantMsg.content)
+			? (lastAssistantMsg.content as unknown as BBAssistantMessage["content"])
+			: [{ type: "text" as const, text: lastGenerationText }];
+
+		if (content.length === 0 && (stopReason === "error" || errorMessage)) {
+			content = [{ type: "text" as const, text: errorMessage ? `⚠️ ${errorMessage}` : "An error occurred during turn generation." }];
+		}
+
 		const usage = (typeof lastAssistantMsg.usage === "object" && lastAssistantMsg.usage !== null)
 			? (lastAssistantMsg.usage as BBAssistantMessageUsage)
 			: undefined;
@@ -124,6 +132,7 @@ export function buildFinalAssistantMessage(
 			role: "assistant",
 			content,
 			stopReason,
+			...(errorMessage ? { errorMessage } : {}),
 			usage,
 		};
 	}

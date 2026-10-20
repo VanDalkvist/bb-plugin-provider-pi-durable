@@ -80,6 +80,7 @@ export interface BBAssistantMessage {
 		| { type: "toolCall"; id: string; name: string; arguments: Record<string, unknown> }
 	>;
 	stopReason?: "stop" | "toolUse" | "length" | "aborted" | "error";
+	errorMessage?: string;
 	usage?: BBAssistantMessageUsage;
 }
 
@@ -102,6 +103,7 @@ export interface BBTurnEndEvent {
 	cumulativeUsage?: CumulativeUsageMetrics;
 	aborted?: boolean;
 	stopReason?: string;
+	errorMessage?: string;
 }
 
 export interface BBMessageEndEvent {
@@ -119,6 +121,7 @@ export interface BBAgentEndEvent {
 	cumulativeUsage?: CumulativeUsageMetrics;
 	aborted?: boolean;
 	stopReason?: string;
+	errorMessage?: string;
 	parentRef?: string;
 	conversationId?: string | number;
 }

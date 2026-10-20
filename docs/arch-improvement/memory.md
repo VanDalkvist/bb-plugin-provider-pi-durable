@@ -74,3 +74,10 @@
 
 
 
+
+## 2026-10-20 - AP-026/AP-013: Empty Content Arrays and Missing `status: "failed"` on Wire Bridge Mask Upstream API Faults
+- Context: LLM provider turn termination and API failure visibility (Cycle 94).
+- Symptom: When upstream APIs timed out (180s) or returned 429/ResourceExhausted, threads in Beyond Boundaries hung during the request and then abruptly went into `idle` without displaying any error banner or text in the UI.
+- Cause: 1) Model entries with errors produce `content: []`. The nullish coalescing `msg.content ?? [...]` evaluated to `[]`, omitting `errorMessage`. 2) `translateAgentEnd` blindly mapped all non-aborted runs to `status: "completed"`, completely skipping the provider bridge schema's `status: "failed"` and `error: { message }` payload.
+- Use next time: Never allow an assistant message to end with empty content when `stopReason === "error"`. Populate human-readable error text in `content`, preserve `errorMessage` on the wire event, and emit `turn.boundary` with `status: "failed"` and `{ error: { message } }` so the host UI can render the error and offer retry controls.
+- Evidence: `tests/error-handling-visibility.test.ts`, `docs/superpowers/plans/2026-10-20-arch-improvement-cycle-94-error-handling-and-failure-visibility.md`, `src/runner/bridge/bb-event-adapter.ts`, `src/host/message-delta-translator.ts`.
