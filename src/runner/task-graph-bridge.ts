@@ -45,14 +45,26 @@ export function taskSteps(graph: TaskGraph, names?: TaskNames): BBPlanStep[] {
 	return steps;
 }
 
+export const DEFAULT_TASK_GRAPH_DEBOUNCE_MS = 50;
+
+export interface TaskGraphBridgeController {
+	unsubscribe: () => void;
+}
+
 /** Publishes the graph to BB whenever the panel would actually change; identical and empty snapshots are dropped. */
 export function startTaskGraphBridge(
 	view: DurableViewSource,
 	output: (event: BBTasksSnapshotEvent) => void,
-): void {
+	debounceMs: number = DEFAULT_TASK_GRAPH_DEBOUNCE_MS,
+): TaskGraphBridgeController {
 	const names = new TaskNames();
 	let published = "";
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	let isUnsubscribed = false;
+
 	const publish = (): void => {
+		timer = undefined;
+		if (isUnsubscribed) return;
 		const current = view.current();
 		names.learn(current);
 		const graph = current.tasks;
@@ -62,6 +74,33 @@ export function startTaskGraphBridge(
 		published = encoded;
 		output({ type: "tasks_snapshot", steps });
 	};
-	view.subscribe(publish);
-	publish();
+
+	const schedule = (): void => {
+		if (isUnsubscribed) return;
+		if (timer !== undefined) {
+			clearTimeout(timer);
+			timer = undefined;
+		}
+		if (debounceMs <= 0) {
+			publish();
+			return;
+		}
+		timer = setTimeout(publish, debounceMs);
+	};
+
+	const unsubscribeView = view.subscribe(schedule);
+	schedule();
+
+	const unsubscribe = (): void => {
+		if (isUnsubscribed) return;
+		isUnsubscribed = true;
+		if (timer !== undefined) {
+			clearTimeout(timer);
+			timer = undefined;
+		}
+		unsubscribeView();
+	};
+
+	return { unsubscribe };
 }
+

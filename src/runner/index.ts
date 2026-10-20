@@ -8,7 +8,7 @@ import { handleActiveSessionCommand, type RunnerCommandPayload } from "./session
 import { getPiDurableVersion } from "./version.ts";
 import { createBridgeSender, initBridgeInboundChannel } from "./bridge-channel.ts";
 import { startSubagentWatcher, type SubagentWatcherController } from "./subagent-watcher.ts";
-import { startTaskGraphBridge } from "./task-graph-bridge.ts";
+import { startTaskGraphBridge, type TaskGraphBridgeController } from "./task-graph-bridge.ts";
 
 const argv = process.argv.slice(2);
 
@@ -29,11 +29,19 @@ const sendToBridge = createBridgeSender();
 async function main() {
 	let activeDurable: OpenDurableResult | null = null;
 	let activeWatcher: SubagentWatcherController | null = null;
+	let activeTaskBridge: TaskGraphBridgeController | null = null;
 	let isTerminating = false;
 
 	const handleExit = async (signalOrReason: string) => {
 		if (isTerminating) return;
 		isTerminating = true;
+		if (activeTaskBridge) {
+			try {
+				activeTaskBridge.unsubscribe();
+			} catch (err) {
+				console.warn(`[Runner] Error unsubscribing task graph bridge on ${signalOrReason}: ${err instanceof Error ? err.message : String(err)}`);
+			}
+		}
 		if (activeWatcher) {
 			try {
 				activeWatcher.close();
@@ -134,7 +142,7 @@ async function main() {
 	);
 	const watcher = await startSubagentWatcher(durable.harness, adapter, () => durable.view.current());
 	activeWatcher = watcher;
-	startTaskGraphBridge(durable.view, output);
+	activeTaskBridge = startTaskGraphBridge(durable.view, output);
 
 	// Handle stdin RPC commands in active session
 	attachJsonlLineReader(process.stdin, async (line) => {

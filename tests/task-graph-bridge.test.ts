@@ -109,7 +109,8 @@ test("tasks_snapshot without steps emits nothing", () => {
 	assert.deepEqual(new DeltaTranslator().translate({ type: "tasks_snapshot", steps: [] }, { threadId: "thread-1" }), []);
 });
 
-test("startTaskGraphBridge publishes on change only", () => {
+test("startTaskGraphBridge coalesces rapid graph updates into a single snapshot after 50ms", (t) => {
+	t.mock.timers.enable({ apis: ["setTimeout"] });
 	let current: { tasks?: TaskGraph } = {};
 	let notify: (() => void) | undefined;
 	const view = {
@@ -124,28 +125,132 @@ test("startTaskGraphBridge publishes on change only", () => {
 
 	const emitted: BBPlanStep[][] = [];
 	startTaskGraphBridge(view, (event) => emitted.push(event.steps));
+
+	// Rapid sequence of updates within 50ms
+	current = { tasks: graph({ "1": node(1, "pi.generation", { status: "running", phase: "request" }) }) };
+	notify?.();
+	t.mock.timers.tick(15);
+	assert.equal(emitted.length, 0, "must not emit before 50ms debounce window expires");
+
+	current = {
+		tasks: graph({
+			"1": node(1, "pi.generation", { status: "running", phase: "tools" }),
+			"2": node(2, "pi.tool", { status: "pending", phase: "call" }, 1),
+		}),
+	};
+	notify?.();
+	t.mock.timers.tick(25);
+	assert.equal(emitted.length, 0, "debounce timer resets on rapid subsequent update");
+
+	current = {
+		tasks: graph({
+			"1": node(1, "pi.generation", { status: "running", phase: "tools" }),
+			"2": node(2, "pi.tool", { status: "running", phase: "execute" }, 1),
+		}),
+	};
+	notify?.();
+	t.mock.timers.tick(49);
+	assert.equal(emitted.length, 0, "must not emit at 49ms");
+
+	// Debounce period completes (50ms after the last update)
+	t.mock.timers.tick(1);
+	assert.equal(emitted.length, 1, "exactly one coalesced snapshot emitted after 50ms");
+	assert.deepEqual(emitted[0], [
+		{ step: "#1 assistant turn", status: "active" },
+		{ step: "  #2 tool · execute", status: "active" },
+	]);
+
+	// Further time passing without updates does not emit additional snapshots
+	t.mock.timers.tick(100);
+	assert.equal(emitted.length, 1);
+});
+
+test("startTaskGraphBridge unsubscribe cancels pending debounce timer and unsubscribes from view", (t) => {
+	t.mock.timers.enable({ apis: ["setTimeout"] });
+	let current: { tasks?: TaskGraph } = {};
+	let notify: (() => void) | undefined;
+	let unsubscribedFromView = false;
+	const view = {
+		current: () => current,
+		subscribe: (listener: () => void) => {
+			notify = listener;
+			return () => {
+				unsubscribedFromView = true;
+				notify = undefined;
+			};
+		},
+	} as unknown as DurableViewSource;
+
+	const emitted: BBPlanStep[][] = [];
+	const handle = startTaskGraphBridge(view, (event) => emitted.push(event.steps));
+	assert.equal(typeof handle?.unsubscribe, "function", "startTaskGraphBridge must return handle with unsubscribe");
+
+	current = { tasks: graph({ "1": node(1, "pi.generation", { status: "running", phase: "request" }) }) };
+	notify?.();
+	assert.equal(emitted.length, 0, "update is scheduled, not yet emitted");
+
+	handle.unsubscribe();
+	assert.equal(unsubscribedFromView, true, "unsubscribe must remove listener from view");
+
+	// Tick past the debounce delay: no snapshot should be emitted because timer was cleared
+	t.mock.timers.tick(100);
+	assert.equal(emitted.length, 0, "cancelled debounce timer must not emit");
+
+	// Idempotent unsubscribe call should not throw
+	handle.unsubscribe();
+
+	// Subsequent notify should have no effect
+	notify?.();
+	t.mock.timers.tick(100);
+	assert.equal(emitted.length, 0, "subsequent view notifications must not emit after unsubscribe");
+});
+
+test("startTaskGraphBridge publishes on change only", (t) => {
+	t.mock.timers.enable();
+	let current: { tasks?: TaskGraph } = {};
+	let notify: (() => void) | undefined;
+	const view = {
+		current: () => current,
+		subscribe: (listener: () => void) => {
+			notify = listener;
+			return () => {
+				notify = undefined;
+			};
+		},
+	} as unknown as DurableViewSource;
+
+	const emitted: BBPlanStep[][] = [];
+	const bridge = startTaskGraphBridge(view, (event) => emitted.push(event.steps));
+	t.mock.timers.tick(50);
 	assert.equal(emitted.length, 0, "no graph yet means nothing to show");
 
 	current = { tasks: graph({ "1": node(1, "pi.generation", { status: "running", phase: "request" }) }) };
 	notify?.();
+	t.mock.timers.tick(50);
 	assert.deepEqual(emitted, [[{ step: "#1 assistant turn", status: "active" }]]);
 
 	notify?.();
+	t.mock.timers.tick(50);
 	assert.equal(emitted.length, 1, "an unchanged graph must not re-emit");
 
 	current = { tasks: graph({ "1": node(1, "pi.generation", { status: "pending", phase: "request" }) }) };
 	notify?.();
+	t.mock.timers.tick(50);
 	assert.equal(emitted.length, 2);
 	assert.deepEqual(emitted[1], [{ step: "#1 assistant turn", status: "pending" }]);
 
 	// A phase the panel does not show is not a change worth a new row.
 	current = { tasks: graph({ "1": node(1, "pi.generation", { status: "pending", phase: "tools" }) }) };
 	notify?.();
+	t.mock.timers.tick(50);
 	assert.equal(emitted.length, 2, "a hidden phase change must not re-emit");
 
 	current = {};
 	notify?.();
+	t.mock.timers.tick(50);
 	assert.equal(emitted.length, 2, "an empty graph leaves the last known panel in place");
+
+	bridge.unsubscribe();
 });
 
 test("taskNames: a tool task is named from the call the harness runs in it", () => {
@@ -220,3 +325,4 @@ test("taskNames: a name is one bounded line, and no registry changes nothing", (
 
 	assert.deepEqual(taskSteps(tasks), [{ step: "#3 tool · execute", status: "active" }]);
 });
+
