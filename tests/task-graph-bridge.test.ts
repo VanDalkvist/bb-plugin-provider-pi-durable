@@ -448,4 +448,85 @@ test("taskNames: subagent tool displays '#id subagent: <task>'", () => {
 	]);
 });
 
+test("taskSteps: preserves failed task status across task graph eviction and empty graph finalization", () => {
+	const names = new TaskNames();
+	const known = new Map<string, BBPlanStep>();
+
+	// Tick 1: generation running and child tool completing with failure
+	const g1 = graph({
+		"1": node(1, "pi.generation", { status: "running", phase: "tools" }),
+		"2": node(2, "pi.tool", { status: "completing", outcome: "failed" }, 1),
+	});
+	const steps1 = taskSteps(g1, names, known);
+	assert.deepEqual(steps1, [
+		{ step: "#1 assistant turn", status: "active" },
+		{ step: "  #2 tool · completing (failed)", status: "failed" },
+	]);
+
+	// Tick 2: tool completed and evicted from TaskGraph (terminal eviction), parent still running
+	const g2 = graph({
+		"1": node(1, "pi.generation", { status: "running", phase: "tools" }),
+	});
+	const steps2 = taskSteps(g2, names, known);
+	assert.deepEqual(steps2, [
+		{ step: "#1 assistant turn", status: "active" },
+		{ step: "  #2 tool · completing (failed)", status: "failed" },
+	]);
+
+	// Tick 3: graph becomes completely empty (turn finishes)
+	const g3 = graph({});
+	const steps3 = taskSteps(g3, names, known);
+	assert.deepEqual(steps3, [
+		{ step: "#1 assistant turn", status: "completed" },
+		{ step: "  #2 tool · completing (failed)", status: "failed" },
+	]);
+});
+
+test("startTaskGraphBridge: preserves failed status when task is evicted and when graph empties", (t) => {
+	t.mock.timers.enable({ apis: ["setTimeout"] });
+	let current: { tasks?: TaskGraph } = {};
+	let notify: (() => void) | undefined;
+	const view = {
+		current: () => current,
+		subscribe: (listener: () => void) => {
+			notify = listener;
+			return () => {
+				notify = undefined;
+			};
+		},
+	} as unknown as DurableViewSource;
+
+	const emitted: BBPlanStep[][] = [];
+	const bridge = startTaskGraphBridge(view, (event) => emitted.push(event.steps));
+
+	// 1. Tool failed
+	current = {
+		tasks: graph({
+			"1": node(1, "pi.generation", { status: "running", phase: "tools" }),
+			"2": node(2, "pi.tool", { status: "completing", outcome: "failed" }, 1),
+		}),
+	};
+	notify?.();
+	t.mock.timers.tick(50);
+	assert.equal(emitted.length, 1);
+	assert.deepEqual(emitted[0], [
+		{ step: "#1 assistant turn", status: "active" },
+		{ step: "  #2 tool · completing (failed)", status: "failed" },
+	]);
+
+	// 2. Graph empties (turn ends)
+	current = { tasks: graph({}) };
+	notify?.();
+	t.mock.timers.tick(50);
+
+	assert.equal(emitted.length, 2);
+	assert.deepEqual(emitted[1], [
+		{ step: "#1 assistant turn", status: "completed" },
+		{ step: "  #2 tool · completing (failed)", status: "failed" },
+	]);
+
+	bridge.unsubscribe();
+});
+
+
 

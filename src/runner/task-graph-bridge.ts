@@ -37,6 +37,14 @@ export function taskSteps(
 		owners.set(key, owner === undefined ? undefined : String(owner));
 	}
 
+	if (Object.keys(nodes).length === 0) {
+		for (const step of known.values()) {
+			if (step.status === "active" || step.status === "pending") {
+				step.status = "completed";
+			}
+		}
+	}
+
 	const allKeys = Array.from(new Set([...known.keys(), ...Object.keys(nodes)])).sort((a, b) => Number(a) - Number(b));
 	const children = new Map<string, string[]>();
 	for (const key of allKeys) {
@@ -61,7 +69,9 @@ export function taskSteps(
 		} else {
 			const existing = known.get(key);
 			if (existing !== undefined) {
-				existing.status = "completed";
+				if (existing.status !== "failed") {
+					existing.status = "completed";
+				}
 				steps.push(existing);
 			}
 		}
@@ -98,7 +108,7 @@ export function startTaskGraphBridge(
 		if (isUnsubscribed) return;
 		const current = view.current();
 		names.learn(current);
-		const graph = current?.tasks ?? ({ tasks: {} } as TaskGraph);
+		const graph: TaskGraph = current?.tasks ?? { tasks: {} };
 		const steps = taskSteps(graph, names, knownSteps);
 		const encoded = JSON.stringify(steps);
 		if (steps.length === 0 || encoded === published) return;
