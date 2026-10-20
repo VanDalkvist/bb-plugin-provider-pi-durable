@@ -127,6 +127,7 @@ export class PiThreadSession {
 				if (isNew && task) {
 					void spawnSubthreadInBb({
 						parentThreadId: this.options.threadId,
+						environmentId: this.options.environmentId || process.env.BB_ENVIRONMENT_ID,
 						title: task.trim().slice(0, 80) || "Subagent",
 						task,
 						conversationId: convId,

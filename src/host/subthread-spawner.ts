@@ -9,6 +9,7 @@ const execFileAsync = promisify(execFile);
 
 export interface SubthreadSpawnArgs {
 	projectId?: string;
+	environmentId?: string;
 	parentThreadId: string;
 	title: string;
 	task: string;
@@ -23,31 +24,50 @@ export interface SubthreadSpawnerOptions {
 	execCommand?: (cmd: string, args: string[]) => Promise<string>;
 }
 
-export function resolveProjectIdFromDb(threadId: string): string | undefined {
+export interface ThreadContextRecord {
+	projectId?: string;
+	environmentId?: string;
+}
+
+export function resolveThreadContextFromDb(threadId: string): ThreadContextRecord | undefined {
 	try {
 		const dbPath = join(getBbDataDir(), "bb.db");
 		if (!existsSync(dbPath)) return undefined;
 		const db = new DatabaseSync(dbPath, { open: true, readOnly: true });
 		try {
-			const query = db.prepare("SELECT project_id FROM threads WHERE id = ?");
-			const row = query.get(threadId) as { project_id?: string } | undefined;
-			return row?.project_id;
+			const query = db.prepare("SELECT project_id, environment_id FROM threads WHERE id = ?");
+			const row = query.get(threadId) as { project_id?: string; environment_id?: string } | undefined;
+			return {
+				projectId: row?.project_id,
+				environmentId: row?.environment_id,
+			};
 		} finally {
 			db.close();
 		}
 	} catch (err) {
-		console.warn(`[SubthreadSpawner] Non-fatal failed to query project_id from db: ${err}`);
+		console.warn(`[SubthreadSpawner] Non-fatal failed to query thread context from db: ${err}`);
 		return undefined;
 	}
 }
 
+export function resolveProjectIdFromDb(threadId: string): string | undefined {
+	return resolveThreadContextFromDb(threadId)?.projectId;
+}
+
 export function buildSpawnArgs(args: SubthreadSpawnArgs): string[] {
+	const dbContext = resolveThreadContextFromDb(args.parentThreadId);
 	const projectId =
 		args.projectId ||
 		process.env.BB_PROJECT_ID ||
-		resolveProjectIdFromDb(args.parentThreadId) ||
+		dbContext?.projectId ||
 		"proj_personal";
-	return [
+
+	const environmentId =
+		args.environmentId ||
+		process.env.BB_ENVIRONMENT_ID ||
+		dbContext?.environmentId;
+
+	const cliArgs = [
 		"thread",
 		"spawn",
 		"--project",
@@ -62,6 +82,12 @@ export function buildSpawnArgs(args: SubthreadSpawnArgs): string[] {
 		"pi-durable",
 		"--json",
 	];
+
+	if (environmentId) {
+		cliArgs.push("--environment", environmentId);
+	}
+
+	return cliArgs;
 }
 
 export async function spawnSubthreadInBb(

@@ -38,6 +38,7 @@ export interface SessionOptions {
 	threadId: string;
 	providerThreadId: string;
 	cwd?: string;
+	environmentId?: string;
 	sessionFilePath: string;
 	sessionDir: string;
 	extensionPath: string;

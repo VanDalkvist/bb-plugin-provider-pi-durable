@@ -3,29 +3,35 @@ import assert from "node:assert/strict";
 import { buildSpawnArgs, spawnSubthreadInBb } from "../src/host/subthread-spawner.ts";
 
 test("buildSpawnArgs respects explicit projectId", () => {
-	const args = buildSpawnArgs({
-		projectId: "proj_custom_123",
-		parentThreadId: "thr_parent_1",
-		title: "Background worker",
-		task: "Refactor auth controller",
-		conversationId: "conv_77",
-	});
+	const origEnv = process.env.BB_ENVIRONMENT_ID;
+	delete process.env.BB_ENVIRONMENT_ID;
+	try {
+		const args = buildSpawnArgs({
+			projectId: "proj_custom_123",
+			parentThreadId: "thr_parent_1",
+			title: "Background worker",
+			task: "Refactor auth controller",
+			conversationId: "conv_77",
+		});
 
-	assert.deepEqual(args, [
-		"thread",
-		"spawn",
-		"--project",
-		"proj_custom_123",
-		"--parent-thread",
-		"thr_parent_1",
-		"--title",
-		"Background worker",
-		"--prompt",
-		"Refactor auth controller",
-		"--provider",
-		"pi-durable",
-		"--json",
-	]);
+		assert.deepEqual(args, [
+			"thread",
+			"spawn",
+			"--project",
+			"proj_custom_123",
+			"--parent-thread",
+			"thr_parent_1",
+			"--title",
+			"Background worker",
+			"--prompt",
+			"Refactor auth controller",
+			"--provider",
+			"pi-durable",
+			"--json",
+		]);
+	} finally {
+		if (origEnv !== undefined) process.env.BB_ENVIRONMENT_ID = origEnv;
+	}
 });
 
 test("spawnSubthreadInBb executes command and links registered thread", async () => {
