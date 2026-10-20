@@ -118,7 +118,7 @@ export class ModelCatalog {
 				routeProviderId: m.provider,
 				description: `${m.provider} model via Pi Durable`,
 				supportedReasoningEfforts: reasoningEfforts,
-				defaultReasoningEffort: m.defaultReasoningEffort ?? "medium",
+				defaultReasoningEffort: m.defaultReasoningEffort ?? "high",
 				isDefault,
 			});
 		}
