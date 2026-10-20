@@ -116,8 +116,8 @@
 - **Touched Files:** `package.json`, `package-lock.json`, `src/runner/bridge/tool-result-extractor.ts`, `src/runner/tool-adapter.ts`, `tests/anthropic-image-error.test.ts`, `tests/package-integrity.test.ts`.
 - **Applicable AP Gates:** AP-010 (Thin Bridge), AP-026 (State Persistence), AP-029 (Zero Type Casts).
 - [x] **[S8: Execute Slice]:** Выполнено воркером (коммит `be02f12`): пакеты обновлены до `1.3.0`, `sanitizeToolResultForAnthropic` удален, `npm test` 214/214 pass, `npx tsc` clean.
-- [ ] **[S9: Verify Gate]:** Запустить независимый сабагент-ревьюер по `arch-rules-implementation-review` на коммит `be02f12`.
-- [ ] **[S10: Version Bump]:** Повысить версию до **`0.2.33`** в `package.json`, закоммитить и запушить в `main`.
+- [x] **[S9: Verify Gate]:** Ревью по `arch-rules-implementation-review`. Вердикт `VERDICT: PASS`.
+- [x] **[S10: Version Bump]:** Повысить версию до **`0.2.33`** в `package.json`, закоммитить и запушить в `main`.
 
 ---
 
