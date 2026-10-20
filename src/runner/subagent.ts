@@ -1,14 +1,12 @@
-import type { Context } from "@earendil-works/chord";
-import { type AssistantMessage, Type } from "@earendil-works/pi-ai";
+import { Type } from "@earendil-works/pi-ai";
 import {
-	AssistantEntry,
 	configure,
 	defineExtension,
 	defineTool,
-	type EntryId,
 	type Extension,
-	type ToolExecutionApi,
 } from "@earendil-works/pi-durable";
+import { SubagentsDoc, type SubagentRecord } from "./subagent-docs.ts";
+import { BACKGROUND, DefaultReporter, answerText } from "./subagent-delivery.ts";
 
 export function buildRoleEnvelope(task: string): string {
 	return [
@@ -21,17 +19,6 @@ export function buildRoleEnvelope(task: string): string {
 	].join("\n");
 }
 
-async function answerText(api: ToolExecutionApi, answer: EntryId, context: Context): Promise<string> {
-	const entry = await api.commit((tx) => tx.entry(AssistantEntry, answer), context);
-	const message = entry?.model?.[0] as AssistantMessage | undefined;
-	return message?.content.flatMap((content) => (content.type === "text" ? [content.text] : [])).join("") ?? "";
-}
-
-/**
- * A subagent extension: each call creates a child conversation owned by the call's task,
- * sets a strict role envelope, runs the task there asynchronously by default (background: true),
- * and links with Beyond Boundaries subthreads.
- */
 export const Subagent: Extension = defineExtension({
 	name: "subagent",
 	tools: [
@@ -52,21 +39,50 @@ export const Subagent: Extension = defineExtension({
 			replay: "safe",
 			execute: async (args, api, context) => {
 				const isBackground = args.background !== false;
+				const key = `subagent:${api.taskId}`;
+				const requestId = `subagent:${api.taskId}`;
+
 				const child = await api.commit(async (tx) => {
 					const existing = (await tx.scanConversations({ ownerTaskId: api.taskId }, 1)).items[0];
-					if (existing !== undefined) return existing.id;
-					const created = await tx.createConversation({ ownership: { kind: "task", taskId: api.taskId } });
-					await configure(tx, created.id, { instructions: buildRoleEnvelope(args.task) });
-					return created.id;
+					let childId = existing?.id;
+					if (childId === undefined) {
+						const created = await tx.createConversation({ ownership: { kind: "task", taskId: api.taskId } });
+						await configure(tx, created.id, { instructions: buildRoleEnvelope(args.task) });
+						childId = created.id;
+					}
+
+					const record: SubagentRecord = {
+						name: `child-${key}`,
+						conversationId: childId,
+						requestId,
+						task: args.task,
+						role: "worker",
+						ownerTaskId: api.taskId,
+						background: isBackground,
+					};
+
+					if (isBackground && typeof tx.createTask === "function") {
+						record.reporter = await tx.createTask(
+							DefaultReporter,
+							{ key, conversationId: childId, task: args.task, requestId },
+							BACKGROUND,
+						);
+					}
+
+					const state = await tx.doc(SubagentsDoc, api.conversationId);
+					if (state) {
+						state.agents ??= {};
+						state.agents[key] = record;
+					}
+
+					return childId;
 				}, context);
 
 				await api.details({ conversationId: child, task: args.task, background: isBackground }, context);
+
 				const handle = await api.conversation(child, context);
-				if (!handle) {
-					throw new Error(`Failed to access subagent conversation: ${child}`);
-				}
-				const request = { type: "input", content: args.task, requestId: `subagent:${api.taskId}` } as const;
-				const submission = await handle.submit(request, context);
+				if (!handle) throw new Error(`Failed to access subagent conversation: ${child}`);
+				const submission = await handle.submit({ type: "input", content: args.task, requestId }, context);
 
 				if (isBackground) {
 					return {
@@ -85,6 +101,13 @@ export const Subagent: Extension = defineExtension({
 					throw new Error(`Subagent ${child} failed: ${settled.status}`);
 				}
 				const text = await answerText(api, settled.answer, context);
+				await api.commit(async (tx) => {
+					const state = await tx.doc(SubagentsDoc, api.conversationId);
+					if (state?.agents?.[key]) {
+						state.agents[key].settled = true;
+						state.agents[key].report = text;
+					}
+				}, context);
 				return { output: [{ type: "text", text }], details: { conversationId: child, background: false, task: args.task } };
 			},
 		}),

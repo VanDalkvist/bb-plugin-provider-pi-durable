@@ -15,6 +15,7 @@ import { createCodemodeExtension } from "@earendil-works/pi-durable/codemode";
 import { CodemodeSandbox } from "@earendil-works/pi-codemode";
 import { createToolSearchExtension } from "@earendil-works/pi-durable/tool-search";
 import { Subagent } from "./subagent.ts";
+import { Anchor, DefaultCourier, DefaultReporter } from "./subagent-delivery.ts";
 import {
 	type ModelRuntime,
 	type SettingsManager,
@@ -84,6 +85,9 @@ export async function createCodingRegistry(
 	registry.install(createCodemodeExtension({ sandbox: new CodemodeSandbox() }));
 	registry.install(createToolSearchExtension());
 	registry.install(Subagent);
+	registry.install(Anchor);
+	registry.install(DefaultCourier);
+	registry.install(DefaultReporter);
 	registry.install(createPiPrompt(settingsManager, cwd, promptOptions));
 	return registry;
 }
