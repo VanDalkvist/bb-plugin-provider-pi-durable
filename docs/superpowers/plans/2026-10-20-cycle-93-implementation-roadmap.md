@@ -155,9 +155,11 @@
   - Modify: `src/host/subthread-spawner.ts:25-35`
   - Test: `tests/subagent-title-sanitization.test.ts`
 - **Applicable AP Gates:** AP-010 (Pure Adapter), AP-019 (<200 lines), AP-028 (Resilient Streaming).
-- [ ] **[S8: Execute Slice]:** Воркер реализует `nativeChildTitle` (санитизация control/bidi символов, лимит 494 символа) и `message_end flush` (досыл недостающей текстовой дельты при завершении сообщения без дублирования). TDD-тесты.
-- [ ] **[S9: Verify Gate]:** Ревью по `arch-rules-implementation-review`.
-- [ ] **[S10: Version Bump]:** Повысить версию до **`0.2.35`** в `package.json`, закоммитить и запушить в `main`.
+- [x] **[S8: Execute Slice]:** Воркер реализовал `nativeChildTitle` (санитизация control/bidi символов, лимит 494 символа), `message_end flush` (досыл недостающей текстовой дельты при завершении сообщения без дублирования) и связывание сессий через контекст родителя в `SessionRegistry` (коммиты `64b5587`, `3fc3201`).
+- [x] **[S9: Verify Gate]:** Двухконтурный гейт пройден:
+  - S9a (Architecture Review `thr_fsrmexdmtf`): **`VERDICT: PASS`** (AP-010, AP-011, AP-012, AP-013, AP-019 <250/200 строк, AP-026, AP-028, AP-029).
+  - S9b (Product Review `thr_pf6z5j6dh6`): **`VERDICT: PASS`** (Single Execution, Dual Streaming, подавление дублирования промпта через Active Subagent Guard, чистое завершение без вечных спиннеров, follow-up интерактивность).
+- [x] **[S10: Version Bump]:** Повысить версию до **`0.2.36`** в `package.json`, закоммитить и запушить в `main`.
 
 ---
 
