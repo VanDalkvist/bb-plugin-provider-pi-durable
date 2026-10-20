@@ -4,6 +4,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { getBbDataDir } from "./paths.ts";
+import { nativeChildTitle } from "../runner/child-title.ts";
 
 const execFileAsync = promisify(execFile);
 
@@ -75,7 +76,7 @@ export function buildSpawnArgs(args: SubthreadSpawnArgs): string[] {
 		"--parent-thread",
 		args.parentThreadId,
 		"--title",
-		args.title,
+		nativeChildTitle(args.title),
 		"--prompt",
 		args.task,
 		"--provider",
