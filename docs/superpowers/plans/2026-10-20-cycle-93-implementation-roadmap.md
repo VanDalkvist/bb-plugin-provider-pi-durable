@@ -1,6 +1,10 @@
 # Cycle 93: Upstream Pi 1.3 Parity, Task Graph PlanSteps, Inbound PRs & Resilient Subagents Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:subagent-driven-development` orchestrated via `arch-improvement-loop` and `arch-rules-implementation-review`. Every step executes via a dedicated worker thread, followed by an independent review thread. После каждого шага или фикса замечаний ревью обязательно инкрементируется версия в `package.json` (`0.2.x + 1`). Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** Arch Improvement Loop Execution. Every slice executes strictly via `arch-improvement-loop` state machine.
+> - **Implementers [S8]:** Load and execute `~/Projects/arch-improvement-skills/skills/arch-improvement-fix/SKILL.md` and `~/Projects/.agents/skills/superpowers/test-driven-development/SKILL.md`.
+> - **Reviewers [S9]:** Load and execute `~/Projects/arch-rules-skills/skills/arch-rules-implementation-review/SKILL.md` and `~/Projects/arch-improvement-skills/skills/arch-improvement-review/SKILL.md` against `~/Projects/arch-rules/arch-rules.md`.
+> - **Orchestrator [S10]:** Verifies `VERDICT: PASS`, records ledger, increments version `0.2.x + 1` in `package.json`, commits and pushes to `main`.
+> - Do NOT duplicate skill instructions in prompts — agents read canonical skills directly from disk.
 
 **Goal:** Систематически и детерминированно модернизировать `bb-plugin-provider-pi-durable`: интегрировать проверенные пулл-реквесты (#20, #22, #16), обновить ядро до upstream `@earendil-works/pi-durable@1.3.0` с удалением устаревших костылей, и внедрить лучшие архитектурные решения по надежной фоновой доставке сабагентов (Reporter + Courier) и персистентному хранению связок тредов в SQLite (Durable Binding Store) без единой правки ядра BB IDE.
 
@@ -10,35 +14,48 @@
 
 ---
 
-## 1. Multi-Agent Orchestration & Continuous Versioning Protocol
+## 1. Arch Improvement Loop State Machine & Subagent Protocol
 
-В соответствии с правилами рабочего пространства (`~/Projects/AGENTS.md`) и скиллами `arch-improvement-loop`, `subagent-driven-development`, `arch-rules-implementation-review`:
+Исполнение плана организовано строго по конечному автомату `arch-improvement-loop` (S0–S12) в единой нативной среде Pi Durable:
 
-1. **Роль Оркестратора (Lead Agent):**
-   - Управляет состоянием арх-лупа (S0–S12), координирует передачу контекста и контролирует чекбоксы плана.
-   - **Запрет на микроменеджмент:** Не пишет код руками за воркеров.
-   - Делегирует исполнение шага воркеру, передавая изолированный контекст и строгие guardrails (ЧТО ДЕЛАТЬ / ЧЕГО НЕ ДЕЛАТЬ).
-   - После завершения шага воркером запускает независимый субтред-ревьюер. Принимает работу только при вердикте `VERDICT: PASS`.
+```
+┌────────────────────────────────────────────────────────────────────────┐
+│                        ARCH IMPROVEMENT LOOP                           │
+│                                                                        │
+│  [S8: Execute Fix Slice]  ──(worker subagent)──►  Commit / Red-Green   │
+│            │                                            │              │
+│            ▼                                            ▼              │
+│  [S9: Verify Gate]        ──(review subagent)──►  VERDICT: PASS/FAIL   │
+│            │                                            │              │
+│            ▼ (if PASS)                                  ▼              │
+│  [S10: Step Version Bump] ──(orchestrator)   ──►  0.2.x + 1 & Push     │
+│            │                                                           │
+│            ▼ (repeat for next slice until S11/S12)                     │
+└────────────────────────────────────────────────────────────────────────┘
+```
 
-2. **Стандарт выполнения сабагентов в Pi Durable (Native Subagents Invariant):**
-   - Все делегированные задачи воркеров и ревьюеров выполняются строго через нативные сабагенты Pi Durable (`subagent`) в рамках единого родительского треда и рантайма, сохраняя родительский процесс в роли оркестратора.
-   - Слияние внешних пул-реквестов (#20, #22, #16) выполняется исключительно через честный `git merge --no-ff`, сохраняя коммиты, авторство (Diffuzmetall, marmoza), подписи и историю оригинальных веток в дереве git без сплющивания или присвоения чужого авторства.
-
-3. **Стандарт Архитектурного Ревью (Review Gate):**
-   Ревьюер обязан:
-   - Проверять код строго по правилам `arch-rules.md` (AP-010 ... AP-071).
-   - Формулировать замечания в каноничном Finding Format:
-     ```markdown
-     - [P1] <AP-ID>: <file:line> <Evidence and Impact>
-       - Fix decision: fix-now | log-only | blocked
-     ```
-   - Завершать отчет секцией `Architecture verification` с перечнем `Passed: AP-###` и итоговым вердиктом `VERDICT: PASS` или `VERDICT: FAIL`.
-
-4. **Политика пошагового бампа версий (Continuous Step-by-Step Version Bump):**
-   - Текущая базовая версия: **`0.2.30`**.
-   - После успешного завершения **каждого шага** и получения `VERDICT: PASS` от независимого ревьюера выполняется бамп версии: `0.2.x + 1` в `package.json`.
-   - Если ревьюер находит дефекты (P1/P2), воркер выполняет исправление, ревьюер проводит повторную приёмку, и результат исправления фиксируется с собственным бампом версии `0.2.x + 1`.
-   - Это гарантирует полную атомарность истории, воспроизводимость каждого промежуточного состояния и возможность отката к любому конкретному шагу.
+### Правила взаимодействия агентов:
+1. **Оркестратор (Lead Agent):**
+   - Управляет переходами состояний S8 ➔ S9 ➔ S10.
+   - Делегирует исполнение через нативный инструмент `subagent` (`tools.subagent({ task, background: false })`).
+   - Не пишет код за воркеров и не дублирует тексты скиллов в промптах. Передает ссылку на задачу плана и пути к каноничным скиллам.
+   - Слияние PR (#20, #22, #16) производит через честный `git merge --no-ff`, сохраняя коммиты и авторство контрибьюторов (Diffuzmetall, marmoza).
+2. **Воркер реализации [S8: Execute Fix Slice]:**
+   - **Обязан прочитать и следовать скиллам:**
+     - `~/Projects/arch-improvement-skills/skills/arch-improvement-fix/SKILL.md`
+     - `~/Projects/.agents/skills/superpowers/test-driven-development/SKILL.md`
+   - Реализует минимальный boundary-preserving патч.
+   - Соблюдает бюджеты строк AP-019 (<200 в `src/runner/`, <250 в `src/host/`).
+   - Подтверждает результат детерминированными тестами (`npm test`) и тайпчеком (`npx tsc --noEmit`).
+3. **Независимый ревьюер [S9: Verify Gate]:**
+   - **Обязан прочитать и следовать скиллам:**
+     - `~/Projects/arch-rules-skills/skills/arch-rules-implementation-review/SKILL.md`
+     - `~/Projects/arch-improvement-skills/skills/arch-improvement-review/SKILL.md`
+     - `~/Projects/arch-rules/arch-rules.md`
+   - Проверяет diff коммита строго по правилам AP-010 ... AP-071.
+   - Формирует отчет по каноничному формату: Findings (`[P1]...`), Architecture verification (`Passed: AP-###`, `Residual risk`), и выносит итоговый вердикт: `VERDICT: PASS` или `VERDICT: FAIL`.
+4. **Пошаговый бамп версий [S10]:**
+   - Каждая завершенная и принятая ревьюером фича инкрементирует версию `0.2.x + 1` в `package.json` и пушится в `main`.
 
 ---
 
@@ -66,101 +83,48 @@
 
 ---
 
-## 3. Implementation Phases with Positive & Negative Guardrails, Review Gates and Version Bumps
+## 3. Implementation Phases & Arch Loop Slices
 
 ---
 
 ### Phase 1: Host Stability Foundation (PR #20 ➔ PR #22)
 
-#### Task 1.1: Merge PR #20 (Deterministic Runner Resolution)
-- **Primary Source / Evidence:** PR #20 (`fix/runner-resolution`), commit `d4d521a`. Решает issue #18.
-- **Touched Files:**
-  - Create: `src/host/runner-lookup.ts`
-  - Modify: `src/host/paths.ts`
-  - Modify: `tests/runner-discovery.test.ts`
-  - Modify: `tests/startup-readiness.test.ts`
-- **AP Gates:** AP-010 (Decoupled Lookup), AP-019 (File size < 250), AP-028 (No swallowed errors).
-
-- **ЧТО ДЕЛАТЬ (DO):**
-  - [x] Выполнить слияние PR #20 через git merge `origin/pull/20/head` (честный `git merge --no-ff` с сохранением коммитов Diffuzmetall).
-  - [x] Проверить, что путь к `dataDir` вычисляется строго из пути развернутого бандла `plugin-host-artifacts/<pluginId>/<digest>/`.
-  - [x] Сохранить fallback на `BB_DATA_DIR` и `~/.bb` strictly как резервные пути.
-  - [x] Запустить `npm test` и убедиться, что 211 из 211 тестов проходят.
-
-- **ЧЕГО НЕ ДЕЛАТЬ (DO NOT):**
-  - ⛔ НЕ менять дефолтную директорию сессий `~/.bb/pi-bridge-sessions` (чтобы не потерять сессии пользователей).
-  - ⛔ НЕ увеличивать `paths.ts` выше 150 строк (вся сложная логика остается в `runner-lookup.ts`).
-  - ⛔ НЕ удалять timeout ceiling в `startup-readiness.test.ts`.
-
-- [x] **Review Gate 1.1:** Запустить субтред-ревьюер по AP-010, AP-019, AP-028.
-  - Критерий прохождения: Отсутствие регрессий резолвинга, `paths.ts` <= 145 строк, 211/211 тестов GREEN, вердикт `VERDICT: PASS`.
-- [x] **Version Bump 1.1:** Повысить версию до **`0.2.31`** в `package.json`, закоммитить:
-  `chore(release): bump version to 0.2.31 (PR #20 merged and verified)`.
+#### Slice 1.1: Merge PR #20 (Deterministic Runner Resolution)
+- **Primary Source / Evidence:** PR #20 (`fix/runner-resolution`), commits `3aa5566`, `d50da50`. Решает issue #18.
+- **Touched Files:** `src/host/runner-lookup.ts`, `src/host/paths.ts`, `tests/runner-discovery.test.ts`, `tests/startup-readiness.test.ts`.
+- **Applicable AP Gates:** AP-010 (Decoupled Lookup), AP-019 (File size < 250), AP-028 (No swallowed errors).
+- [x] **[S8: Execute Slice]:** Честный `git merge --no-ff pr-20` с сохранением оригинальных коммитов Diffuzmetall.
+- [x] **[S9: Verify Gate]:** Ревью по `arch-rules-implementation-review`. Вердикт `VERDICT: PASS` (211/211 тестов).
+- [x] **[S10: Version Bump]:** Бамп до **`0.2.31`**, коммит `1173ab6`, пуш в `main`.
 
 ---
 
-#### Task 1.2: Merge PR #22 (Preserve BB System Instructions)
-- **Primary Source / Evidence:** PR #22 (`fix/bb-context-parity`), commit `07c6f01`.
-- **Touched Files:**
-  - Create: `src/host/runner-prompts.ts`
-  - Modify: `src/host/runner-process.ts`
-  - Modify: `src/host/session-registry.ts`
-  - Modify: `src/host/session.ts`
-  - Test: `tests/bb-instructions-parity.test.ts`
-- **AP Gates:** AP-010 (Thin Bridge), AP-013 (Process Isolation), AP-019 (<250 lines), AP-023 (Resource Cleanup).
-
-- **ЧТО ДЕЛАТЬ (DO):**
-  - [x] Выполнить слияние PR #22 через git merge `origin/pull/22/head` (честный `git merge --no-ff` с сохранением коммита marmoza).
-  - [x] Обеспечить создание временной папки промптов с правами `0o700` (`mkdtempSync`).
-  - [x] Писать файлы промптов строго с правами `0o600`.
-  - [x] Гарантировать вызов `cleanPromptDir()` как при успешном завершении процесса, так и при аварийном сбое (`child.on("exit")`, `child.on("error")`, блок `catch`).
-  - [x] Убедиться, что проходят 216 из 216 тестов.
-
-- **ЧЕГО НЕ ДЕЛАТЬ (DO NOT):**
-  - ⛔ НЕ писать системные промпты в общие директории (`/tmp` без изолированного префикса).
-  - ⛔ НЕ генерировать собственные системные инструкции в адаптере — только транслировать входящие из BB Core.
-  - ⛔ НЕ оставлять «висячие» временные файлы на диске при аварийной остановке раннера.
-
-- [x] **Review Gate 1.2:** Запустить субтред-ревьюер по AP-010, AP-013, AP-019, AP-023.
-  - Критерий прохождения: Права файлов 0600/0700, гарантированный cleanup, все файлы < 250 строк, вердикт `VERDICT: PASS`.
-- [x] **Version Bump 1.2:** Повысить версию до **`0.2.32`** в `package.json`, закоммитить:
-  `chore(release): bump version to 0.2.32 (PR #22 merged and verified)`.
+#### Slice 1.2: Merge PR #22 (Preserve BB System Instructions)
+- **Primary Source / Evidence:** PR #22 (`fix/bb-context-parity`), commit `3155b35`.
+- **Touched Files:** `src/host/runner-prompts.ts`, `src/host/runner-process.ts`, `src/host/session-registry.ts`, `src/host/session.ts`, `tests/bb-instructions-parity.test.ts`.
+- **Applicable AP Gates:** AP-010 (Thin Bridge), AP-013 (Process Isolation), AP-019 (<250 lines), AP-023 (Resource Cleanup).
+- [x] **[S8: Execute Slice]:** Честный `git merge --no-ff pr-22` с сохранением оригинального коммита marmoza.
+- [x] **[S9: Verify Gate]:** Ревью по `arch-rules-implementation-review`. Права `0o600/0o700`, очистка файлов, вердикт `VERDICT: PASS` (216/216 тестов).
+- [x] **[S10: Version Bump]:** Бамп до **`0.2.32`**, коммит `80ffe72`, пуш в `main`.
 
 ---
 
 ### Phase 2: Upstream Pi 1.3.0 Parity & Workaround Removal
 
-#### Task 2.1: Upgrade Dependencies to `@earendil-works/*@1.3.0` & Prune Workarounds
-- **Primary Source / Evidence:** Upstream tags and packages in `/Users/vanya/Projects/pi` (`v1.3.0`, commit `71023aec1`, `f7e3cb543`, `5ab7fe74c`).
-- **Touched Files:**
-  - Modify: `package.json`
-  - Modify: `package-lock.json`
-  - Modify: `src/runner/bridge/tool-result-extractor.ts`
-  - Modify: `src/runner/tool-adapter.ts`
-- **AP Gates:** AP-010 (Thin Bridge), AP-026 (State Persistence), AP-029 (Zero Type Casts).
-
-- **ЧТО ДЕЛАТЬ (DO):**
-  - [ ] Обновить версии `@earendil-works/chord`, `@earendil-works/pi-ai`, `@earendil-works/pi-coding-agent`, `@earendil-works/pi-durable`, `@earendil-works/pi-codemode` до `1.3.0` в `package.json` и `overrides`.
-  - [ ] Удалить локальную функцию `sanitizeToolResultForAnthropic` в `tool-result-extractor.ts` — в `pi-ai@1.3.0` санитизация изображений в блоках ошибок тулов теперь выполняется нативно (`splitErrorToolResultImages`).
-  - [ ] Запустить `npx tsc --noEmit` и убедиться в отсутствии ошибок типов.
-  - [ ] Запустить полный сьют `npm test`.
-
-- **ЧЕГО НЕ ДЕЛАТЬ (DO NOT):**
-  - ⛔ НЕ оставлять старые костыли, если upstream уже предоставляет официальное решение.
-  - ⛔ НЕ допускать рассинхрона версий между пакетами `@earendil-works/*` (все обязаны быть строго `1.3.0`).
-  - ⛔ НЕ трогать настройки компакшна без сверки с новым `findBaseline()` из Durable 1.3.0.
-
-- [ ] **Review Gate 2.1:** Запустить субтред-ревьюер по AP-010, AP-026, AP-029.
-  - Критерий прохождения: Чистый `npx tsc --noEmit`, удаление дублирующего кода, прохождение всех тестов, вердикт `VERDICT: PASS`.
-- [ ] **Version Bump 2.1:** Повысить версию до **`0.2.33`** в `package.json`, закоммитить:
-  `chore(release): bump version to 0.2.33 (Upstream Pi 1.3.0 parity)`.
+#### Slice 2.1: Upgrade Dependencies to `@earendil-works/*@1.3.0` & Prune Workarounds
+- **Primary Source / Evidence:** Upstream tags and packages in `/Users/vanya/Projects/pi` (`v1.3.0`, commits `71023aec1`, `f7e3cb543`, `5ab7fe74c`). Спецификация: `docs/arch-improvement/cycle-93/track-2-upstream-pi-1.3.md`.
+- **Touched Files:** `package.json`, `package-lock.json`, `src/runner/bridge/tool-result-extractor.ts`, `src/runner/tool-adapter.ts`, `tests/anthropic-image-error.test.ts`, `tests/package-integrity.test.ts`.
+- **Applicable AP Gates:** AP-010 (Thin Bridge), AP-026 (State Persistence), AP-029 (Zero Type Casts).
+- [x] **[S8: Execute Slice]:** Выполнено воркером (коммит `be02f12`): пакеты обновлены до `1.3.0`, `sanitizeToolResultForAnthropic` удален, `npm test` 214/214 pass, `npx tsc` clean.
+- [ ] **[S9: Verify Gate]:** Запустить независимый сабагент-ревьюер по `arch-rules-implementation-review` на коммит `be02f12`.
+- [ ] **[S10: Version Bump]:** Повысить версию до **`0.2.33`** в `package.json`, закоммитить и запушить в `main`.
 
 ---
 
 ### Phase 3: Live Task Graph PlanSteps (PR #16 + Polish)
 
-#### Task 3.1: Integrate Live Task Graph with Debounce and Teardown
-- **Primary Source / Evidence:** PR #16 (`feat/durable-task-graph`), Review findings Track 3 (`track-3-inbound-prs-audit.md`).
+#### Slice 3.1: Integrate Live Task Graph with Debounce and Teardown
+- **Primary Source / Evidence:** PR #16 (`feat/durable-task-graph`), commit `ece06ec`. Спецификация: `docs/arch-improvement/cycle-93/track-3-inbound-prs-audit.md`.
 - **Touched Files:**
   - Create: `src/runner/task-labels.ts` (78 строк)
   - Create: `src/runner/task-graph-bridge.ts` (~80 строк)
@@ -168,89 +132,52 @@
   - Modify: `src/runner/bridge/contracts.ts`
   - Modify: `src/runner/index.ts`
   - Test: `tests/task-graph-bridge.test.ts`
-- **AP Gates:** AP-011 (Lifecycle Cleanup), AP-019 (<200 lines), AP-023 (Zero Leaks), AP-045 (Coalesced Events).
-
-- **ЧТО ДЕЛАТЬ (DO):**
-  - [ ] Внедрить `task-labels.ts` для извлечения читаемых имен тулов и аргументов из `pi.live` (максимум 48 символов, одна строка).
-  - [ ] В `task-graph-bridge.ts` реализовать таймерный дебаунс в **50 мс** для вызова `output({ type: "tasks_snapshot", steps })`.
-  - [ ] Возвращать функцию отписки `unsubscribe()` из `startTaskGraphBridge` и вызывать её в `teardown()` раннера.
-  - [ ] В `delta-translator.ts` транслировать `tasks_snapshot` в нативный BB контракт `planSteps` через `experimental_planStepsPresentation`.
-  - [ ] Исключить бинарник `dist/runner/index.js` из коммита (ребилд будет в Phase 5).
-  - [ ] Добавить тесты на проверку дебаунса и очистки подписки.
-
-- **ЧЕГО НЕ ДЕЛАТЬ (DO NOT):**
-  - ⛔ НЕ спамить в сокет хоста снапшотами графа на каждое изменение токена или микротаски.
-  - ⛔ НЕ оставлять висящие подписки на `view.subscribe` после остановки сессии.
-  - ⛔ НЕ коммитить предсобранные бандлы `dist/` в фиче-ветку.
-  - ⛔ НЕ превышать лимит в 200 строк в `task-graph-bridge.ts` и `task-labels.ts`.
-
-- [ ] **Review Gate 3.1:** Запустить субтред-ревьюер по AP-011, AP-019, AP-023, AP-045.
-  - Критерий прохождения: 10/10 тестов `task-graph-bridge.test.ts` зеленые, дебаунс 50мс проверен, teardown подтвержден, вердикт `VERDICT: PASS`.
-- [ ] **Version Bump 3.1:** Повысить версию до **`0.2.34`** в `package.json`, закоммитить:
-  `chore(release): bump version to 0.2.34 (Task Graph as PlanSteps with debounce)`.
+- **Applicable AP Gates:** AP-011 (Lifecycle Cleanup), AP-019 (<200 lines), AP-023 (Zero Leaks), AP-045 (Coalesced Events).
+- [ ] **[S8: Execute Slice]:**
+  - Выполнить честный `git merge --no-ff pr-16` (сохраняя коммиты Diffuzmetall).
+  - Воркер реализует дебаунс 50 мс для снапшотов `tasks_snapshot` в `task-graph-bridge.ts`, возвращает `unsubscribe()` и очищает подписку при teardown.
+  - В `delta-translator.ts` транслирует `tasks_snapshot` в BB контракт `planSteps` через `experimental_planStepsPresentation`.
+  - Убедиться, что `dist/` не коммитится, и добавить тесты на дебаунс.
+- [ ] **[S9: Verify Gate]:** Ревью по `arch-rules-implementation-review`. Проверка отсутствия утечек подписок (AP-011, AP-023), дебаунса 50мс (AP-045), лимитов AP-019.
+- [ ] **[S10: Version Bump]:** Повысить версию до **`0.2.34`** в `package.json`, закоммитить и запушить в `main`.
 
 ---
 
 ### Phase 4: Subagent Courier & Durable SQLite Binding
 
-#### Task 4.1: UI & Streaming Hardening (`message_end flush` & `child-title`)
+#### Slice 4.1: UI & Streaming Hardening (`message_end flush` & `child-title`)
 - **Primary Source / Evidence:** Track 1 audit (`track-1-diffuzmetall-audit.md`), `/tmp/diffuzmetall-adapter/src/native/child-title.ts`.
 - **Touched Files:**
   - Create: `src/runner/child-title.ts` (~35 строк)
   - Modify: `src/runner/bridge/bb-child-event-adapter.ts:104-118`
   - Modify: `src/host/subthread-spawner.ts:25-35`
   - Test: `tests/subagent-title-sanitization.test.ts`
-- **AP Gates:** AP-010 (Pure Adapter), AP-019 (<200 lines), AP-028 (Resilient Streaming).
-
-- **ЧТО ДЕЛАТЬ (DO):**
-  - [ ] Реализовать `nativeChildTitle(name, role, model)`: санировать control/bidi-символы, ограничить длину полей и суммарную длину до 494 символов.
-  - [ ] Использовать `nativeChildTitle` в `subthread-spawner.ts` при генерации заголовка для `bb thread spawn`.
-  - [ ] В `bb-child-event-adapter.ts` на событии `message_end` проверять остаток текста в `AssistantEntry` и досылать недостающую дельту.
-  - [ ] Написать тест на санитизацию заголовков и досыл текста.
-
-- **ЧЕГО НЕ ДЕЛАТЬ (DO NOT):**
-  - ⛔ НЕ превышать лимит заголовка в 500 символов, вызывающий ошибку в БД ядра BB.
-  - ⛔ НЕ дублировать уже отправленный текст при вызове `message_end flush` (проверять `startsWith(this.currentText)`).
-
-- [ ] **Review Gate 4.1:** Запустить субтред-ревьюер по AP-010, AP-019, AP-028.
-  - Критерий прохождения: Тесты санитизации и стриминга зеленые, вердикт `VERDICT: PASS`.
-- [ ] **Version Bump 4.1:** Повысить версию до **`0.2.35`** в `package.json`, закоммитить:
-  `chore(release): bump version to 0.2.35 (Title sanitization and message_end flush)`.
+- **Applicable AP Gates:** AP-010 (Pure Adapter), AP-019 (<200 lines), AP-028 (Resilient Streaming).
+- [ ] **[S8: Execute Slice]:** Воркер реализует `nativeChildTitle` (санитизация control/bidi символов, лимит 494 символа) и `message_end flush` (досыл недостающей текстовой дельты при завершении сообщения без дублирования). TDD-тесты.
+- [ ] **[S9: Verify Gate]:** Ревью по `arch-rules-implementation-review`.
+- [ ] **[S10: Version Bump]:** Повысить версию до **`0.2.35`** в `package.json`, закоммитить и запушить в `main`.
 
 ---
 
-#### Task 4.2: Subagent Reporter + Courier Delivery Architecture
+#### Slice 4.2: Subagent Reporter + Courier Delivery Architecture
 - **Primary Source / Evidence:** Track 4 specification (`track-4-subagents-persistence.md`), `/tmp/diffuzmetall-adapter/src/protocol/subagents/`.
 - **Touched Files:**
   - Create: `src/runner/subagent-docs.ts` (~95 строк, <200)
   - Create: `src/runner/subagent-delivery.ts` (~175 строк, <200)
   - Modify: `src/runner/subagent.ts` (~165 строк, <200)
   - Test: `tests/subagent-courier-delivery.test.ts`
-- **AP Gates:** AP-010 (Thin Bridge), AP-019 (<200 lines), AP-026 (ACID Persistence), AP-045 (Debounced Batching).
-
-- **ЧТО ДЕЛАТЬ (DO):**
-  - [ ] Создать `SubagentsDoc` (`scope: conversation`, `history: latest`): хранить состояние агентов, `outbox`, `batchNumber`, `sending`, `deliveryHold`.
-  - [ ] Реализовать `Reporter Task` (`ownership: { kind: "conversation" }, background: true`): ожидает `submission.wait()`, считывает `AssistantEntry`, пишет отчет в `SubagentsDoc.outbox` и гарантирует наличие `Courier`.
-  - [ ] Реализовать `Courier Task`:
-    - Фаза `gather`: пауза `50ms` (`await runtime.sleep(now + 50)`) для пакетирования отчетов от параллельных сабагентов.
-    - Фаза `send`: отправка батча в родительский тред через `parent.submit({ content, whenBusy: "followUp", requestId })`.
-  - [ ] Использовать детерминированный `requestId: "subagent-batch:${task.id}:${batch}"` для предотвращения дублей сообщений.
-  - [ ] Написать TDD-тесты: батчинг параллельных сабагентов, доставка в занятого родителя (`whenBusy: followUp`), восстановление состояния при рестарте.
-
-- **ЧЕГО НЕ ДЕЛАТЬ (DO NOT):**
-  - ⛔ НЕ блокировать родительский диалог при синхронном ожидании фоновых сабагентов.
-  - ⛔ НЕ отправлять отчеты повторно при сбоях (использовать детерминированный `requestId`).
-  - ⛔ НЕ объединять `SubagentsDoc` и логику `Courier` в один файл (строго разделять на `subagent-docs.ts` и `subagent-delivery.ts` ради AP-019).
-  - ⛔ НЕ использовать monkey-patching ядра BB — отправка идет стандартным `parent.submit()`.
-
-- [ ] **Review Gate 4.2:** Запустить субтред-ревьюер по AP-010, AP-019, AP-026, AP-045.
-  - Критерий прохождения: Тесты доставки и восстановления зеленые, все файлы < 200 строк, вердикт `VERDICT: PASS`.
-- [ ] **Version Bump 4.2:** Повысить версию до **`0.2.36`** в `package.json`, закоммитить:
-  `chore(release): bump version to 0.2.36 (Subagent Reporter + Courier delivery)`.
+- **Applicable AP Gates:** AP-010 (Thin Bridge), AP-019 (<200 lines), AP-026 (ACID Persistence), AP-045 (Debounced Batching).
+- [ ] **[S8: Execute Slice]:**
+  - Реализовать `SubagentsDoc` (`scope: conversation`, `history: latest`).
+  - Реализовать `Reporter Task` (`ownership: { kind: "conversation" }, background: true`): ожидает `submission.wait()`, считывает отчет, кладет в `outbox`, гарантирует `Courier`.
+  - Реализовать `Courier Task` (50ms gather debounce, `parent.submit({ whenBusy: "followUp", requestId })` с детерминированным `requestId`).
+  - TDD-тесты: параллельный батчинг, доставка в занятого родителя, восстановление при рестарте.
+- [ ] **[S9: Verify Gate]:** Ревью по `arch-rules-implementation-review`.
+- [ ] **[S10: Version Bump]:** Повысить версию до **`0.2.36`** в `package.json`, закоммитить и запушить в `main`.
 
 ---
 
-#### Task 4.3: Durable Binding Store (Persistent Thread Mapping in SQLite)
+#### Slice 4.3: Durable Binding Store (Persistent Thread Mapping in SQLite)
 - **Primary Source / Evidence:** Track 4 specification (`track-4-subagents-persistence.md`), `/tmp/diffuzmetall-adapter/src/store/binding-store.ts`.
 - **Touched Files:**
   - Create: `src/runner/binding-docs.ts` (~110 строк, <200)
@@ -258,63 +185,31 @@
   - Modify: `src/host/session.ts` (сокращается до ~195 строк)
   - Modify: `src/host/session-registry.ts`
   - Test: `tests/durable-binding-store.test.ts`
-- **AP Gates:** AP-010 (Separation of Concerns), AP-019 (<200 / <250 lines), AP-026 (Persistent Storage).
-
-- **ЧТО ДЕЛАТЬ (DO):**
-  - [ ] Создать `BindingDoc` (`scope: conversation`) и `BindingIndexDoc` (`scope: session`) для персистентной связки `bbThreadId <-> conversationId`.
-  - [ ] В раннере добавить обработчики RPC `register_binding` (транзакционный коммит в SQLite) и `get_all_bindings`.
-  - [ ] В хосте реализовать `DurableBindingManager`: L1 in-memory кэш для микросекундных чтений + RPC-запросы к раннеру на запись.
-  - [ ] Реализовать offline fallback через `node:sqlite` в режиме `readOnly: true` для холодного старта хоста до запуска раннера.
-  - [ ] Рефакторить `session.ts`: удалить монолитные `Map`, делегировать вызовы в `DurableBindingManager`.
-  - [ ] Написать TDD-тесты: сохранение связки, восстановление связок после перезапуска хоста, offline-чтение.
-
-- **ЧЕГО НЕ ДЕЛАТЬ (DO NOT):**
-  - ⛔ НЕ писать в `session.sqlite` напрямую из процесса хоста в обход раннера (раннер держит эксклюзивный замок базы; хост пишет ТОЛЬКО через RPC к раннеру).
-  - ⛔ НЕ хранить связки тредов исключительно в оперативной памяти `Map`.
-  - ⛔ НЕ допускать размер `session.ts` более 250 строк.
-
-- [ ] **Review Gate 4.3:** Запустить субтред-ревьюер по AP-010, AP-019, AP-026.
-  - Критерий прохождения: Тесты персистентности и холодного старта зеленые, `session.ts` < 200 строк, вердикт `VERDICT: PASS`.
-- [ ] **Version Bump 4.3:** Повысить версию до **`0.2.37`** в `package.json`, закоммитить:
-  `chore(release): bump version to 0.2.37 (DurableBindingStore SQLite persistence)`.
+- **Applicable AP Gates:** AP-010 (Separation of Concerns), AP-019 (<200 / <250 lines), AP-026 (Persistent Storage).
+- [ ] **[S8: Execute Slice]:**
+  - Создать `BindingDoc` (`scope: conversation`) и `BindingIndexDoc` (`scope: session`).
+  - В раннере добавить RPC `register_binding` и `get_all_bindings`.
+  - В хосте реализовать `DurableBindingManager`: L1 cache + RPC запись + offline fallback `node:sqlite` (`readOnly: true`).
+  - Рефакторинг `session.ts` (<200 строк). TDD-тесты холодного старта и восстановления.
+- [ ] **[S9: Verify Gate]:** Ревью по `arch-rules-implementation-review`.
+- [ ] **[S10: Version Bump]:** Повысить версию до **`0.2.37`** в `package.json`, закоммитить и запушить в `main`.
 
 ---
 
 ### Phase 5: Verification, Bundling & Cycle 93 Ledger
 
-#### Task 5.1: Full Verification Suite & Bundle Rebuild
-- **Touched Files:**
-  - Build: `dist/runner/index.js`, `dist/host.js`, `dist/server.js`
-- **AP Gates:** AP-019 (Full Line Audit), AP-029 (Strict Types), AP-071 (Verification Before Claims).
-
-- **ЧТО ДЕЛАТЬ (DO):**
-  - [ ] Запустить `npx tsc --noEmit` и убедиться в отсутствии ошибок компиляции.
-  - [ ] Запустить полный сьют `npm test` (все 235+ тестов обязаны проходить, 0 fail, 0 skip).
-  - [ ] Запустить аудит длины строк по всем файлам `src/runner/` (<200) и `src/host/` (<250).
-  - [ ] Выполнить чистую сборку бандлов `npm run build`.
-  - [ ] Запустить `npm run doctor` и зафиксировать вывод.
-
-- **ЧЕГО НЕ ДЕЛАТЬ (DO NOT):**
-  - ⛔ НЕ заявлять об успехе до получения реального вывода терминала (AP-071).
-  - ⛔ НЕ игнорировать ни единого предупреждения `npm test` или компилятора.
-
-- [ ] **Review Gate 5.1:** Запустить итоговый субтред-ревьюер на весь diff Cycle 93 по чек-листу `arch-rules-implementation-review`.
-  - Критерий прохождения: 100% соблюдение AP-правил, отсутствие регрессий, вердикт `VERDICT: PASS`.
-- [ ] **Version Bump 5.1:** Повысить версию до **`0.2.38`** в `package.json`, закоммитить:
-  `chore(release): bump version to 0.2.38 (Full verification and clean bundles)`.
+#### Slice 5.1: Full Verification Suite & Bundle Rebuild
+- **Touched Files:** Build: `dist/runner/index.js`, `dist/host.js`, `dist/server.js`.
+- **Applicable AP Gates:** AP-019 (Full Line Audit), AP-029 (Strict Types), AP-071 (Verification Before Claims).
+- [ ] **[S8: Execute Slice]:** `npx tsc --noEmit`, `npm test` (все тесты pass), аудит AP-019, чистый билд `npm run build`, `npm run doctor`.
+- [ ] **[S9: Verify Gate]:** Итоговый сквозной ревьюер по `arch-rules-implementation-review` на весь цикл.
+- [ ] **[S10: Version Bump]:** Повысить версию до **`0.2.38`** в `package.json`, закоммитить и запушить в `main`.
 
 ---
 
-#### Task 5.2: Release, Ledger & Memory Update
-- **Touched Files:**
-  - Modify: `package.json` (финальный релизный маркер)
-  - Modify: `docs/arch-improvement/ledger.md`
-  - Modify: `CHANGELOG.md`
-- **AP Gates:** AP-010 (Traceability), Gate 7 (Write-back).
-
-- **ЧТО ДЕЛАТЬ (DO):**
-  - [ ] Оформить подробный раздел `Cycle 93` в `docs/arch-improvement/ledger.md`.
-  - [ ] Обновить `CHANGELOG.md` с описанием всех нововведений и закрытых PR.
-  - [ ] Сохранить ключевые уроки цикла в память GBrain.
-
-- [ ] **Review Gate 5.2:** Проверка полноты артефактов релиза. Вердикт `VERDICT: PASS`.
+#### Slice 5.2: Release, Ledger & Memory Update [S10–S12]
+- **Touched Files:** `docs/arch-improvement/ledger.md`, `CHANGELOG.md`.
+- **Applicable AP Gates:** AP-010 (Traceability), Gate 7 (Write-back).
+- [ ] **[S10: Ledger Update]:** Оформить раздел `Cycle 93` в `docs/arch-improvement/ledger.md` и обновить `CHANGELOG.md`.
+- [ ] **[S11: Learn Gate]:** Зафиксировать выученные архитектурные уроки в GBrain через `remember`.
+- [ ] **[S12: Stop]:** Финальный релизный отчет и статус завершения Cycle 93.
