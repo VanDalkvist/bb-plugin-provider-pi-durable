@@ -248,7 +248,12 @@ test("startTaskGraphBridge publishes on change only", (t) => {
 	current = {};
 	notify?.();
 	t.mock.timers.tick(50);
-	assert.equal(emitted.length, 2, "an empty graph leaves the last known panel in place");
+	assert.equal(emitted.length, 3, "an empty graph emits a final snapshot with all tasks completed");
+	assert.deepEqual(emitted[2], [{ step: "#1 assistant turn", status: "completed" }]);
+
+	notify?.();
+	t.mock.timers.tick(50);
+	assert.equal(emitted.length, 3, "an unchanged empty graph must not re-emit");
 
 	bridge.unsubscribe();
 });
@@ -325,4 +330,122 @@ test("taskNames: a name is one bounded line, and no registry changes nothing", (
 
 	assert.deepEqual(taskSteps(tasks), [{ step: "#3 tool · execute", status: "active" }]);
 });
+
+test("taskSteps: retains completed tasks as completed when evicted from live graph", () => {
+	const names = new TaskNames();
+	const known = new Map<string, BBPlanStep>();
+
+	// Tick 1: generation running and child tool executing
+	const g1 = graph({
+		"1": node(1, "pi.generation", { status: "running", phase: "tools" }),
+		"2": node(2, "pi.tool", { status: "running", phase: "execute" }, 1),
+	});
+	const steps1 = taskSteps(g1, names, known);
+	assert.deepEqual(steps1, [
+		{ step: "#1 assistant turn", status: "active" },
+		{ step: "  #2 tool · execute", status: "active" },
+	]);
+
+	// Tick 2: tool completed and evicted from TaskGraph (terminal eviction)
+	const g2 = graph({
+		"1": node(1, "pi.generation", { status: "running", phase: "tools" }),
+	});
+	const steps2 = taskSteps(g2, names, known);
+	assert.deepEqual(steps2, [
+		{ step: "#1 assistant turn", status: "active" },
+		{ step: "  #2 tool · execute", status: "completed" },
+	]);
+
+	// Tick 3: new tool started under same generation
+	const g3 = graph({
+		"1": node(1, "pi.generation", { status: "running", phase: "tools" }),
+		"3": node(3, "pi.tool", { status: "running", phase: "execute" }, 1),
+	});
+	const steps3 = taskSteps(g3, names, known);
+	assert.deepEqual(steps3, [
+		{ step: "#1 assistant turn", status: "active" },
+		{ step: "  #2 tool · execute", status: "completed" },
+		{ step: "  #3 tool · execute", status: "active" },
+	]);
+});
+
+test("startTaskGraphBridge: emits final snapshot when graph empties with all steps completed and no spinners", (t) => {
+	t.mock.timers.enable({ apis: ["setTimeout"] });
+	let current: { tasks?: TaskGraph } = {};
+	let notify: (() => void) | undefined;
+	const view = {
+		current: () => current,
+		subscribe: (listener: () => void) => {
+			notify = listener;
+			return () => {
+				notify = undefined;
+			};
+		},
+	} as unknown as DurableViewSource;
+
+	const emitted: BBPlanStep[][] = [];
+	const bridge = startTaskGraphBridge(view, (event) => emitted.push(event.steps));
+
+	// 1. Graph with active generation and active subagent
+	current = {
+		tasks: graph({
+			"1": node(1, "pi.generation", { status: "running", phase: "tools" }),
+			"2": node(2, "pi.tool", { status: "running", phase: "execute" }, 1),
+		}),
+	};
+	notify?.();
+	t.mock.timers.tick(50);
+	assert.equal(emitted.length, 1);
+	assert.deepEqual(emitted[0], [
+		{ step: "#1 assistant turn", status: "active" },
+		{ step: "  #2 tool · execute", status: "active" },
+	]);
+
+	// 2. Graph becomes empty (turn finishes, terminal eviction)
+	current = { tasks: graph({}) };
+	notify?.();
+	t.mock.timers.tick(50);
+
+	assert.equal(emitted.length, 2, "final snapshot must be emitted when graph empties");
+	const finalSteps = emitted[1];
+	assert.equal(finalSteps.length, 2);
+	// All steps must be completed, none active or pending (no hanging spinners in BB plan panel)
+	for (const step of finalSteps) {
+		assert.equal(step.status, "completed", `step ${step.step} must have status completed`);
+	}
+	assert.deepEqual(finalSteps, [
+		{ step: "#1 assistant turn", status: "completed" },
+		{ step: "  #2 tool · execute", status: "completed" },
+	]);
+
+	// 3. Repeated empty tick must not re-emit
+	notify?.();
+	t.mock.timers.tick(50);
+	assert.equal(emitted.length, 2, "subsequent empty graph tick must not emit duplicate snapshot");
+
+	bridge.unsubscribe();
+});
+
+test("taskNames: subagent tool displays '#id subagent: <task>'", () => {
+	const names = new TaskNames();
+	names.learn(
+		runningCall("call-sub-1", "subagent", 2, {
+			task: "run all unit tests and verify output",
+		}),
+	);
+
+	const steps = taskSteps(
+		graph({
+			"1": node(1, "pi.generation", { status: "running", phase: "tools" }),
+			"2": node(2, "pi.tool", { status: "running", phase: "execute" }, 1),
+		}),
+		names,
+	);
+
+	assert.deepEqual(steps, [
+		{ step: "#1 assistant turn", status: "active" },
+		{ step: "  #2 subagent: run all unit tests and verify output", status: "active" },
+	]);
+});
+
 

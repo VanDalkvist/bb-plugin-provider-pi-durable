@@ -12,7 +12,7 @@ const KIND_NAMES: Record<string, string> = {
 };
 
 /** Argument fields worth showing, in the order that reads best for the tool. */
-const ARG_KEYS = ["command", "path", "file_path", "pattern", "query", "url", "prompt"];
+const ARG_KEYS = ["command", "task", "path", "file_path", "pattern", "query", "url", "prompt"];
 
 function clip(text: string): string {
 	const oneLine = text.replace(/\s+/g, " ").trim();
