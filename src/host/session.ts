@@ -44,6 +44,7 @@ export class PiThreadSession {
 		this.runner = new RunnerProcess({
 			cwd: options.cwd || process.cwd(),
 			args: buildRunnerArgs(options),
+			prompts: { scratchDir: options.scratchDir, systemPrompt: options.systemPrompt, appendSystemPrompt: options.appendSystemPrompt },
 			env: options.shellEnvOverrides,
 			onEvent: (event) => this.handleRunnerEvent(event),
 			onChannelMessage: (msg: any) => {
