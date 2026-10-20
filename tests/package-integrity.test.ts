@@ -58,8 +58,11 @@ test("package.json integrity: runtime dependencies contain all modules imported 
   assert.ok(deps.includes("@earendil-works/pi-durable"), "missing @earendil-works/pi-durable");
   assert.ok(deps.includes("@earendil-works/pi-coding-agent"), "missing @earendil-works/pi-coding-agent");
   assert.ok(deps.includes("@earendil-works/pi-codemode"), "missing @earendil-works/pi-codemode");
-  assert.strictEqual(pkg.dependencies["@earendil-works/pi-durable"], "^1.2.0");
-  assert.strictEqual(pkg.dependencies["@earendil-works/pi-coding-agent"], "^1.2.0");
+  assert.strictEqual(pkg.dependencies["@earendil-works/pi-durable"], "^1.3.0");
+  assert.strictEqual(pkg.dependencies["@earendil-works/pi-coding-agent"], "^1.3.0");
+  assert.strictEqual(pkg.dependencies["@earendil-works/pi-codemode"], "^1.3.0");
   assert.ok(deps.includes("proper-lockfile"), "missing proper-lockfile");
   assert.ok(deps.includes("zod"), "missing zod");
+  assert.strictEqual(pkg.overrides?.["@earendil-works/chord"], "^1.3.0");
+  assert.strictEqual(pkg.overrides?.["@earendil-works/pi-ai"], "^1.3.0");
 });
