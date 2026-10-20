@@ -171,13 +171,16 @@
   - Modify: `src/runner/subagent.ts` (~165 строк, <200)
   - Test: `tests/subagent-courier-delivery.test.ts`
 - **Applicable AP Gates:** AP-010 (Thin Bridge), AP-019 (<200 lines), AP-026 (ACID Persistence), AP-045 (Debounced Batching).
-- [ ] **[S8: Execute Slice]:**
-  - Реализовать `SubagentsDoc` (`scope: conversation`, `history: latest`).
-  - Реализовать `Reporter Task` (`ownership: { kind: "conversation" }, background: true`): ожидает `submission.wait()`, считывает отчет, кладет в `outbox`, гарантирует `Courier`.
-  - Реализовать `Courier Task` (50ms gather debounce, `parent.submit({ whenBusy: "followUp", requestId })` с детерминированным `requestId`).
-  - TDD-тесты: параллельный батчинг, доставка в занятого родителя, восстановление при рестарте.
-- [ ] **[S9: Verify Gate]:** Ревью по `arch-rules-implementation-review`.
-- [ ] **[S10: Version Bump]:** Повысить версию до **`0.2.36`** в `package.json`, закоммитить и запушить в `main`.
+- [x] **[S8: Execute Slice]:**
+  - Реализован `SubagentsDoc` (`scope: conversation`, `history: latest`).
+  - Реализован `Reporter Task` (`ownership: { kind: "conversation" }, background: true`): единоличное владение submit в фоне, считывание ответа из `AssistantEntry`, запись в `outbox`, обеспечение `Courier`.
+  - Реализован `Courier Task` (50ms gather debounce, `parent.submit({ whenBusy: "followUp", requestId })` с детерминированным `requestId` и заголовком `[Subagent Reports Available]:\n\n`).
+  - Человекочитаемые имена задач через `nativeChildTitle(task, "worker")`.
+  - TDD-тесты в `tests/subagent-courier-delivery.test.ts` (8/8 green).
+- [x] **[S9: Verify Gate]:** Двухконтурный гейт пройден по обновленным жестким правилам с терминальными receipts:
+  - S9a (Architecture Review `thr_9dczkheafi`): **`VERDICT: PASS`** (AP-010, AP-012, AP-013/034 single submit ownership, AP-019 <200 строк, AP-026, AP-028, AP-029).
+  - S9b (Product Review `thr_xpxh5crnm5`): **`VERDICT: PASS`** (Spec-to-Code Gap Analysis, Single Execution, конверт `[Subagent Reports Available]`, человекочитаемые имена, отсутствие Silent Void).
+- [x] **[S10: Version Bump]:** Повысить версию до **`0.2.37`** в `package.json`, закоммитить и запушить в `main`.
 
 ---
 
