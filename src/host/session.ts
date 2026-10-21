@@ -75,6 +75,9 @@ export class PiThreadSession {
 	public getThreadIdForConversation(conversationId: string | number): string | undefined {
 		return this.bindings.getThreadId(conversationId);
 	}
+	public getConversationIdForThread(threadId: string): string | undefined {
+		return this.bindings.getConversationId(threadId);
+	}
 
 	public markSubagentActive(id: string | number, meta: { task: string; parentToolCallId?: string }): void {
 		this.mirrors.markActive(id, meta);

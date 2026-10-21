@@ -99,8 +99,13 @@ export class SessionRegistry {
 				? params.conversationId.trim()
 				: undefined;
 
+			const existingBoundConvId = typeof (sharedSession as any).getConversationIdForThread === "function"
+				? (sharedSession as any).getConversationIdForThread(threadId)
+				: undefined;
+
 			const targetConversationId = conversationId
 				?? paramConvId
+				?? existingBoundConvId
 				?? (text && typeof sharedSession.findSubagentConversationForTask === "function"
 					? sharedSession.findSubagentConversationForTask(text)
 					: undefined);

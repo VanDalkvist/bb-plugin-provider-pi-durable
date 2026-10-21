@@ -85,7 +85,10 @@ export async function handleTurnStart(
 	}
 
 	const { conversationId } = parseProviderThreadId(providerThreadId);
-	let targetConversationId = conversationId;
+	const boundConvId = typeof (session as any).getConversationIdForThread === "function"
+		? (session as any).getConversationIdForThread(params.threadId)
+		: undefined;
+	let targetConversationId = conversationId ?? boundConvId;
 	if (!targetConversationId && typeof session.findSubagentConversationForTask === "function") {
 		targetConversationId = session.findSubagentConversationForTask(text);
 	}
@@ -93,7 +96,13 @@ export async function handleTurnStart(
 		? session.getSubagentState(targetConversationId)
 		: undefined;
 
-	if (mirrorState?.status === "running") {
+	const isInitialMirrorTurn = mirrorState !== undefined && (
+		mirrorState.task.trim() === text.trim() ||
+		mirrorState.task.trim().startsWith(text.trim()) ||
+		text.trim().startsWith(mirrorState.task.trim())
+	);
+
+	if (isInitialMirrorTurn && mirrorState?.status === "running") {
 		if (typeof session.registerThread === "function") {
 			session.registerThread(params.threadId, targetConversationId);
 		}
@@ -111,7 +120,7 @@ export async function handleTurnStart(
 		return;
 	}
 
-	if (mirrorState?.status === "completed") {
+	if (isInitialMirrorTurn && mirrorState?.status === "completed") {
 		if (typeof session.registerThread === "function") {
 			session.registerThread(params.threadId, targetConversationId);
 		}
