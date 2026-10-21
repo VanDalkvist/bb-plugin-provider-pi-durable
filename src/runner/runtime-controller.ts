@@ -43,12 +43,20 @@ export function createDurableController(ctx: ControllerContext): DurableControll
 	};
 
 	const watchAnswer = (submission: Submission): void => {
-		void submission.wait(runtimeContext).then((settled) => {
+		void submission.wait(runtimeContext).then(async (settled) => {
 			if (settled.status === "unanswered" && settled.reason !== "aborted") {
 				ctx.notice(
 					"error",
 					`No answer: ${settled.reason}${settled.detail === undefined ? "" : ` ${JSON.stringify(settled.detail)}`}`,
 				);
+			}
+			if (ctx.extensionRunner) {
+				try {
+					await ctx.extensionRunner.emit({ type: "agent_end", messages: [] });
+					await ctx.extensionRunner.emit({ type: "agent_settled", aborted: settled.status === "unanswered" && settled.reason === "aborted" });
+				} catch (err) {
+					ctx.notice("warning", `agent lifecycle hook error: ${err instanceof Error ? err.message : String(err)}`);
+				}
 			}
 		}, ctx.fail);
 	};
@@ -92,25 +100,38 @@ export function createDurableController(ctx: ControllerContext): DurableControll
 
 		compact: (instructions) =>
 			command(async () => {
+				if (ctx.extensionRunner) {
+					try {
+						await ctx.extensionRunner.emit({
+							type: "session_before_compact",
+							preparation: { firstKeptEntryId: "", messagesToSummarize: [], turnPrefixMessages: [], isSplitTurn: false, tokensBefore: 0, fileOps: { read: new Set(), written: new Set(), edited: new Set() }, settings: {} as any },
+							branchEntries: [], customInstructions: instructions, reason: "manual", willRetry: false, signal: new AbortController().signal,
+						});
+					} catch (err) {
+						ctx.notice("warning", `session_before_compact error: ${err instanceof Error ? err.message : String(err)}`);
+					}
+				}
 				const id = await ctx.getCurrent().compact(instructions, runtimeContext);
 				void ctx.opened.waitForTask(id, runtimeContext).then(async (receipt) => {
 					const outcome = receipt.state.outcome;
 					if (outcome.status === "completed") {
+						if (ctx.extensionRunner) {
+							void ctx.extensionRunner.emit({
+								type: "session_compact",
+								compactionEntry: { id: outcome.result?.entryId ?? "", type: "compaction", summary: "", tokensBefore: 0, tokensAfter: 0 } as any,
+								fromExtension: false,
+								reason: "manual",
+								willRetry: false,
+							}).catch(() => {});
+						}
 						const { entryId, submissionId } = outcome.result;
-						const status =
-							submissionId === undefined
-								? undefined
-								: (await (await ctx.opened.submission(submissionId, runtimeContext))?.status(runtimeContext))?.status;
-						ctx.notice(
-							"info",
-							entryId !== undefined || status === "done"
-								? "Compacted."
-								: status === "queued"
-									? "Compaction summary queued; it is placed at the next turn boundary."
-									: status === "unanswered"
-										? "Compaction summary dropped: the context changed under it."
-										: "Nothing to compact: the context fits in the recent window that is kept verbatim.",
-						);
+						const status = submissionId === undefined ? undefined
+							: (await (await ctx.opened.submission(submissionId, runtimeContext))?.status(runtimeContext))?.status;
+						const msg = entryId !== undefined || status === "done" ? "Compacted."
+							: status === "queued" ? "Compaction summary queued; it is placed at the next turn boundary."
+							: status === "unanswered" ? "Compaction summary dropped: the context changed under it."
+							: "Nothing to compact: the context fits in the recent window that is kept verbatim.";
+						ctx.notice("info", msg);
 					} else if (outcome.status === "aborted") {
 						ctx.notice("info", "Compaction aborted.");
 					} else {

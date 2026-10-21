@@ -82,17 +82,33 @@ export async function setupExtensionRunner(options: SetupExtensionRunnerOptions)
 
 	const actions: ExtensionActions = {
 		getActiveTools: () => activeToolNames,
-		getAllTools: () =>
-			runner.getAllRegisteredTools().map((t) => ({
-				name: t.definition.name,
-				description: t.definition.description,
-				parameters: t.definition.parameters,
-				promptGuidelines: t.definition.promptGuidelines,
-				exposure: t.definition.exposure ?? "direct",
-				namespace: t.definition.namespace,
-				annotations: t.definition.annotations,
-				sourceInfo: t.sourceInfo,
-			})),
+		getAllTools: () => {
+			const map = new Map<string, unknown>();
+			if (options.getCallableTools) {
+				for (const t of options.getCallableTools()) {
+					map.set(t.name, {
+						name: t.name,
+						description: t.description,
+						parameters: t.parameters,
+						exposure: "direct",
+						reachesTools: t.name === "codemode" || t.name === "tool_search",
+					});
+				}
+			}
+			for (const t of runner.getAllRegisteredTools()) {
+				map.set(t.definition.name, {
+					name: t.definition.name,
+					description: t.definition.description,
+					parameters: t.definition.parameters,
+					promptGuidelines: t.definition.promptGuidelines,
+					exposure: t.definition.exposure ?? "direct",
+					namespace: t.definition.namespace,
+					annotations: t.definition.annotations,
+					sourceInfo: t.sourceInfo,
+				});
+			}
+			return Array.from(map.values()) as any;
+		},
 		getSettings: () => ({
 			...(options.settingsManager?.getGlobalSettings() ?? {}),
 			...(options.settingsManager?.getProjectSettings() ?? {}),

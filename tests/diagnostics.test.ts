@@ -20,11 +20,14 @@ test("Pi Diagnostics: inspectPiEnvironment returns well-formed report", async ()
 test("Pi Diagnostics: correctly classifies supported vs unsupported extension hooks", () => {
   assert.ok(SUPPORTED_EXTENSION_HOOKS.has("session_start"));
   assert.ok(SUPPORTED_EXTENSION_HOOKS.has("before_agent_start"));
+  assert.ok(SUPPORTED_EXTENSION_HOOKS.has("agent_end"));
+  assert.ok(SUPPORTED_EXTENSION_HOOKS.has("agent_settled"));
+  assert.ok(SUPPORTED_EXTENSION_HOOKS.has("session_before_compact"));
+  assert.ok(SUPPORTED_EXTENSION_HOOKS.has("session_compact"));
   assert.ok(SUPPORTED_EXTENSION_HOOKS.has("tool_call"));
   assert.ok(SUPPORTED_EXTENSION_HOOKS.has("tool_result"));
   assert.ok(SUPPORTED_EXTENSION_HOOKS.has("session_shutdown"));
 
-  assert.ok(!SUPPORTED_EXTENSION_HOOKS.has("agent_settled"));
   assert.ok(!SUPPORTED_EXTENSION_HOOKS.has("agent_before_settle"));
   assert.ok(!SUPPORTED_EXTENSION_HOOKS.has("turn_start"));
   assert.ok(!SUPPORTED_EXTENSION_HOOKS.has("agent_start"));

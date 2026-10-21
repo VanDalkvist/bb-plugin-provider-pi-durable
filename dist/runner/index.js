@@ -902,12 +902,20 @@ function createDurableController(ctx) {
     return queue;
   };
   const watchAnswer = (submission) => {
-    void submission.wait(runtimeContext).then((settled) => {
+    void submission.wait(runtimeContext).then(async (settled) => {
       if (settled.status === "unanswered" && settled.reason !== "aborted") {
         ctx.notice(
           "error",
           `No answer: ${settled.reason}${settled.detail === void 0 ? "" : ` ${JSON.stringify(settled.detail)}`}`
         );
+      }
+      if (ctx.extensionRunner) {
+        try {
+          await ctx.extensionRunner.emit({ type: "agent_end", messages: [] });
+          await ctx.extensionRunner.emit({ type: "agent_settled", aborted: settled.status === "unanswered" && settled.reason === "aborted" });
+        } catch (err) {
+          ctx.notice("warning", `agent lifecycle hook error: ${err instanceof Error ? err.message : String(err)}`);
+        }
       }
     }, ctx.fail);
   };
@@ -946,16 +954,39 @@ function createDurableController(ctx) {
       return watchAnswer(await ctx.getCurrent().submit({ type: "input", content: input, whenBusy }, runtimeContext));
     }),
     compact: (instructions) => command(async () => {
+      if (ctx.extensionRunner) {
+        try {
+          await ctx.extensionRunner.emit({
+            type: "session_before_compact",
+            preparation: { firstKeptEntryId: "", messagesToSummarize: [], turnPrefixMessages: [], isSplitTurn: false, tokensBefore: 0, fileOps: { read: /* @__PURE__ */ new Set(), written: /* @__PURE__ */ new Set(), edited: /* @__PURE__ */ new Set() }, settings: {} },
+            branchEntries: [],
+            customInstructions: instructions,
+            reason: "manual",
+            willRetry: false,
+            signal: new AbortController().signal
+          });
+        } catch (err) {
+          ctx.notice("warning", `session_before_compact error: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
       const id = await ctx.getCurrent().compact(instructions, runtimeContext);
       void ctx.opened.waitForTask(id, runtimeContext).then(async (receipt) => {
         const outcome = receipt.state.outcome;
         if (outcome.status === "completed") {
+          if (ctx.extensionRunner) {
+            void ctx.extensionRunner.emit({
+              type: "session_compact",
+              compactionEntry: { id: outcome.result?.entryId ?? "", type: "compaction", summary: "", tokensBefore: 0, tokensAfter: 0 },
+              fromExtension: false,
+              reason: "manual",
+              willRetry: false
+            }).catch(() => {
+            });
+          }
           const { entryId, submissionId } = outcome.result;
           const status = submissionId === void 0 ? void 0 : (await (await ctx.opened.submission(submissionId, runtimeContext))?.status(runtimeContext))?.status;
-          ctx.notice(
-            "info",
-            entryId !== void 0 || status === "done" ? "Compacted." : status === "queued" ? "Compaction summary queued; it is placed at the next turn boundary." : status === "unanswered" ? "Compaction summary dropped: the context changed under it." : "Nothing to compact: the context fits in the recent window that is kept verbatim."
-          );
+          const msg = entryId !== void 0 || status === "done" ? "Compacted." : status === "queued" ? "Compaction summary queued; it is placed at the next turn boundary." : status === "unanswered" ? "Compaction summary dropped: the context changed under it." : "Nothing to compact: the context fits in the recent window that is kept verbatim.";
+          ctx.notice("info", msg);
         } else if (outcome.status === "aborted") {
           ctx.notice("info", "Compaction aborted.");
         } else {
@@ -1198,16 +1229,33 @@ async function setupExtensionRunner(options) {
   let sessionName;
   const actions = {
     getActiveTools: () => activeToolNames,
-    getAllTools: () => runner.getAllRegisteredTools().map((t) => ({
-      name: t.definition.name,
-      description: t.definition.description,
-      parameters: t.definition.parameters,
-      promptGuidelines: t.definition.promptGuidelines,
-      exposure: t.definition.exposure ?? "direct",
-      namespace: t.definition.namespace,
-      annotations: t.definition.annotations,
-      sourceInfo: t.sourceInfo
-    })),
+    getAllTools: () => {
+      const map = /* @__PURE__ */ new Map();
+      if (options.getCallableTools) {
+        for (const t of options.getCallableTools()) {
+          map.set(t.name, {
+            name: t.name,
+            description: t.description,
+            parameters: t.parameters,
+            exposure: "direct",
+            reachesTools: t.name === "codemode" || t.name === "tool_search"
+          });
+        }
+      }
+      for (const t of runner.getAllRegisteredTools()) {
+        map.set(t.definition.name, {
+          name: t.definition.name,
+          description: t.definition.description,
+          parameters: t.definition.parameters,
+          promptGuidelines: t.definition.promptGuidelines,
+          exposure: t.definition.exposure ?? "direct",
+          namespace: t.definition.namespace,
+          annotations: t.definition.annotations,
+          sourceInfo: t.sourceInfo
+        });
+      }
+      return Array.from(map.values());
+    },
     getSettings: () => ({
       ...options.settingsManager?.getGlobalSettings() ?? {},
       ...options.settingsManager?.getProjectSettings() ?? {}
@@ -1407,6 +1455,7 @@ async function mountExtensionBridge(location, modelRuntime, extensionsResult, re
         onNotice?.("error", `[Extension Error] ${err.extensionPath} (${err.event}): ${err.error}`);
       });
       try {
+        await new Promise((r) => setImmediate(r));
         const currentTools = registry.snapshot().tools().map((t) => t.tool.name);
         const beforeStart = await extensionRunner.emitBeforeAgentStart(
           { messageType: "user", prompt: "", images: void 0 },

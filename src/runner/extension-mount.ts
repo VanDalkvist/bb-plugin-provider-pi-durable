@@ -169,6 +169,7 @@ export async function mountExtensionBridge(
 				onNotice?.("error", `[Extension Error] ${err.extensionPath} (${err.event}): ${err.error}`);
 			});
 			try {
+				await new Promise((r) => setImmediate(r));
 				const currentTools = registry.snapshot().tools().map((t) => t.tool.name);
 				const beforeStart = await extensionRunner.emitBeforeAgentStart(
 					{ messageType: "user", prompt: "", images: undefined },
