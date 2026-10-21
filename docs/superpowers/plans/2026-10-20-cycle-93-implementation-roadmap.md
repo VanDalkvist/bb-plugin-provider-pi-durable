@@ -187,19 +187,22 @@
 #### Slice 4.3: Durable Binding Store (Persistent Thread Mapping in SQLite)
 - **Primary Source / Evidence:** Track 4 specification (`track-4-subagents-persistence.md`), `/tmp/diffuzmetall-adapter/src/store/binding-store.ts`.
 - **Touched Files:**
-  - Create: `src/runner/binding-docs.ts` (~110 строк, <200)
-  - Create: `src/host/durable-binding-store.ts` (~140 строк, <250)
-  - Modify: `src/host/session.ts` (сокращается до ~195 строк)
-  - Modify: `src/host/session-registry.ts`
+  - Create: `src/runner/binding-docs.ts` (39 строк, <200)
+  - Create: `src/runner/binding-commands.ts` (94 строки, <200)
+  - Create: `src/host/durable-binding-store.ts` (142 строки, <250)
+  - Modify: `src/host/session.ts` (<250 строк)
+  - Modify: `src/host/session-registry.ts` (<250 строк)
   - Test: `tests/durable-binding-store.test.ts`
 - **Applicable AP Gates:** AP-010 (Separation of Concerns), AP-019 (<200 / <250 lines), AP-026 (Persistent Storage).
-- [ ] **[S8: Execute Slice]:**
-  - Создать `BindingDoc` (`scope: conversation`) и `BindingIndexDoc` (`scope: session`).
-  - В раннере добавить RPC `register_binding` и `get_all_bindings`.
-  - В хосте реализовать `DurableBindingManager`: L1 cache + RPC запись + offline fallback `node:sqlite` (`readOnly: true`).
-  - Рефакторинг `session.ts` (<200 строк). TDD-тесты холодного старта и восстановления.
-- [ ] **[S9: Verify Gate]:** Ревью по `arch-rules-implementation-review`.
-- [ ] **[S10: Version Bump]:** Повысить версию до **`0.2.37`** в `package.json`, закоммитить и запушить в `main`.
+- [x] **[S8: Execute Slice]:**
+  - Созданы `BindingDoc` (`scope: conversation`) и `BindingIndexDoc` (`scope: session`).
+  - В раннере добавлены RPC `register_binding` и `get_all_bindings`.
+  - В хосте реализован `DurableBindingManager`: L1 cache + RPC запись + offline fallback `node:sqlite` (`readOnly: true`).
+  - Рефакторинг `session.ts` и `session-registry.ts`. Все 261 тест зеленые.
+- [x] **[S9: Verify Gate]:** Двухконтурный гейт пройден:
+  - S9a (Architecture Review `thr_azm9ytej6d`): **`VERDICT: PASS`** (AP-010, AP-019, AP-026, AP-029).
+  - S9b (Product Review `thr_vbhv45e8f9`): **`VERDICT: PASS`** (Persistent thread mapping, offline recovery, zero data loss).
+- [x] **[S10: Version Bump]:** Повысить версию до **`0.2.38`** в `package.json`, закоммитить (`155bef9`, `ef52a46`) и запушить в `main`.
 
 ---
 
@@ -208,15 +211,91 @@
 #### Slice 5.1: Full Verification Suite & Bundle Rebuild
 - **Touched Files:** Build: `dist/runner/index.js`, `dist/host.js`, `dist/server.js`.
 - **Applicable AP Gates:** AP-019 (Full Line Audit), AP-029 (Strict Types), AP-071 (Verification Before Claims).
-- [ ] **[S8: Execute Slice]:** `npx tsc --noEmit`, `npm test` (все тесты pass), аудит AP-019, чистый билд `npm run build`, `npm run doctor`.
-- [ ] **[S9: Verify Gate]:** Итоговый сквозной ревьюер по `arch-rules-implementation-review` на весь цикл.
-- [ ] **[S10: Version Bump]:** Повысить версию до **`0.2.38`** в `package.json`, закоммитить и запушить в `main`.
+- [x] **[S8: Execute Slice]:** `npx tsc --noEmit` (0 errors), `npm test` (все 261 тест pass), аудит AP-019 (100% compliance), чистый билд `npm run build`.
+- [x] **[S9: Verify Gate]:** Итоговый сквозной ревьюер по `arch-rules-implementation-review` на весь цикл.
+- [x] **[S10: Version Bump]:** Зафиксирована версия **`0.2.38`** в `package.json`, закоммичено и запушено в `main`.
 
 ---
 
 #### Slice 5.2: Release, Ledger & Memory Update [S10–S12]
 - **Touched Files:** `docs/arch-improvement/ledger.md`, `CHANGELOG.md`.
 - **Applicable AP Gates:** AP-010 (Traceability), Gate 7 (Write-back).
-- [ ] **[S10: Ledger Update]:** Оформить раздел `Cycle 93` в `docs/arch-improvement/ledger.md` и обновить `CHANGELOG.md`.
-- [ ] **[S11: Learn Gate]:** Зафиксировать выученные архитектурные уроки в GBrain через `remember`.
-- [ ] **[S12: Stop]:** Финальный релизный отчет и статус завершения Cycle 93.
+- [x] **[S10: Ledger Update]:** Оформлен раздел `Cycle 93` в `docs/arch-improvement/cycle-93/ledger.md`.
+- [x] **[S11: Learn Gate]:** Зафиксированы выученные архитектурные уроки в GBrain через `remember`.
+- [x] **[S12: Stop]:** Финальный релизный отчет и статус завершения Cycle 93.
+
+---
+
+### Phase 6: Subagent Product Scenarios & Watchdog Hardening (Cycle 96)
+
+**Goal:** Систематически покрыть детерминированными тестами продуктовые сценарии использования нативных сабагентов Beyond Boundaries: прерывание дочернего треда (`thread/stop`) с изоляцией от родителя, сквозная гонка раннего завершения (Early Agent End Race), конкурентность и изоляция параллельных сабагентов, стриминг Extended Thinking в теневом треде, и цепочки инструментов с diff-превью.
+
+#### Slice 6.1 (P0): Targeted Child Interruption & Stop Isolation (AP-013, AP-034)
+- **Primary Source / Evidence:** Анализ `handleThreadStop` (`src/host/bridge-router.ts:213`): при `intent === "interrupt"` на дочернем треде `parseProviderThreadId` возвращает `conversationId = undefined`, из-за чего `session.abort(undefined)` прерывает родительскую сессию (`conv 1`) вместо дочернего сабагента (`conv X`).
+- **Touched Files:**
+  - Modify: `src/host/bridge-router.ts` (резолв `session.getConversationIdForThread(params.threadId)` в `handleThreadStop` и `handleTurnSteer`, лимит < 250 строк)
+  - Modify: `src/host/session.ts` (таргетированный эмит `session.ended` и `turn.boundary: interrupted` конкретному дочернему треду, лимит < 250 строк)
+  - Test: `tests/subagent-stop-interruption.test.ts`
+- **Applicable AP Gates:** AP-010 (Thin Bridge), AP-013/034 (Single Side-Effect Ownership), AP-019 (<250 lines), AP-026 (Isolation).
+- [ ] **[S8: Execute Slice]:**
+  - TDD тест в `tests/subagent-stop-interruption.test.ts`: вызов `handleThreadStop` для дочернего треда прерывает строго сабагента (`conv X`), родительская сессия (`conv 1`) продолжает выполняться без абортов.
+  - Реализация таргетированного резолва conversationId в `handleThreadStop` и `handleTurnSteer`.
+  - Все тесты зеленые, `npx tsc --noEmit` чист.
+- [ ] **[S9: Verify Gate]:** Двухконтурный гейт S9 (S9a Architecture + S9b Product) с терминальными receipts.
+- [ ] **[S10: Version Bump]:** Повысить версию до **`0.2.41`** в `package.json`, закоммитить и запушить в `main`.
+
+---
+
+#### Slice 6.2 (P0): Early Completion Race & Watchdog Boundary Guarantee (AP-026, AP-028)
+- **Primary Source / Evidence:** Сабагент завершается молниеносно (20–50 мс) до того, как BB Server завершил `bb thread spawn` и прислал `turn/start`.
+- **Touched Files:**
+  - Test: `tests/subagent-early-completion-race.test.ts`
+- **Applicable AP Gates:** AP-010 (Thin Bridge), AP-019 (<200 / <250 lines), AP-026 (ACID & Event Buffer), AP-028 (Resilient Streaming).
+- [ ] **[S8: Execute Slice]:**
+  - Написать сквозной тест: `handleRunnerEvent(agent_end)` ➔ `SubagentMirrorManager.markCompleted` ➔ отложенный `handleTurnStart`.
+  - Подтвердить детерминированный эмит: `turn.open` (watchdog) ➔ `item.textDelta`/`item.textClose` (полный накопленный текст) ➔ `turn.boundary: completed`.
+  - Подтвердить очистку памяти через `consumeCompleted`.
+- [ ] **[S9: Verify Gate]:** Двухконтурный гейт S9 с терминальными receipts.
+- [ ] **[S10: Version Bump]:** Фиксация в `package.json` и коммит.
+
+---
+
+#### Slice 6.3 (P1): Parallel Subagents Concurrency & Event Buffer Isolation (AP-010, AP-045)
+- **Primary Source / Evidence:** Одновременный запуск двух или трёх параллельных сабагентов (`conv 101`, `conv 102`) в разных теневых тредах (`thr_child_1`, `thr_child_2`).
+- **Touched Files:**
+  - Test: `tests/subagent-parallel-concurrency.test.ts`
+- **Applicable AP Gates:** AP-010 (Pure Adapter), AP-019 (<200 / <250 lines), AP-045 (Debounced Batching).
+- [ ] **[S8: Execute Slice]:**
+  - Написать тест параллельного стриминга: одновременный поток runner events для двух разных conversationId.
+  - Подтвердить строгую изоляцию буферов в `SubagentMirrorManager` (`eventBuffers`, `outputTexts`) по `conversationId`.
+  - Подтвердить, что Courier батчит одновременные завершения в 50ms окне без конфликтов и дефекта Silent Void.
+- [ ] **[S9: Verify Gate]:** Двухконтурный гейт S9 с терминальными receipts.
+- [ ] **[S10: Version Bump]:** Повысить версию до **`0.2.42`** в `package.json`, закоммитить и запушить в `main`.
+
+---
+
+#### Slice 6.4 (P1): Extended Thinking & Multi-Tool Chain with Diff Preview (AP-019, AP-028)
+- **Primary Source / Evidence:** Сабагент генерирует Extended Thinking (`thinking_delta`) и цепочку инструментов (`bash` ➔ `read` ➔ `write` ➔ `edit`).
+- **Touched Files:**
+  - Test: `tests/subagent-thinking-and-multitool-stream.test.ts`
+- **Applicable AP Gates:** AP-019 (<200 / <250 lines), AP-028 (Resilient Streaming), AP-029 (Strict Types).
+- [ ] **[S8: Execute Slice]:**
+  - Написать тест стриминга Extended Thinking в теневой тред: проверка открытия reasoning-канала (иконка Brain), дельт текста и `item.textClose` без `parentRef`.
+  - Написать проверку цепочки инструментов: `write` и `edit` генерируют валидные `fileChange` дельты с git diff.
+  - Написать проверку tool execution error (`isError: true`): карточка закрывается статусом `failed`, тред не виснет.
+- [ ] **[S9: Verify Gate]:** Двухконтурный гейт S9 с терминальными receipts.
+- [ ] **[S10: Version Bump]:** Фиксация в `package.json` и коммит.
+
+---
+
+#### Slice 6.5 (P2): Multi-Turn Interactive Conversation Continuation (AP-026, AP-029)
+- **Primary Source / Evidence:** Пользователь продолжает диалог с сабагентом в дочернем треде (Turn 1 completed ➔ Turn 2 user prompt ➔ Turn 2 completed ➔ Turn 3 steer).
+- **Touched Files:**
+  - Test: `tests/subagent-interactive-continuation.test.ts`
+- **Applicable AP Gates:** AP-010 (Pure Adapter), AP-026 (Persistence & Context), AP-029 (Strict Types).
+- [ ] **[S8: Execute Slice]:**
+  - Написать тест непрерывного диалога: Turn 1 ➔ Turn 2 (вопрос пользователя и ответ сабагента) ➔ Turn 3 (руление через `turn/steer`).
+  - Подтвердить, что `handleTurnStart` и `handleTurnSteer` стабильно адресуют `conversationId` дочерней беседы, сохраняя контекст диалога в SQLite.
+- [ ] **[S9: Verify Gate]:** Двухконтурный гейт S9 с терминальными receipts.
+- [ ] **[S10: Version Bump]:** Повысить версию до **`0.2.43`** в `package.json`, закоммитить и запушить в `main`.
+
