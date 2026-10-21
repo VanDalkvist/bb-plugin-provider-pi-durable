@@ -52,7 +52,7 @@ const CREQ_REGEX = /^creq_[23456789abcdefghijkmnpqrstuvwxyz]{10}$/u;
 
 function resolveTargetConversationId(
 	params: { threadId: string; providerThreadId?: string },
-	session: { options?: { providerThreadId?: string }; getConversationIdForThread?: (t: string) => string | undefined },
+	session: { options?: { threadId?: string; providerThreadId?: string }; getConversationIdForThread?: (t: string) => string | undefined },
 ): string | undefined {
 	if (params.providerThreadId) {
 		const parsed = parseProviderThreadId(params.providerThreadId).conversationId;
@@ -60,7 +60,10 @@ function resolveTargetConversationId(
 	}
 	const bound = session.getConversationIdForThread?.(params.threadId);
 	if (bound) return bound;
-	return parseProviderThreadId(session.options?.providerThreadId ?? params.threadId).conversationId;
+	if (!session.options?.threadId || params.threadId === session.options.threadId) {
+		return parseProviderThreadId(session.options?.providerThreadId ?? params.threadId).conversationId;
+	}
+	return undefined;
 }
 
 export async function handleTurnStart(

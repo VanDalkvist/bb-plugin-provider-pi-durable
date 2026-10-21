@@ -620,3 +620,27 @@
   - **S9a Architecture Review:** `AP-010`, `AP-013`, `AP-019`, `AP-026`, `AP-028`, `AP-034` соблюдены. **VERDICT: PASS**.
   - **S9b Product Review:** Happy Path, Cold-Start, Error Recovery протестированы. **VERDICT: PASS**.
 
+### Slice 6.2 (P0): Early Completion Race & Watchdog Boundary Guarantee (AP-026, AP-028)
+
+| ID | Issue / Component | Severity | Rule | Disposition | Root Cause & Resolution |
+|---|---|---|---|---|---|
+| **F-96-2** | Ложное наследование родительского conversationId дочерними тредами при раннем завершении сабагента | **P0** | AP-010, AP-026, AP-028 | `fix-now` | В `resolveTargetConversationId` при отсутствии привязки дочернего треда ошибочно возвращался `conversationId` родительской сессии, из-за чего `findSubagentConversationForTask` блокировался, а быстрые сабагенты (до 50мс) зависали по 120s watchdog таймауту. Ограничено наследование: сессионный `providerThreadId` используется только если `params.threadId === session.options.threadId`. |
+
+#### Architecture Implementations
+- **`src/host/bridge-router.ts` (241 строка, AP-019 < 250):**
+  - Защита `resolveTargetConversationId`: если `params.threadId !== session.options.threadId`, функция возвращает `undefined` при отсутствии привязки, гарантируя вызов `findSubagentConversationForTask`.
+  - Для завершенных сабагентов (`status === "completed"`) `handleTurnStart` детерминированно отправляет `input.accepted` -> `turn.open` (watchdog safeguard) -> `item.textDelta`/`item.textClose` (накопленный текст) -> `turn.boundary: completed` и очищает память через `consumeCompleted`.
+- **`tests/subagent-early-completion-race.test.ts`:**
+  - Детерминированный unit-тест гонки раннего завершения с валидацией всех дельт против `threadDeltaSchema`.
+
+#### Verification Evidence
+- `npx tsc --noEmit`: **0 errors (exit code 0)**.
+- `node --test tests/subagent-early-completion-race.test.ts`: **1 / 1 pass (0 fails, 3.5ms)**.
+- `npm test`: **270 / 270 passing assertions across 14 test suites (0 failures, 0 skips)**.
+- `npm run build`: Сборка успешна (`dist/runner/index.js`, `dist/server.js`, `dist/host.js`).
+- Строгое соблюдение AP-019: **100% файлов в `src/runner/` строго < 200 строк, 100% файлов в `src/host/` < 250 строк**.
+- Двухконтурный гейт S9:
+  - **S9a Architecture Review:** `AP-010`, `AP-019`, `AP-026`, `AP-028` соблюдены. **VERDICT: PASS**.
+  - **S9b Product Review:** Happy Path, Zero-Data, Error Recovery протестированы. **VERDICT: PASS**.
+
+

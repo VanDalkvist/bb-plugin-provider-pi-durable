@@ -40,12 +40,12 @@
 - **Touched Files:**
   - Test: `tests/subagent-early-completion-race.test.ts`
 - **Applicable AP Gates:** AP-010 (Thin Bridge), AP-019 (<200 / <250 lines), AP-026 (ACID & Event Buffer), AP-028 (Resilient Streaming).
-- [ ] **[S8: Execute Slice]:**
+- [x] **[S8: Execute Slice]:**
   - Написать сквозной тест: `handleRunnerEvent(agent_end)` ➔ `SubagentMirrorManager.markCompleted` ➔ отложенный `handleTurnStart`.
   - Подтвердить детерминированный эмит: `turn.open` (watchdog) ➔ `item.textDelta`/`item.textClose` (полный накопленный текст) ➔ `turn.boundary: completed`.
   - Подтвердить очистку памяти через `consumeCompleted`.
-- [ ] **[S9: Verify Gate]:** Двухконтурный гейт S9 с терминальными receipts.
-- [ ] **[S10: Version Bump]:** Фиксация в `package.json` и коммит.
+- [x] **[S9: Verify Gate]:** Двухконтурный гейт S9 с терминальными receipts.
+- [x] **[S10: Version Bump]:** Фиксация в `package.json` и коммит.
 
 ---
 
