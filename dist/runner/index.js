@@ -1064,10 +1064,22 @@ function adaptExtensionTool(toolDef, executeToolFn, createToolContext, getExtens
           };
         }
       }
-      const ctx = createToolContext ? createToolContext(api.callId) : {
-        tools: [],
-        executeTool: async (name, nestedArgs, options) => executeToolFn(api.callId, name, nestedArgs, options)
+      const base = createToolContext?.(api.callId);
+      const descriptors = {
+        ...Object.getOwnPropertyDescriptors(base ?? {}),
+        tools: {
+          get: () => base?.tools ?? [],
+          configurable: true,
+          enumerable: true
+        },
+        executeTool: {
+          value: async (name, nestedArgs, options) => base?.executeTool ? base.executeTool(name, nestedArgs, options) : executeToolFn(api.callId, name, nestedArgs, options),
+          configurable: true,
+          enumerable: true,
+          writable: true
+        }
       };
+      const ctx = Object.defineProperties({}, descriptors);
       try {
         const result = await toolDef.execute(
           api.callId,

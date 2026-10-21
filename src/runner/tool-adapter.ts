@@ -88,13 +88,25 @@ export function adaptExtensionTool(
 				}
 			}
 
-			const ctx = createToolContext
-				? createToolContext(api.callId)
-				: ({
-						tools: [],
-						executeTool: async (name: string, nestedArgs: unknown, options?: { signal?: AbortSignal }) =>
-							executeToolFn(api.callId, name, nestedArgs, options),
-					} as unknown as ExtensionToolContext);
+			const base = createToolContext?.(api.callId);
+			const descriptors: PropertyDescriptorMap = {
+				...Object.getOwnPropertyDescriptors(base ?? {}),
+				tools: {
+					get: () => base?.tools ?? [],
+					configurable: true,
+					enumerable: true,
+				},
+				executeTool: {
+					value: async (name: string, nestedArgs: unknown, options?: { signal?: AbortSignal }) =>
+						base?.executeTool
+							? base.executeTool(name, nestedArgs, options)
+							: executeToolFn(api.callId, name, nestedArgs, options),
+					configurable: true,
+					enumerable: true,
+					writable: true,
+				},
+			};
+			const ctx = Object.defineProperties({}, descriptors) as ExtensionToolContext;
 
 			try {
 				const result = await toolDef.execute(
