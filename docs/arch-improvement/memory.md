@@ -81,3 +81,25 @@
 - Cause: 1) Model entries with errors produce `content: []`. The nullish coalescing `msg.content ?? [...]` evaluated to `[]`, omitting `errorMessage`. 2) `translateAgentEnd` blindly mapped all non-aborted runs to `status: "completed"`, completely skipping the provider bridge schema's `status: "failed"` and `error: { message }` payload.
 - Use next time: Never allow an assistant message to end with empty content when `stopReason === "error"`. Populate human-readable error text in `content`, preserve `errorMessage` on the wire event, and emit `turn.boundary` with `status: "failed"` and `{ error: { message } }` so the host UI can render the error and offer retry controls.
 - Evidence: `tests/error-handling-visibility.test.ts`, `docs/superpowers/plans/2026-10-20-arch-improvement-cycle-94-error-handling-and-failure-visibility.md`, `src/runner/bridge/bb-event-adapter.ts`, `src/host/message-delta-translator.ts`.
+
+## 2026-10-21 - Pi Durable Stores JSON-Encoded Strings in SQLite Indexed Columns (Issue #24)
+- Context: Cold offline recovery of subthread bindings in `DurableBindingManager.readOfflineBindings`.
+- Symptom: Offline reader silently returned `[]` bindings on real closed `session.sqlite` databases created by Pi Durable SDK.
+- Cause: `packages/durable/src/storage/sqlite/storage.ts` uses `encodeIndexedString(value) => JSON.stringify(value)`. In the SQLite `documents` table, `kind` is stored JSON-quoted: `'"bb.native-child-binding"'` (with quotes), while the reader SQL checked `d.kind = 'bb.native-child-binding'`. Hand-written test fixtures inserted unquoted strings, masking the mismatch.
+- Use next time: When querying native SQLite stores from Pi Durable, remember that string index columns (`kind`, `requestId`) are JSON-encoded strings. Use `d.kind IN ('val', '"val"')` and ALWAYS test against real SDK-created stores (`openNodeSqliteStorage` + `Harness.open`), not hand-written mock schemas.
+- Evidence: `tests/durable-binding-store.test.ts`, `src/host/durable-binding-store.ts`, Issue #24.
+
+## 2026-10-21 - Authoritative Whole-Run Outcome Must Correlate run_end with Input Submissions (Issue #23)
+- Context: Translating native terminal run events to BB turn boundary status.
+- Symptom: An input submission that settled as `unanswered` (`reason: "faulted"` or `no_model`) was reported to BB as `turn.boundary: { status: "completed" }` if the assistant had emitted prior progress with `stopReason: "toolUse"`.
+- Cause: `turn-summary.ts` derived failure solely from assistant message properties (`stopReason === "error"` / `"aborted"`). In a fault after a tool call, the assistant message has `stopReason: "toolUse"`. SDK emits `task_failed`, `turn_end`, `run_end`, and `submission` with `unanswered` in the same transactional batch. `BBEventAdapter` was emitting `agent_end` before correlating matching submission records.
+- Use next time: Pre-index transactional event batches (`handleBatch`). In `turn-summary.ts`, correlate `run_end.inputs` with terminal submission records via `findSubmissionFault`. If matching input is `unanswered`, authoritatively set `isError: true` (or `isAborted: true`), emit `turn.boundary: { status: "failed" }`, while preserving prior text progress.
+- Evidence: `tests/unanswered-settlement.test.ts`, `src/runner/bridge/turn-summary.ts`, `src/runner/bridge/bb-event-adapter.ts`, Issue #23.
+
+## 2026-10-21 - Arch Improvement Loop Invariant: No Ad-hoc Edits Before S6 Plan
+- Context: Process discipline and state machine enforcement.
+- Symptom: Agent jumped directly into modifying code upon analyzing an issue without following S0-S6.
+- Cause: Over-eagerness to solve the bug quickly bypassed the systematic engineering process.
+- Use next time: Strictly obey the Arch Improvement Loop state machine: S0 Bootstrap -> S1 Memory -> S2 Orientation -> S3 Brainstorm & Gate -> S4 Review -> S5 Triage -> S6 Plan Write -> S7 Plan Review -> S8 TDD Execution -> S9 Dual-Circuit Gate -> S10 Ledger -> S11 Memory. Zero code edits before a written and approved plan exists.
+- Evidence: Reverted ad-hoc edits, Cycle 99 execution plan `docs/superpowers/plans/2026-10-21-arch-improvement-cycle-99-offline-bindings-and-unanswered-settlement.md`.
+

@@ -22,12 +22,43 @@ export interface TurnSummaryResult {
 	lastCheckpointId?: string;
 }
 
+export interface SubmissionFault {
+	isError: boolean;
+	isAborted: boolean;
+	errorMessage?: string;
+}
+
+export function findSubmissionFault(
+	inputs?: readonly (string | number)[],
+	submissions?: Map<string | number, { status: string; reason?: string; detail?: string }>,
+	lastTaskError?: string,
+): SubmissionFault | undefined {
+	if (inputs && submissions) {
+		for (const id of inputs) {
+			const sub = submissions.get(id);
+			if (sub && sub.status === "unanswered") {
+				const isAborted = sub.reason === "aborted";
+				return {
+					isAborted,
+					isError: !isAborted,
+					errorMessage: sub.detail || sub.reason || lastTaskError || "Turn ended with unanswered input",
+				};
+			}
+		}
+	}
+	if (lastTaskError) {
+		return { isAborted: false, isError: true, errorMessage: lastTaskError };
+	}
+	return undefined;
+}
+
 export function resolveTurnSummary(
 	current: DurableView,
 	currentText: string,
 	currentThinking: string,
 	lastAssistantMessage?: BBAssistantMessage,
 	resolveContextWindow?: (provider?: string, modelId?: string) => number | undefined,
+	fault?: SubmissionFault,
 ): TurnSummaryResult {
 	const tail = current?.conversation?.entries?.at(-1);
 	const lastCheckpointId = tail?.id !== undefined ? String(tail.id) : undefined;
@@ -50,7 +81,7 @@ export function resolveTurnSummary(
 	const isLastAssistantAborted = Boolean(
 		firstModelMsg && "stopReason" in firstModelMsg && (firstModelMsg as { stopReason?: string }).stopReason === "aborted",
 	);
-	const isAborted = finalMsg.stopReason === "aborted" || isLastAssistantAborted;
+	const isAborted = finalMsg.stopReason === "aborted" || isLastAssistantAborted || Boolean(fault?.isAborted);
 
 	const rawLastErr = firstModelMsg && "errorMessage" in firstModelMsg ? (firstModelMsg as { errorMessage?: unknown }).errorMessage : undefined;
 	const lastErrStr = typeof rawLastErr === "string" ? rawLastErr : undefined;
@@ -58,8 +89,8 @@ export function resolveTurnSummary(
 		(firstModelMsg && "stopReason" in firstModelMsg && (firstModelMsg as { stopReason?: string }).stopReason === "error") ||
 		lastErrStr,
 	);
-	const isError = finalMsg.stopReason === "error" || isLastAssistantError;
-	const errorMessage = finalMsg.errorMessage ?? lastErrStr;
+	const isError = finalMsg.stopReason === "error" || isLastAssistantError || Boolean(fault?.isError);
+	const errorMessage = finalMsg.errorMessage ?? fault?.errorMessage ?? lastErrStr;
 
 	if (isAborted && finalMsg.stopReason !== "aborted") {
 		finalMsg.stopReason = "aborted";

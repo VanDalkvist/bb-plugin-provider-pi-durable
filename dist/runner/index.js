@@ -1851,7 +1851,26 @@ function buildFinalAssistantMessage(current, lastGenerationText, lastThinkingTex
 }
 
 // src/runner/bridge/turn-summary.ts
-function resolveTurnSummary(current, currentText, currentThinking, lastAssistantMessage, resolveContextWindow) {
+function findSubmissionFault(inputs, submissions, lastTaskError) {
+  if (inputs && submissions) {
+    for (const id of inputs) {
+      const sub = submissions.get(id);
+      if (sub && sub.status === "unanswered") {
+        const isAborted = sub.reason === "aborted";
+        return {
+          isAborted,
+          isError: !isAborted,
+          errorMessage: sub.detail || sub.reason || lastTaskError || "Turn ended with unanswered input"
+        };
+      }
+    }
+  }
+  if (lastTaskError) {
+    return { isAborted: false, isError: true, errorMessage: lastTaskError };
+  }
+  return void 0;
+}
+function resolveTurnSummary(current, currentText, currentThinking, lastAssistantMessage, resolveContextWindow, fault) {
   const tail = current?.conversation?.entries?.at(-1);
   const lastCheckpointId = tail?.id !== void 0 ? String(tail.id) : void 0;
   const finalMsg = lastAssistantMessage ?? buildFinalAssistantMessage(
@@ -1871,14 +1890,14 @@ function resolveTurnSummary(current, currentText, currentThinking, lastAssistant
   const isLastAssistantAborted = Boolean(
     firstModelMsg && "stopReason" in firstModelMsg && firstModelMsg.stopReason === "aborted"
   );
-  const isAborted = finalMsg.stopReason === "aborted" || isLastAssistantAborted;
+  const isAborted = finalMsg.stopReason === "aborted" || isLastAssistantAborted || Boolean(fault?.isAborted);
   const rawLastErr = firstModelMsg && "errorMessage" in firstModelMsg ? firstModelMsg.errorMessage : void 0;
   const lastErrStr = typeof rawLastErr === "string" ? rawLastErr : void 0;
   const isLastAssistantError = Boolean(
     firstModelMsg && "stopReason" in firstModelMsg && firstModelMsg.stopReason === "error" || lastErrStr
   );
-  const isError = finalMsg.stopReason === "error" || isLastAssistantError;
-  const errorMessage = finalMsg.errorMessage ?? lastErrStr;
+  const isError = finalMsg.stopReason === "error" || isLastAssistantError || Boolean(fault?.isError);
+  const errorMessage = finalMsg.errorMessage ?? fault?.errorMessage ?? lastErrStr;
   if (isAborted && finalMsg.stopReason !== "aborted") {
     finalMsg.stopReason = "aborted";
   } else if (isError && finalMsg.stopReason !== "error") {
@@ -2142,6 +2161,8 @@ function resolveToolCallArgs(callId, current) {
 var BBEventAdapter = class {
   output;
   resolveContextWindow;
+  submissions = /* @__PURE__ */ new Map();
+  lastTaskError;
   lastAssistantMessage;
   lastCheckpointId;
   currentText = "";
@@ -2159,18 +2180,11 @@ var BBEventAdapter = class {
   createChildAdapter(parentCallId, conversationId) {
     return new BBChildEventAdapter(this.output, parentCallId, conversationId);
   }
-  emitTerminal(type, current) {
+  emitTerminal(type, current, inputs) {
     this.closeThinkingIfNeeded();
-    const summary = resolveTurnSummary(
-      current,
-      this.currentText,
-      this.currentThinking,
-      this.lastAssistantMessage,
-      this.resolveContextWindow
-    );
-    if (summary.lastCheckpointId) {
-      this.lastCheckpointId = summary.lastCheckpointId;
-    }
+    const fault = type === "agent_end" ? findSubmissionFault(inputs, this.submissions, this.lastTaskError) : void 0;
+    const summary = resolveTurnSummary(current, this.currentText, this.currentThinking, this.lastAssistantMessage, this.resolveContextWindow, fault);
+    if (summary.lastCheckpointId) this.lastCheckpointId = summary.lastCheckpointId;
     const isAborted = summary.isAborted;
     const isError = summary.isError && !isAborted;
     const base = {
@@ -2180,11 +2194,15 @@ var BBEventAdapter = class {
       ...isAborted ? { aborted: true, stopReason: "aborted" } : {},
       ...isError ? { stopReason: "error", ...summary.errorMessage ? { errorMessage: summary.errorMessage } : {} } : {}
     };
-    if (type === "turn_end") {
-      this.output({ type: "turn_end", message: summary.finalMsg, ...base });
-    } else {
-      this.output({ type: "agent_end", messages: [summary.finalMsg], ...base });
+    if (type === "turn_end") this.output({ type: "turn_end", message: summary.finalMsg, ...base });
+    else this.output({ type: "agent_end", messages: [summary.finalMsg], ...base });
+  }
+  handleBatch(batch, current) {
+    for (const ev of batch) {
+      if (ev.type === "task_failed") this.lastTaskError = ev.message;
+      else if (ev.type === "submission" && ev.record?.id !== void 0) this.submissions.set(ev.record.id, ev.record);
     }
+    for (const ev of batch) this.handleEvent(ev, current);
   }
   handleEvent(event, current) {
     switch (event.type) {
@@ -2196,6 +2214,7 @@ var BBEventAdapter = class {
         break;
       }
       case "run_start": {
+        this.lastTaskError = void 0;
         this.currentText = "";
         this.currentThinking = "";
         this.isInThinking = false;
@@ -2214,30 +2233,18 @@ var BBEventAdapter = class {
           if (thinkDelta) {
             this.isInThinking = true;
             this.currentThinking += thinkDelta;
-            this.output({
-              type: "message_update",
-              assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: thinkDelta }
-            });
+            this.output({ type: "message_update", assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: thinkDelta } });
           } else if (textDelta) {
             this.closeThinkingIfNeeded();
             this.currentText += textDelta;
-            this.output({
-              type: "message_update",
-              assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: textDelta }
-            });
+            this.output({ type: "message_update", assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: textDelta } });
           }
         }
         break;
       }
       case "tool_execution_start": {
         this.closeThinkingIfNeeded();
-        this.output({
-          type: "tool_execution_start",
-          toolCallId: event.toolCallId,
-          toolName: event.toolName,
-          args: event.args ?? {},
-          ...event.parentToolCallId !== void 0 ? { parentRef: event.parentToolCallId } : {}
-        });
+        this.output({ type: "tool_execution_start", toolCallId: event.toolCallId, toolName: event.toolName, args: event.args ?? {}, ...event.parentToolCallId !== void 0 ? { parentRef: event.parentToolCallId } : {} });
         break;
       }
       case "tool_execution_update": {
@@ -2273,6 +2280,12 @@ var BBEventAdapter = class {
         }
         break;
       }
+      case "task_failed":
+        this.lastTaskError = event.message;
+        break;
+      case "submission":
+        if (event.record?.id !== void 0) this.submissions.set(event.record.id, event.record);
+        break;
       case "compaction_start":
         this.output({ type: "compaction_start", reason: event.reason === "threshold" ? "threshold" : "manual" });
         break;
@@ -2283,15 +2296,10 @@ var BBEventAdapter = class {
         this.emitTerminal("turn_end", current);
         break;
       case "run_end":
-        this.emitTerminal("agent_end", current);
+        this.emitTerminal("agent_end", current, event.inputs);
         break;
       case "auto_retry_start":
-        this.output({
-          type: "auto_retry_start",
-          attempt: event.attempt,
-          ...event.at !== void 0 ? { at: event.at } : {},
-          ...event.errorMessage ? { errorMessage: event.errorMessage } : {}
-        });
+        this.output({ type: "auto_retry_start", attempt: event.attempt, ...event.at !== void 0 ? { at: event.at } : {}, ...event.errorMessage ? { errorMessage: event.errorMessage } : {} });
         break;
       case "auto_retry_end":
         this.output({ type: "auto_retry_end", attempt: event.attempt });
@@ -2710,11 +2718,12 @@ async function startSubagentWatcher(harness, adapter, getCurrentView) {
       stream.start(async (batch) => {
         try {
           const view = getCurrentView();
+          if (!childAdapter) {
+            adapter.handleBatch(batch, view);
+          }
           for (const event of batch) {
             if (childAdapter) {
               childAdapter.handleEvent(event, view);
-            } else {
-              adapter.handleEvent(event, view);
             }
             const childId = extractChildConversationId(event);
             if (childId !== void 0 && !attached.has(childId)) {

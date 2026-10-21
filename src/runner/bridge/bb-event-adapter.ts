@@ -5,7 +5,7 @@ import {
 	type BBAssistantMessage,
 	type BBAssistantMessageUsage,
 } from "./contracts.ts";
-import { resolveTurnSummary } from "./turn-summary.ts";
+import { resolveTurnSummary, findSubmissionFault } from "./turn-summary.ts";
 import {
 	buildToolExecutionUpdate,
 	buildToolExecutionEnd,
@@ -29,6 +29,8 @@ interface RawAssistantEntryMessage {
 export class BBEventAdapter {
 	private readonly output: (event: BBWireEvent) => void;
 	private readonly resolveContextWindow?: (provider?: string, modelId?: string) => number | undefined;
+	private readonly submissions = new Map<string | number, { status: string; reason?: string; detail?: string }>();
+	private lastTaskError?: string;
 	private lastAssistantMessage?: BBAssistantMessage;
 	private lastCheckpointId?: string;
 	private currentText = "";
@@ -50,18 +52,11 @@ export class BBEventAdapter {
 		return new BBChildEventAdapter(this.output, parentCallId, conversationId);
 	}
 
-	private emitTerminal(type: "turn_end" | "agent_end", current: DurableView): void {
+	private emitTerminal(type: "turn_end" | "agent_end", current: DurableView, inputs?: readonly (string | number)[]): void {
 		this.closeThinkingIfNeeded();
-		const summary = resolveTurnSummary(
-			current,
-			this.currentText,
-			this.currentThinking,
-			this.lastAssistantMessage,
-			this.resolveContextWindow,
-		);
-		if (summary.lastCheckpointId) {
-			this.lastCheckpointId = summary.lastCheckpointId;
-		}
+		const fault = type === "agent_end" ? findSubmissionFault(inputs, this.submissions, this.lastTaskError) : undefined;
+		const summary = resolveTurnSummary(current, this.currentText, this.currentThinking, this.lastAssistantMessage, this.resolveContextWindow, fault);
+		if (summary.lastCheckpointId) this.lastCheckpointId = summary.lastCheckpointId;
 		const isAborted = summary.isAborted;
 		const isError = summary.isError && !isAborted;
 		const base = {
@@ -71,11 +66,16 @@ export class BBEventAdapter {
 			...(isAborted ? { aborted: true, stopReason: "aborted" } : {}),
 			...(isError ? { stopReason: "error", ...(summary.errorMessage ? { errorMessage: summary.errorMessage } : {}) } : {}),
 		};
-		if (type === "turn_end") {
-			this.output({ type: "turn_end", message: summary.finalMsg, ...base });
-		} else {
-			this.output({ type: "agent_end", messages: [summary.finalMsg], ...base });
+		if (type === "turn_end") this.output({ type: "turn_end", message: summary.finalMsg, ...base });
+		else this.output({ type: "agent_end", messages: [summary.finalMsg], ...base });
+	}
+
+	public handleBatch(batch: readonly AgentEvent[], current: DurableView): void {
+		for (const ev of batch) {
+			if (ev.type === "task_failed") this.lastTaskError = (ev as any).message;
+			else if (ev.type === "submission" && (ev as any).record?.id !== undefined) this.submissions.set((ev as any).record.id, (ev as any).record);
 		}
+		for (const ev of batch) this.handleEvent(ev, current);
 	}
 
 	public handleEvent(event: AgentEvent, current: DurableView): void {
@@ -89,6 +89,7 @@ export class BBEventAdapter {
 			}
 
 			case "run_start": {
+				this.lastTaskError = undefined;
 				this.currentText = "";
 				this.currentThinking = "";
 				this.isInThinking = false;
@@ -109,17 +110,11 @@ export class BBEventAdapter {
 					if (thinkDelta) {
 						this.isInThinking = true;
 						this.currentThinking += thinkDelta;
-						this.output({
-							type: "message_update",
-							assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: thinkDelta },
-						});
+						this.output({ type: "message_update", assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: thinkDelta } });
 					} else if (textDelta) {
 						this.closeThinkingIfNeeded();
 						this.currentText += textDelta;
-						this.output({
-							type: "message_update",
-							assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: textDelta },
-						});
+						this.output({ type: "message_update", assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: textDelta } });
 					}
 				}
 				break;
@@ -127,13 +122,7 @@ export class BBEventAdapter {
 
 			case "tool_execution_start": {
 				this.closeThinkingIfNeeded();
-				this.output({
-					type: "tool_execution_start",
-					toolCallId: event.toolCallId,
-					toolName: event.toolName,
-					args: event.args ?? {},
-					...(event.parentToolCallId !== undefined ? { parentRef: event.parentToolCallId } : {}),
-				});
+				this.output({ type: "tool_execution_start", toolCallId: event.toolCallId, toolName: event.toolName, args: event.args ?? {}, ...(event.parentToolCallId !== undefined ? { parentRef: event.parentToolCallId } : {}) });
 				break;
 			}
 			case "tool_execution_update": {
@@ -169,6 +158,12 @@ export class BBEventAdapter {
 				}
 				break;
 			}
+			case "task_failed":
+				this.lastTaskError = (event as any).message;
+				break;
+			case "submission":
+				if ((event as any).record?.id !== undefined) this.submissions.set((event as any).record.id, (event as any).record);
+				break;
 			case "compaction_start":
 				this.output({ type: "compaction_start", reason: event.reason === "threshold" ? "threshold" : "manual" });
 				break;
@@ -179,15 +174,10 @@ export class BBEventAdapter {
 				this.emitTerminal("turn_end", current);
 				break;
 			case "run_end":
-				this.emitTerminal("agent_end", current);
+				this.emitTerminal("agent_end", current, (event as any).inputs);
 				break;
 			case "auto_retry_start":
-				this.output({
-					type: "auto_retry_start",
-					attempt: event.attempt,
-					...(event.at !== undefined ? { at: event.at } : {}),
-					...(event.errorMessage ? { errorMessage: event.errorMessage } : {}),
-				});
+				this.output({ type: "auto_retry_start", attempt: event.attempt, ...(event.at !== undefined ? { at: event.at } : {}), ...(event.errorMessage ? { errorMessage: event.errorMessage } : {}) });
 				break;
 			case "auto_retry_end":
 				this.output({ type: "auto_retry_end", attempt: event.attempt });

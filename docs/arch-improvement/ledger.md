@@ -691,5 +691,42 @@
   - **S9a Architecture Review (`thr_ary4wktzzy`):** `AP-010`, `AP-013`, `AP-019`, `AP-026`, `AP-028`, `AP-034` соблюдены. **VERDICT: PASS**.
   - **S9b Product Review (`thr_a85j76x8et`):** Happy Path (Image-only, Text+Image, LocalFile, Zero-Data Rejection) проверены black-box тестами. **VERDICT: PASS**.
 
+---
+
+## Cycle 99: Offline Binding Recovery & Unanswered Input Settlement (Issue #24, Issue #23, F-98-3, AP-010, AP-013, AP-019, AP-026, AP-027, AP-034)
+
+### Slices Summary (v0.2.47)
+- **Slice 99.1 (P1):** Offline Binding Recovery JSON Kind Matching (`src/host/durable-binding-store.ts`, Issue #24).
+  - Устранена ошибка чтения офлайн-привязок дочерних тредов из закрытой базы `session.sqlite`: `@earendil-works/pi-durable` кодирует поле `kind` в таблице `documents` через `JSON.stringify` (в SQLite лежит `'"bb.native-child-binding"'` с кавычками).
+  - SQL-запрос расширен до: `WHERE d.kind IN ('bb.native-child-binding', '"bb.native-child-binding"') AND d.retired_at IS NULL`.
+  - Добавлен интеграционный тест на реальном SDK-хранилище (`tests/durable-binding-store.test.ts`), проверяющий создание, закрытие и успешное чтение `readOfflineBindings`.
+- **Slice 99.2 (P1):** Native Unanswered Input Settlement Failure Mapping (`src/runner/bridge/turn-summary.ts`, `bb-event-adapter.ts`, `subagent-watcher.ts`, Issue #23 & F-98-3).
+  - Устранена ложная эмиссия `turn.boundary: { status: "completed" }` при сбое раннера/генерации после вывода текста прогресса или вызова тулов (`stopReason: "toolUse"`).
+  - В `turn-summary.ts` реализован резолвер `findSubmissionFault`: сопоставляет `run_end.inputs` с записями `submission`. Если ввод завершился со статусом `unanswered`, выставляется `isError: true` и `stopReason: "error"` (или `isAborted: true` / `"aborted"` при прерывании), извлекая текст ошибки из `detail`, `reason` или `task_failed`.
+  - В `bb-event-adapter.ts` и `subagent-watcher.ts` внедрен метод `handleBatch`, осуществляющий предварительную индексацию событий пакета транзакции до обработки терминальных ходов.
+  - Промежуточный текст прогресса ассистента надёжно сохраняется и закрывается через `item.textClose`, а `turn.boundary` корректно получает статус `status: "failed"` с объектом ошибки `error: { message: ... }`.
+
+#### Architectural Findings & Discovered Bugs
+| ID | Issue / Component | Severity | Rule | Disposition | Root Cause & Resolution |
+|---|---|---|---|---|---|
+| **F-99-1** | Потеря офлайн-привязок из-за JSON-квотирования `documents.kind` | **P1** | AP-026, AP-034 | `fix-now` (Cycle 99, Issue #24) | SQLite-хранилище Pi Durable сохраняет `kind` как JSON-строку. Исправлено в `src/host/durable-binding-store.ts`. |
+| **F-99-2** | Ложный статус `completed` на упавшем `unanswered` ходе после `toolUse` | **P1** | AP-013, AP-027 | `fix-now` (Cycle 99, Issue #23, F-98-3) | `turn-summary.ts` ориентировался только на `stopReason` ассистента без учета статуса ввода. Исправлено через `findSubmissionFault` и `handleBatch`. |
+
+#### Verification Evidence
+- `npx tsc --noEmit`: **0 errors (exit code 0)**.
+- `node --test tests/unanswered-settlement.test.ts`: **4 / 4 pass (0 fails)**.
+- `node --test tests/durable-binding-store.test.ts`: **7 / 7 pass (0 fails)**.
+- `npm test`: **287 / 287 passing assertions across 14 test suites (0 failures, 0 skips)**.
+- `npm run build`: Сборка успешна (`dist/runner/index.js`, `dist/server.js`, `dist/host.js`).
+- Строгое соблюдение AP-019:
+  - `src/host/durable-binding-store.ts`: **142 строки** (бюджет < 250).
+  - `src/runner/bridge/turn-summary.ts`: **105 строк** (бюджет < 200).
+  - `src/runner/bridge/bb-event-adapter.ts`: **187 строк** (бюджет < 200).
+  - `src/runner/subagent-watcher.ts`: **101 строк** (бюджет < 200).
+- Двухконтурный гейт S9:
+  - **S9a Architecture Review (`thr_7bsezddchb`):** `AP-010`, `AP-013`, `AP-019`, `AP-026`, `AP-027`, `AP-034` соблюдены. **VERDICT: PASS**.
+  - **S9b Product Review (`thr_nkvp9m2m47`):** Все 4 сценария (Offline hydration, Happy toolUse, Faulted input, Aborted input) проверены black-box тестами. **VERDICT: PASS**.
+
+
 
 

@@ -97,7 +97,7 @@ export class DurableBindingManager {
 			const stmt = db.prepare(`
 				SELECT r.content FROM documents d
 				JOIN ${revsTable} r ON d.id = r.document_id
-				WHERE d.kind = 'bb.native-child-binding' AND d.retired_at IS NULL
+				WHERE d.kind IN ('bb.native-child-binding', '"bb.native-child-binding"') AND d.retired_at IS NULL
 				ORDER BY r.seq DESC
 			`);
 			const rows = stmt.all() as Array<{ content: string }>;
