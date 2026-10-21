@@ -29,27 +29,20 @@ export class PiThreadSession {
 	private mirrors = new SubagentMirrorManager();
 	private childTranslators = new Map<string, DeltaTranslator>();
 
-	constructor(
-		options: SessionOptions,
-		sendNotification: (method: string, params: Record<string, unknown>) => void,
-	) {
+	constructor(options: SessionOptions, sendNotification: (method: string, params: Record<string, unknown>) => void) {
 		this.options = options;
 		this.sendNotification = sendNotification;
-
 		const deferred = createReadyDeferred();
 		this.readyPromise = deferred.promise;
 		this.readyResolve = deferred.resolve;
 		this.readyReject = deferred.reject;
-
 		this.runner = new RunnerProcess({
 			cwd: options.cwd || process.cwd(),
 			args: buildRunnerArgs(options),
 			prompts: { scratchDir: options.scratchDir, systemPrompt: options.systemPrompt, appendSystemPrompt: options.appendSystemPrompt },
 			env: options.shellEnvOverrides,
 			onEvent: (event) => this.handleRunnerEvent(event),
-			onChannelMessage: (msg: any) => {
-				if (msg?.kind === "ready") this.readyResolve();
-			},
+			onChannelMessage: (msg: any) => { if (msg?.kind === "ready") this.readyResolve(); },
 			onError: (err) => this.readyReject(new Error(`Runner failed to launch: ${err.message}`)),
 			onExit: (code, sig) => this.readyReject(new Error(`Runner exited before becoming ready (code ${code}, signal ${sig})`)),
 		});
@@ -58,6 +51,11 @@ export class PiThreadSession {
 
 	public registerThread(threadId: string, conversationId?: string): void {
 		this.bindings.register(threadId, conversationId, this.options.threadId);
+		if (conversationId) {
+			this.mirrors.flushBufferedDeltas(conversationId, this.getChildTranslator(threadId), {
+				threadId, cwd: this.options.cwd, providerOptions: this.options.providerOptions,
+			}, (tid, deltas) => this.sendNotification("thread/delta", { threadId: tid, deltas }));
+		}
 	}
 
 	public unregisterThread(threadId: string): void {
@@ -85,6 +83,7 @@ export class PiThreadSession {
 	public consumeCompletedMirror(id: string | number): void { this.mirrors.consumeCompleted(id); }
 	public findSubagentConversationForTask(task: string): string | undefined { return this.mirrors.findConversationForTask(task); }
 	public getSubagentState(id: string | number): SubagentMirrorRecord | undefined { return this.mirrors.getState(id); }
+	public getMirrorOutputText(id: string | number): string { return this.mirrors.getOutputText(id); }
 
 	public async start(): Promise<void> {
 		try {
@@ -143,6 +142,16 @@ export class PiThreadSession {
 			? this.getThreadIdForConversation(event.conversationId as string | number)
 			: undefined;
 
+		if (isChildEvent && event.type === "message_update") {
+			const asst = event.assistantMessageEvent as Record<string, unknown> | undefined;
+			const textDelta = asst?.type === "text_delta" && typeof asst.delta === "string"
+				? asst.delta
+				: "";
+			if (textDelta) {
+				this.mirrors.appendOutputText(event.conversationId as string | number, textDelta);
+			}
+		}
+
 		if (childThreadId) {
 			const childEvent = { ...event, parentRef: undefined };
 			const childTranslator = this.getChildTranslator(childThreadId);
@@ -161,8 +170,11 @@ export class PiThreadSession {
 				});
 				this.markSubagentCompleted(event.conversationId as string | number);
 			}
-		} else if (isChildEvent && event.type === "agent_end") {
-			this.markSubagentCompleted(event.conversationId as string | number);
+		} else if (isChildEvent) {
+			this.mirrors.bufferEvent(event.conversationId as string | number, event);
+			if (event.type === "agent_end") {
+				this.markSubagentCompleted(event.conversationId as string | number);
+			}
 		}
 
 		if (isChildEvent && (!event.parentRef || event.type === "agent_end")) {
@@ -195,11 +207,9 @@ export class PiThreadSession {
 			this.isProcessing = false;
 		}
 	}
-
 	public async steer(text: string, conversationId?: string): Promise<void> {
 		await this.runner.requestOk({ type: "steer", message: text, conversationId });
 	}
-
 	public async abort(conversationId?: string): Promise<void> {
 		try {
 			await this.runner.requestOk({ type: "abort", conversationId });
@@ -207,7 +217,6 @@ export class PiThreadSession {
 			console.warn(`[PiThreadSession] Abort request failed: ${err}`);
 		}
 	}
-
 	public async compact(instructions?: string): Promise<void> {
 		this.isProcessing = true;
 		try {

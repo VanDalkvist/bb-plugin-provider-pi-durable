@@ -2056,10 +2056,17 @@ var BBChildEventAdapter = class {
         });
         break;
       }
+      case "turn_start": {
+        this.output({
+          type: "turn_start",
+          parentRef: this.parentRef,
+          ...this.conversationId !== void 0 ? { conversationId: this.conversationId } : {}
+        });
+        break;
+      }
       // Subagent lifecycle events are scoped to the child task and must not break parent turn
       case "message_start":
       case "run_start":
-      case "turn_start":
       case "turn_end":
       case "snapshot":
       case "compaction_start":

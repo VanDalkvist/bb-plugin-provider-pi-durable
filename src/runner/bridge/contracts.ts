@@ -85,7 +85,11 @@ export interface BBAssistantMessage {
 }
 
 export interface BBAgentStartEvent { type: "agent_start"; }
-export interface BBTurnStartEvent { type: "turn_start"; }
+export interface BBTurnStartEvent {
+	type: "turn_start";
+	parentRef?: string;
+	conversationId?: string | number;
+}
 
 export interface CumulativeUsageMetrics {
 	totalTokens: number;

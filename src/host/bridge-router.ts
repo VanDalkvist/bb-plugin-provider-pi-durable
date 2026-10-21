@@ -103,6 +103,10 @@ export async function handleTurnStart(
 				deltas: [{ kind: "input.accepted", clientRequestId: params.clientRequestId }],
 			});
 		}
+		ctx.sendNotification("thread/delta", {
+			threadId: params.threadId,
+			deltas: [{ kind: "turn.open" }],
+		});
 		ctx.sendResult(id, { threadId: params.threadId });
 		return;
 	}
@@ -111,6 +115,9 @@ export async function handleTurnStart(
 		if (typeof session.registerThread === "function") {
 			session.registerThread(params.threadId, targetConversationId);
 		}
+		const outputText = typeof session.getMirrorOutputText === "function" && targetConversationId
+			? session.getMirrorOutputText(targetConversationId)
+			: (mirrorState.result || "");
 		if (typeof session.consumeCompletedMirror === "function" && targetConversationId) {
 			session.consumeCompletedMirror(targetConversationId);
 		}
@@ -121,9 +128,17 @@ export async function handleTurnStart(
 			});
 		}
 		ctx.sendResult(id, { threadId: params.threadId });
+		const completionDeltas: Array<import("./types.ts").ThreadDelta> = [{ kind: "turn.open" }];
+		if (outputText) {
+			completionDeltas.push(
+				{ kind: "item.textDelta", key: { channel: "agentMessage" }, channel: "agentMessage", text: outputText },
+				{ kind: "item.textClose", key: { channel: "agentMessage" }, channel: "agentMessage", text: outputText },
+			);
+		}
+		completionDeltas.push({ kind: "turn.boundary", status: "completed" });
 		ctx.sendNotification("thread/delta", {
 			threadId: params.threadId,
-			deltas: [{ kind: "turn.boundary", status: "completed" }],
+			deltas: completionDeltas,
 		});
 		return;
 	}
