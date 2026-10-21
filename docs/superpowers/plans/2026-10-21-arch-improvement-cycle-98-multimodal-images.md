@@ -63,5 +63,5 @@
 - [x] Повысить версию до **`0.2.45`** в `package.json`.
 - [x] Собрать релиз `npm run build`.
 - [x] Закоммитить и запушить в `main`, поставить тег `v0.2.45`.
-- [ ] Обновить живой плагин в BB IDE через `bb plugin update provider-pi-durable --yes`.
-- [ ] Закрыть Issue #11 на GitHub.
+- [x] Обновить живой плагин в BB IDE через `bb plugin update provider-pi-durable --yes`.
+- [x] Закрыть Issue #11 на GitHub.
