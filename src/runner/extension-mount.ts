@@ -5,6 +5,7 @@ import { setupExtensionRunner } from "./extension-bridge.ts";
 import type { SessionLocation } from "./session-storage.ts";
 import { runtimeContext } from "./runtime-types.ts";
 import type { DynamicSectionsHolder } from "./prompt.ts";
+import type { DynamicCodemodeNamespaces } from "./codemode-namespaces.ts";
 
 export interface MountedExtensionBridge {
 	readonly extensionRunner?: ExtensionRunner;
@@ -56,17 +57,11 @@ export function createNestedToolExecutor(
 		}
 
 		try {
-			const executor = target.tool.execute as (
-				args: unknown,
-				api: unknown,
-				ctx: unknown,
-			) => Promise<{ output?: unknown; details?: unknown; isError?: boolean }>;
+			const executor = target.tool.execute as (args: unknown, api: unknown, ctx: unknown) => Promise<{ output?: unknown; details?: unknown; isError?: boolean }>;
 			let outputText = "";
 			const api = {
 				callId: `${callerId}/nested`,
-				output: (chunk: string | Uint8Array) => {
-					outputText += typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk);
-				},
+				output: (chunk: string | Uint8Array) => { outputText += typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk); },
 				retainedOutput: () => ({ text: outputText, truncated: false }),
 				outputWindow: undefined,
 				env: getEnv?.(),
@@ -131,12 +126,15 @@ export async function mountExtensionBridge(
 	dynamicSections?: DynamicSectionsHolder,
 	onNotice?: (level: "info" | "warning" | "error", message: string) => void,
 	settingsManager?: import("@earendil-works/pi-coding-agent").SettingsManager,
+	dynamicNamespaces?: DynamicCodemodeNamespaces,
 ): Promise<MountedExtensionBridge> {
 	let extensionRunner: ExtensionRunner | undefined;
 	try {
 		const syncToolsToRegistry = () => {
 			if (!extensionRunner) return;
-			const adapted = extensionRunner.getAllRegisteredTools().map((t) =>
+			const all = extensionRunner.getAllRegisteredTools();
+			dynamicNamespaces?.registerFromToolDefinitions(all.map((t) => t.definition));
+			const adapted = all.map((t) =>
 				adaptExtensionTool(t.definition, executeToolFn, (callId) => extensionRunner!.createToolContext(callId, undefined), () => extensionRunner),
 			);
 			installExtensionTools(registry, adapted);

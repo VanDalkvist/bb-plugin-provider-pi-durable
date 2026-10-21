@@ -20,6 +20,7 @@ import { Harness, type ModelRef } from "@earendil-works/pi-durable";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { type OpenDurableOptions, runtimeContext } from "./runtime-types.ts";
 import { DynamicPromptSections } from "./prompt.ts";
+import { DynamicCodemodeNamespaces } from "./codemode-namespaces.ts";
 
 export interface LoadedHarnessEnvironment {
 	modelRuntime: ModelRuntime;
@@ -89,12 +90,14 @@ export async function loadHarnessEnvironment(
 	};
 
 	const dynamicSections = new DynamicPromptSections();
+	const dynamicNamespaces = new DynamicCodemodeNamespaces();
 	const settings = createHarnessSettings(settingsManager, getActiveModel);
-	const registry = await createCodingRegistry(settingsManager, location.cwd, {
-		...options.prompt,
-		resourceLoader,
-		dynamicSections,
-	});
+	const registry = await createCodingRegistry(
+		settingsManager,
+		location.cwd,
+		{ ...options.prompt, resourceLoader, dynamicSections },
+		dynamicNamespaces,
+	);
 
 	const pendingReports: unknown[] = [];
 	const report = (error: unknown) => pendingReports.push(error);
@@ -122,6 +125,7 @@ export async function loadHarnessEnvironment(
 			}
 		},
 		settingsManager,
+		dynamicNamespaces,
 	);
 	runnerRef = mounted.extensionRunner;
 

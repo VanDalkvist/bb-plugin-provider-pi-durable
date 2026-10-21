@@ -24,19 +24,9 @@ export interface DynamicSectionsHolder {
 export class DynamicPromptSections implements DynamicSectionsHolder {
 	private sections: Record<string, string> = {};
 	private revision = 0;
-
-	getSections(): Record<string, string> {
-		return { ...this.sections };
-	}
-
-	updateSections(sections: Record<string, string>): void {
-		this.sections = { ...sections };
-		this.revision++;
-	}
-
-	getRevision(): number {
-		return this.revision;
-	}
+	getSections(): Record<string, string> { return { ...this.sections }; }
+	updateSections(sections: Record<string, string>): void { this.sections = { ...sections }; this.revision++; }
+	getRevision(): number { return this.revision; }
 }
 
 export interface PromptOptions {
@@ -47,29 +37,29 @@ export interface PromptOptions {
 	dynamicSections?: DynamicSectionsHolder;
 }
 
-const CANONICAL_TOOL_DEFS = {
+const CANONICAL_TOOL_DEFS: Record<string, { promptSnippet?: string; promptGuidelines?: readonly string[] }> = {
 	read: createReadToolDefinition(process.cwd()),
 	write: createWriteToolDefinition(process.cwd()),
 	edit: createEditToolDefinition(process.cwd()),
 	bash: createBashToolDefinition(process.cwd()),
+	codemode: {
+		promptSnippet: "Run JavaScript in a sandbox to call other tools. Use it to batch, chain, or loop tool calls without roundtrips.",
+		promptGuidelines: [
+			"Use codemode to batch independent tool calls (Promise.allSettled), chain them, or filter large output, instead of many separate calls.",
+		],
+	},
+	tool_search: {
+		promptSnippet: "Search for deferred tools by keyword or concept and load matching tools for subsequent calls.",
+		promptGuidelines: ["Use tool_search to discover and activate deferred tools before calling them."],
+	},
 };
 
-const KEYS = [
-	"preamble",
-	"tools",
-	"rules",
-	"docs",
-	"addendum",
-	"project_context",
-	"skills",
-	"cwd",
-	"mcp_servers",
-	"dynamic_sections",
-] as const;
+const KEYS = ["preamble", "tools", "rules", "docs", "addendum", "project_context", "skills", "cwd", "mcp_servers", "dynamic_sections"] as const;
 
 function resolveContextFiles(options: PromptOptions): Array<{ path: string; content: string }> {
-	if (options.contextFiles && options.contextFiles.length > 0) return options.contextFiles;
-	return options.resourceLoader?.getAgentsFiles?.()?.agentsFiles ?? [];
+	return (options.contextFiles && options.contextFiles.length > 0)
+		? options.contextFiles
+		: options.resourceLoader?.getAgentsFiles?.()?.agentsFiles ?? [];
 }
 
 function resolveSkills(options: PromptOptions): Skill[] {

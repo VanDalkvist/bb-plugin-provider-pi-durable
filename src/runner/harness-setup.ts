@@ -22,6 +22,7 @@ import {
 	resolveCliModel,
 } from "@earendil-works/pi-coding-agent";
 import { createPiPrompt, type PromptOptions } from "./prompt.ts";
+import type { DynamicCodemodeNamespaces } from "./codemode-namespaces.ts";
 
 export function configureHarnessHttp(settingsManager: SettingsManager): void {
 	const proxy = settingsManager.getGlobalSettings()?.httpProxy?.trim();
@@ -72,6 +73,7 @@ export async function createCodingRegistry(
 	settingsManager: SettingsManager,
 	cwd: string,
 	promptOptions?: PromptOptions,
+	dynamicNamespaces?: DynamicCodemodeNamespaces,
 ): Promise<Registry> {
 	const registry = createRegistry();
 	let codingTools = CodingTools;
@@ -82,7 +84,14 @@ export async function createCodingRegistry(
 		console.warn("[HarnessSetup] Photon image processor fallback to basic tools:", err);
 	}
 	registry.install(codingTools);
-	registry.install(createCodemodeExtension({ sandbox: new CodemodeSandbox() }));
+	registry.install(
+		createCodemodeExtension({
+			sandbox: new CodemodeSandbox(),
+			get namespaces() {
+				return dynamicNamespaces?.getNamespaces() ?? [];
+			},
+		}),
+	);
 	registry.install(createToolSearchExtension());
 	registry.install(Subagent);
 	registry.install(Anchor);

@@ -373,23 +373,21 @@ var CANONICAL_TOOL_DEFS = {
   read: createReadToolDefinition(process.cwd()),
   write: createWriteToolDefinition(process.cwd()),
   edit: createEditToolDefinition(process.cwd()),
-  bash: createBashToolDefinition(process.cwd())
+  bash: createBashToolDefinition(process.cwd()),
+  codemode: {
+    promptSnippet: "Run JavaScript in a sandbox to call other tools. Use it to batch, chain, or loop tool calls without roundtrips.",
+    promptGuidelines: [
+      "Use codemode to batch independent tool calls (Promise.allSettled), chain them, or filter large output, instead of many separate calls."
+    ]
+  },
+  tool_search: {
+    promptSnippet: "Search for deferred tools by keyword or concept and load matching tools for subsequent calls.",
+    promptGuidelines: ["Use tool_search to discover and activate deferred tools before calling them."]
+  }
 };
-var KEYS = [
-  "preamble",
-  "tools",
-  "rules",
-  "docs",
-  "addendum",
-  "project_context",
-  "skills",
-  "cwd",
-  "mcp_servers",
-  "dynamic_sections"
-];
+var KEYS = ["preamble", "tools", "rules", "docs", "addendum", "project_context", "skills", "cwd", "mcp_servers", "dynamic_sections"];
 function resolveContextFiles(options) {
-  if (options.contextFiles && options.contextFiles.length > 0) return options.contextFiles;
-  return options.resourceLoader?.getAgentsFiles?.()?.agentsFiles ?? [];
+  return options.contextFiles && options.contextFiles.length > 0 ? options.contextFiles : options.resourceLoader?.getAgentsFiles?.()?.agentsFiles ?? [];
 }
 function resolveSkills(options) {
   return options.resourceLoader?.getSkills?.()?.skills ?? [];
@@ -544,7 +542,7 @@ function createHarnessSettings(settingsManager, getActiveModel) {
     }
   };
 }
-async function createCodingRegistry(settingsManager, cwd, promptOptions) {
+async function createCodingRegistry(settingsManager, cwd, promptOptions, dynamicNamespaces) {
   const registry = createRegistry();
   let codingTools = CodingTools;
   try {
@@ -554,7 +552,14 @@ async function createCodingRegistry(settingsManager, cwd, promptOptions) {
     console.warn("[HarnessSetup] Photon image processor fallback to basic tools:", err);
   }
   registry.install(codingTools);
-  registry.install(createCodemodeExtension({ sandbox: new CodemodeSandbox() }));
+  registry.install(
+    createCodemodeExtension({
+      sandbox: new CodemodeSandbox(),
+      get namespaces() {
+        return dynamicNamespaces?.getNamespaces() ?? [];
+      }
+    })
+  );
   registry.install(createToolSearchExtension());
   registry.install(Subagent);
   registry.install(Anchor);
@@ -1419,12 +1424,14 @@ function createNestedToolExecutor(registry, getExtensionRunner, getEnv) {
     }
   };
 }
-async function mountExtensionBridge(location, modelRuntime, extensionsResult, registry, executeToolFn, report, dynamicSections, onNotice, settingsManager) {
+async function mountExtensionBridge(location, modelRuntime, extensionsResult, registry, executeToolFn, report, dynamicSections, onNotice, settingsManager, dynamicNamespaces) {
   let extensionRunner;
   try {
     const syncToolsToRegistry = () => {
       if (!extensionRunner) return;
-      const adapted = extensionRunner.getAllRegisteredTools().map(
+      const all = extensionRunner.getAllRegisteredTools();
+      dynamicNamespaces?.registerFromToolDefinitions(all.map((t) => t.definition));
+      const adapted = all.map(
         (t) => adaptExtensionTool(t.definition, executeToolFn, (callId) => extensionRunner.createToolContext(callId, void 0), () => extensionRunner)
       );
       installExtensionTools(registry, adapted);
@@ -1483,6 +1490,43 @@ async function mountExtensionBridge(location, modelRuntime, extensionsResult, re
 // src/runner/runtime-loader.ts
 import { Harness } from "@earendil-works/pi-durable";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
+
+// src/runner/codemode-namespaces.ts
+var DynamicCodemodeNamespaces = class {
+  list = [];
+  seen = /* @__PURE__ */ new Set();
+  getNamespaces() {
+    return this.list;
+  }
+  registerNamespace(ns) {
+    if (this.seen.has(ns.prefix)) {
+      if (ns.description) {
+        const idx = this.list.findIndex((n) => n.prefix === ns.prefix);
+        if (idx !== -1) this.list[idx] = ns;
+      }
+      return;
+    }
+    this.seen.add(ns.prefix);
+    this.list.push(ns);
+  }
+  registerFromToolDefinitions(toolDefs) {
+    for (const def of toolDefs) {
+      const match = def.name.match(/^mcp__([a-zA-Z0-9_\-]+?)__/);
+      if (match && match[1]) {
+        const serverName = match[1];
+        const prefix = `mcp__${serverName}__`;
+        const desc = def.namespace?.description ?? def.namespace?.instructions;
+        this.registerNamespace({
+          name: def.namespace?.name ?? serverName,
+          prefix,
+          ...desc ? { description: desc } : {}
+        });
+      }
+    }
+  }
+};
+
+// src/runner/runtime-loader.ts
 function logRegError(kind, identifier, err) {
   const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
   if (!msg.includes("already registered") && !msg.includes("duplicate")) {
@@ -1538,12 +1582,14 @@ async function loadHarnessEnvironment(location, options, envs) {
     return p && m ? { provider: p, modelId: m } : void 0;
   };
   const dynamicSections = new DynamicPromptSections();
+  const dynamicNamespaces = new DynamicCodemodeNamespaces();
   const settings = createHarnessSettings(settingsManager, getActiveModel);
-  const registry = await createCodingRegistry(settingsManager, location.cwd, {
-    ...options.prompt,
-    resourceLoader,
-    dynamicSections
-  });
+  const registry = await createCodingRegistry(
+    settingsManager,
+    location.cwd,
+    { ...options.prompt, resourceLoader, dynamicSections },
+    dynamicNamespaces
+  );
   const pendingReports = [];
   const report = (error) => pendingReports.push(error);
   let liveNoticeForwarder;
@@ -1568,7 +1614,8 @@ async function loadHarnessEnvironment(location, options, envs) {
         pendingReports.push({ kind: "notice", level, message });
       }
     },
-    settingsManager
+    settingsManager,
+    dynamicNamespaces
   );
   runnerRef = mounted.extensionRunner;
   const harness = await Harness.open(
