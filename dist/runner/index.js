@@ -1969,21 +1969,23 @@ var BBChildEventAdapter = class {
     switch (event.type) {
       case "message_update": {
         for (const change of event.changes) {
-          if (change.type === "thinking_delta") {
+          const thinkDelta = change.type === "thinking_delta" ? change.delta : change.type === "thinking_start" && change.block.type === "thinking" && change.block.thinking ? change.block.thinking : void 0;
+          const textDelta = change.type === "text_delta" ? change.delta : change.type === "text_start" && change.block.type === "text" && change.block.text ? change.block.text : void 0;
+          if (thinkDelta) {
             this.isInThinking = true;
-            this.currentThinking += change.delta;
+            this.currentThinking += thinkDelta;
             this.output({
               type: "message_update",
-              assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: change.delta },
+              assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: thinkDelta },
               parentRef: this.parentRef,
               ...this.conversationId !== void 0 ? { conversationId: this.conversationId } : {}
             });
-          } else if (change.type === "text_delta") {
+          } else if (textDelta) {
             this.closeThinkingIfNeeded();
-            this.currentText += change.delta;
+            this.currentText += textDelta;
             this.output({
               type: "message_update",
-              assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: change.delta },
+              assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: textDelta },
               parentRef: this.parentRef,
               ...this.conversationId !== void 0 ? { conversationId: this.conversationId } : {}
             });
@@ -2192,19 +2194,21 @@ var BBEventAdapter = class {
       }
       case "message_update": {
         for (const change of event.changes) {
-          if (change.type === "thinking_delta") {
+          const thinkDelta = change.type === "thinking_delta" ? change.delta : change.type === "thinking_start" && change.block.type === "thinking" && change.block.thinking ? change.block.thinking : void 0;
+          const textDelta = change.type === "text_delta" ? change.delta : change.type === "text_start" && change.block.type === "text" && change.block.text ? change.block.text : void 0;
+          if (thinkDelta) {
             this.isInThinking = true;
-            this.currentThinking += change.delta;
+            this.currentThinking += thinkDelta;
             this.output({
               type: "message_update",
-              assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: change.delta }
+              assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: thinkDelta }
             });
-          } else if (change.type === "text_delta") {
+          } else if (textDelta) {
             this.closeThinkingIfNeeded();
-            this.currentText += change.delta;
+            this.currentText += textDelta;
             this.output({
               type: "message_update",
-              assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: change.delta }
+              assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: textDelta }
             });
           }
         }
@@ -2249,6 +2253,8 @@ var BBEventAdapter = class {
             usage: msg.usage
           };
           this.output({ type: "message_end", message: this.lastAssistantMessage });
+          this.currentText = "";
+          this.currentThinking = "";
         }
         break;
       }

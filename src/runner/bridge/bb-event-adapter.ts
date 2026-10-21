@@ -104,19 +104,21 @@ export class BBEventAdapter {
 
 			case "message_update": {
 				for (const change of event.changes) {
-					if (change.type === "thinking_delta") {
+					const thinkDelta = change.type === "thinking_delta" ? change.delta : (change.type === "thinking_start" && change.block.type === "thinking" && change.block.thinking) ? change.block.thinking : undefined;
+					const textDelta = change.type === "text_delta" ? change.delta : (change.type === "text_start" && change.block.type === "text" && change.block.text) ? change.block.text : undefined;
+					if (thinkDelta) {
 						this.isInThinking = true;
-						this.currentThinking += change.delta;
+						this.currentThinking += thinkDelta;
 						this.output({
 							type: "message_update",
-							assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: change.delta },
+							assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: thinkDelta },
 						});
-					} else if (change.type === "text_delta") {
+					} else if (textDelta) {
 						this.closeThinkingIfNeeded();
-						this.currentText += change.delta;
+						this.currentText += textDelta;
 						this.output({
 							type: "message_update",
-							assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: change.delta },
+							assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: textDelta },
 						});
 					}
 				}
@@ -134,18 +136,15 @@ export class BBEventAdapter {
 				});
 				break;
 			}
-
 			case "tool_execution_update": {
 				const update = buildToolExecutionUpdate(event, event.parentToolCallId);
 				if (update) this.output(update);
 				break;
 			}
-
 			case "tool_execution_end": {
 				this.output(buildToolExecutionEnd(event, event.parentToolCallId));
 				break;
 			}
-
 			case "message_end": {
 				this.closeThinkingIfNeeded();
 				const modelItem = event.entry?.model?.[0];
@@ -165,10 +164,11 @@ export class BBEventAdapter {
 						usage: msg.usage,
 					};
 					this.output({ type: "message_end", message: this.lastAssistantMessage });
+					this.currentText = "";
+					this.currentThinking = "";
 				}
 				break;
 			}
-
 			case "compaction_start":
 				this.output({ type: "compaction_start", reason: event.reason === "threshold" ? "threshold" : "manual" });
 				break;

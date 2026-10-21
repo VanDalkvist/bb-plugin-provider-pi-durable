@@ -190,4 +190,35 @@ describe("Native Subagent In-Place Streaming (Cycle 80)", () => {
 		assert.equal((delta.key as Record<string, unknown>).parentRef, "native-parent-call-456");
 		assert.equal((delta.item as Record<string, unknown>).parentToolCallId, "native-parent-call-456");
 	});
+
+	it("BBChildEventAdapter streams initial thinking and text from thinking_start and text_start", () => {
+		const emitted: BBWireEvent[] = [];
+		const childAdapter = new BBChildEventAdapter((evt) => emitted.push(evt), "parent-call-999");
+
+		childAdapter.handleEvent({
+			type: "message_update",
+			changes: [
+				{
+					type: "thinking_start",
+					contentIndex: 0,
+					block: { type: "thinking", thinking: "Subagent initial thought." },
+				},
+				{
+					type: "text_start",
+					contentIndex: 1,
+					block: { type: "text", text: "Subagent initial text response." },
+				},
+			],
+		} as unknown as AgentEvent);
+
+		const thinkingDeltas = emitted
+			.filter((e) => e.type === "message_update" && (e as any).assistantMessageEvent?.type === "thinking_delta")
+			.map((e) => (e as any).assistantMessageEvent.delta);
+		assert.deepEqual(thinkingDeltas, ["Subagent initial thought."]);
+
+		const textDeltas = emitted
+			.filter((e) => e.type === "message_update" && (e as any).assistantMessageEvent?.type === "text_delta")
+			.map((e) => (e as any).assistantMessageEvent.delta);
+		assert.deepEqual(textDeltas, ["Subagent initial text response."]);
+	});
 });
