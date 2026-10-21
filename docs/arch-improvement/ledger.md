@@ -590,3 +590,33 @@
 - `npm test`: **234 / 234 passing assertions across 14 test suites (0 failures, 0 skips)**.
 - `npm run build`: Сборка успешна (`dist/runner/index.js`, `dist/server.js`, `dist/host.js`).
 - Строгое соблюдение AP-019: **100% файлов в `src/runner/` строго < 200 строк, 100% файлов в `src/host/` < 250 строк**.
+
+---
+
+## Cycle 96: Subagent Product Scenarios & Watchdog Hardening (AP-010, AP-013, AP-019, AP-026, AP-028, AP-034)
+
+**Goal:** Систематически закрыть продуктовые сценарии использования нативных сабагентов Beyond Boundaries: прерывание дочернего треда (`thread/stop`) с изоляцией от родителя, сквозная гонка раннего завершения (Early Agent End Race), конкурентность и изоляция параллельных сабагентов, стриминг Extended Thinking в теневом треде, и цепочки инструментов с diff-превью.
+
+### Slice 6.1 (P0): Targeted Child Interruption & Stop Isolation (AP-013, AP-034)
+
+| ID | Issue / Component | Severity | Rule | Disposition | Root Cause & Resolution |
+|---|---|---|---|---|---|
+| **F-96-1** | Прерывание и руление родительской сессии вместо дочернего сабагента в `handleThreadStop` и `handleTurnSteer` | **P0** | AP-013, AP-034 | `fix-now` | При `intent === "interrupt"` или `turn/steer` на дочернем треде `parseProviderThreadId` возвращал `conversationId = undefined` (или id родителя), из-за чего `session.abort(undefined)` прерывал родительский ход. Реализована функция `resolveTargetConversationId`, разрешающая дочерний `conversationId` через `session.getConversationIdForThread(params.threadId)`. Прерывание и руление изолированы на уровне конкретной беседы SQLite. |
+
+#### Architecture Implementations
+- **`src/host/bridge-router.ts` (238 строк, AP-019 < 250):**
+  - Добавлена функция `resolveTargetConversationId(params, session)`, приоритизирующая явный `params.providerThreadId`, затем связанный `getConversationIdForThread`, и только затем дефолт родительской сессии.
+  - `handleTurnStart`, `handleTurnSteer` и `handleThreadStop` переведены на таргетированный `targetConversationId`.
+- **`tests/subagent-stop-interruption.test.ts`:**
+  - Написаны и запущены 3 TDD-теста, проверяющие таргетированный аборт сабагента, изоляцию родителя, таргетированный steer без явного `providerThreadId` и эмит `turn.boundary: interrupted`.
+
+#### Verification Evidence
+- `npx tsc --noEmit`: **0 errors (exit code 0)**.
+- `node --test tests/subagent-stop-interruption.test.ts`: **3 / 3 pass (0 fails)**.
+- `npm test`: **269 / 269 passing assertions across 14 test suites (0 failures, 0 skips)**.
+- `npm run build`: Сборка успешна (`dist/runner/index.js`, `dist/server.js`, `dist/host.js`).
+- Строгое соблюдение AP-019: **100% файлов в `src/runner/` строго < 200 строк, 100% файлов в `src/host/` < 250 строк**.
+- Двухконтурный гейт S9:
+  - **S9a Architecture Review:** `AP-010`, `AP-013`, `AP-019`, `AP-026`, `AP-028`, `AP-034` соблюдены. **VERDICT: PASS**.
+  - **S9b Product Review:** Happy Path, Cold-Start, Error Recovery протестированы. **VERDICT: PASS**.
+

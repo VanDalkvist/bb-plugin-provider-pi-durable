@@ -50,6 +50,19 @@ export interface ThreadStopParams {
 
 const CREQ_REGEX = /^creq_[23456789abcdefghijkmnpqrstuvwxyz]{10}$/u;
 
+function resolveTargetConversationId(
+	params: { threadId: string; providerThreadId?: string },
+	session: { options?: { providerThreadId?: string }; getConversationIdForThread?: (t: string) => string | undefined },
+): string | undefined {
+	if (params.providerThreadId) {
+		const parsed = parseProviderThreadId(params.providerThreadId).conversationId;
+		if (parsed) return parsed;
+	}
+	const bound = session.getConversationIdForThread?.(params.threadId);
+	if (bound) return bound;
+	return parseProviderThreadId(session.options?.providerThreadId ?? params.threadId).conversationId;
+}
+
 export async function handleTurnStart(
 	id: string | number,
 	params: TurnStartParams,
@@ -84,11 +97,7 @@ export async function handleTurnStart(
 		return;
 	}
 
-	const { conversationId } = parseProviderThreadId(providerThreadId);
-	const boundConvId = typeof (session as any).getConversationIdForThread === "function"
-		? (session as any).getConversationIdForThread(params.threadId)
-		: undefined;
-	let targetConversationId = conversationId ?? boundConvId;
+	let targetConversationId = resolveTargetConversationId(params, session);
 	if (!targetConversationId && typeof session.findSubagentConversationForTask === "function") {
 		targetConversationId = session.findSubagentConversationForTask(text);
 	}
@@ -189,9 +198,8 @@ export async function handleTurnSteer(
 		return;
 	}
 
-	const effectiveProviderThreadId = params.providerThreadId ?? session.options?.providerThreadId ?? params.threadId;
-	const { conversationId } = parseProviderThreadId(effectiveProviderThreadId);
-	await session.steer(text, conversationId);
+	const targetConversationId = resolveTargetConversationId(params, session);
+	await session.steer(text, targetConversationId);
 
 	if (params.clientRequestId && CREQ_REGEX.test(params.clientRequestId)) {
 		ctx.sendNotification("thread/delta", {
@@ -218,9 +226,8 @@ export async function handleThreadStop(
 				threadId: params.threadId,
 				deltas: [{ kind: "session.ended" }],
 			});
-			const effectiveProviderThreadId = params.providerThreadId ?? session.options?.providerThreadId ?? params.threadId;
-			const { conversationId } = parseProviderThreadId(effectiveProviderThreadId);
-			await session.abort(conversationId);
+			const targetConversationId = resolveTargetConversationId(params, session);
+			await session.abort(targetConversationId);
 		}
 		const checkpointId = session?.getLastCheckpointId() ?? null;
 		ctx.sendResult(id, { ok: true, providerCheckpointId: checkpointId });

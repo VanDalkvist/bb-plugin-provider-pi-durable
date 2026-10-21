@@ -26,12 +26,12 @@
   - Modify: `src/host/session.ts` (таргетированный эмит `session.ended` и `turn.boundary: interrupted` конкретному дочернему треду, лимит < 250 строк)
   - Test: `tests/subagent-stop-interruption.test.ts`
 - **Applicable AP Gates:** AP-010 (Thin Bridge), AP-013/034 (Single Side-Effect Ownership), AP-019 (<250 lines), AP-026 (Isolation).
-- [ ] **[S8: Execute Slice]:**
+- [x] **[S8: Execute Slice]:**
   - TDD тест в `tests/subagent-stop-interruption.test.ts`: вызов `handleThreadStop` для дочернего треда прерывает строго сабагента (`conv X`), родительская сессия (`conv 1`) продолжает выполняться без абортов.
   - Реализация таргетированного резолва conversationId в `handleThreadStop` и `handleTurnSteer`.
   - Все тесты зеленые, `npx tsc --noEmit` чист.
-- [ ] **[S9: Verify Gate]:** Двухконтурный гейт S9 (S9a Architecture + S9b Product) с терминальными receipts.
-- [ ] **[S10: Version Bump]:** Повысить версию до **`0.2.41`** в `package.json`, закоммитить и запушить в `main`.
+- [x] **[S9: Verify Gate]:** Двухконтурный гейт S9 (S9a Architecture + S9b Product) с терминальными receipts.
+- [x] **[S10: Version Bump]:** Повысить версию до **`0.2.41`** в `package.json`, закоммитить и запушить в `main`.
 
 ---
 
