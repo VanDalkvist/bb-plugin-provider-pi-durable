@@ -101,7 +101,7 @@ export async function handleTurnStart(
 	}
 
 	let targetConversationId = resolveTargetConversationId(params, session);
-	if (!targetConversationId && typeof session.findSubagentConversationForTask === "function") {
+	if (!targetConversationId && params.threadId !== session.options?.threadId && typeof session.findSubagentConversationForTask === "function") {
 		targetConversationId = session.findSubagentConversationForTask(text);
 	}
 	const mirrorState = targetConversationId && typeof session.getSubagentState === "function"
