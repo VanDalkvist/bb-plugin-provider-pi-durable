@@ -1,13 +1,6 @@
 import { RunnerProcess } from "./runner-process.ts";
 import { DeltaTranslator } from "./delta-translator.ts";
-import {
-	buildRunnerArgs,
-	createReadyDeferred,
-	waitForReady,
-	extractSessionStats,
-	createContextWindowDelta,
-	type SessionStats,
-} from "./session-telemetry.ts";
+import { buildRunnerArgs, createReadyDeferred, waitForReady, extractSessionStats, createContextWindowDelta, type SessionStats } from "./session-telemetry.ts";
 import { SubagentMirrorManager, type SubagentMirrorRecord } from "./subagent-mirror.ts";
 import { spawnSubthreadInBb } from "./subthread-spawner.ts";
 import { DurableBindingManager } from "./durable-binding-store.ts";
@@ -202,16 +195,20 @@ export class PiThreadSession {
 		}
 	}
 
-	public async prompt(text: string, conversationId?: string): Promise<void> {
+	public async prompt(text: string, imagesOrConversationId?: import("./prompt-input.ts").PiPromptImage[] | string, conversationId?: string): Promise<void> {
 		this.isProcessing = true;
 		try {
-			await this.runner.requestOk({ type: "prompt", message: text, streamingBehavior: "followUp", conversationId });
+			const images = Array.isArray(imagesOrConversationId) ? imagesOrConversationId : undefined;
+			const targetConvId = typeof imagesOrConversationId === "string" ? imagesOrConversationId : conversationId;
+			await this.runner.requestOk({ type: "prompt", message: text, ...(images?.length ? { images } : {}), streamingBehavior: "followUp", conversationId: targetConvId });
 		} finally {
 			this.isProcessing = false;
 		}
 	}
-	public async steer(text: string, conversationId?: string): Promise<void> {
-		await this.runner.requestOk({ type: "steer", message: text, conversationId });
+	public async steer(text: string, imagesOrConversationId?: import("./prompt-input.ts").PiPromptImage[] | string, conversationId?: string): Promise<void> {
+		const images = Array.isArray(imagesOrConversationId) ? imagesOrConversationId : undefined;
+		const targetConvId = typeof imagesOrConversationId === "string" ? imagesOrConversationId : conversationId;
+		await this.runner.requestOk({ type: "steer", message: text, ...(images?.length ? { images } : {}), conversationId: targetConvId });
 	}
 	public async abort(conversationId?: string): Promise<void> {
 		try {

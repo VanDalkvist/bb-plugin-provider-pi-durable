@@ -1,6 +1,6 @@
 import type { SessionRegistry } from "./session-registry.ts";
 import {
-	extractInputText,
+	extractPiPromptInput,
 	isCompactCommand,
 	extractCompactInstructions,
 } from "./prompt-input.ts";
@@ -94,11 +94,12 @@ export async function handleTurnStart(
 		return;
 	}
 
-	const text = extractInputText(params.input);
-	if (!text) {
+	const promptInput = extractPiPromptInput(params.input);
+	if (!promptInput) {
 		ctx.sendError(id, -32602, "Missing input text");
 		return;
 	}
+	const { text, images } = promptInput;
 
 	let targetConversationId = resolveTargetConversationId(params, session);
 	if (!targetConversationId && params.threadId !== session.options?.threadId && typeof session.findSubagentConversationForTask === "function") {
@@ -164,7 +165,7 @@ export async function handleTurnStart(
 		return;
 	}
 
-	await session.prompt(text, targetConversationId);
+	await session.prompt(text, images.length > 0 ? images : targetConversationId, images.length > 0 ? targetConversationId : undefined);
 
 	if (params.clientRequestId && CREQ_REGEX.test(params.clientRequestId)) {
 		ctx.sendNotification("thread/delta", {
@@ -195,14 +196,15 @@ export async function handleTurnSteer(
 		};
 	}
 
-	const text = extractInputText(params.input);
-	if (!text) {
+	const promptInput = extractPiPromptInput(params.input);
+	if (!promptInput) {
 		ctx.sendError(id, -32602, "Missing steer text");
 		return;
 	}
+	const { text, images } = promptInput;
 
 	const targetConversationId = resolveTargetConversationId(params, session);
-	await session.steer(text, targetConversationId);
+	await session.steer(text, images.length > 0 ? images : targetConversationId, images.length > 0 ? targetConversationId : undefined);
 
 	if (params.clientRequestId && CREQ_REGEX.test(params.clientRequestId)) {
 		ctx.sendNotification("thread/delta", {

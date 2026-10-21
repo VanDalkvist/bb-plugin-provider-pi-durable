@@ -20,6 +20,7 @@ export interface RunnerCommandPayload {
 	type?: string;
 	id?: string;
 	message?: string;
+	images?: import("@earendil-works/pi-ai").ImageContent[];
 	streamingBehavior?: string;
 	provider?: string;
 	modelId?: string;
@@ -44,6 +45,14 @@ export function parseConversationId(id: string | number | undefined | null): imp
 	return num as import("@earendil-works/pi-durable").ConversationId;
 }
 
+function toDurableInput(message?: string, images?: import("@earendil-works/pi-ai").ImageContent[]): string | (import("@earendil-works/pi-ai").TextContent | import("@earendil-works/pi-ai").ImageContent)[] | null {
+	const msg = message ?? "";
+	const imgs = Array.isArray(images) ? images : [];
+	if (!msg && imgs.length === 0) return null;
+	if (imgs.length === 0) return msg;
+	return [...(msg ? [{ type: "text" as const, text: msg }] : []), ...imgs];
+}
+
 export async function handleActiveSessionCommand(
 	cmd: RunnerCommandPayload,
 	durable: OpenDurableResult,
@@ -56,8 +65,9 @@ export async function handleActiveSessionCommand(
 	}
 	switch (cmd.type) {
 		case "prompt": {
-			if (!cmd.message) {
-				respond.error(cmd.id, "prompt", "Missing message");
+			const content = toDurableInput(cmd.message, cmd.images);
+			if (!content) {
+				respond.error(cmd.id, "prompt", "Missing message or images");
 				return;
 			}
 			respond.success(cmd.id, "prompt");
@@ -68,15 +78,16 @@ export async function handleActiveSessionCommand(
 				if (!conv) {
 					throw new Error(`Conversation not found: ${cmd.conversationId}`);
 				}
-				await conv.submit({ type: "input", content: cmd.message, whenBusy: behavior }, BACKGROUND_CONTEXT);
+				await conv.submit({ type: "input", content, whenBusy: behavior }, BACKGROUND_CONTEXT);
 			} else {
-				await durable.controller.submit(cmd.message, behavior);
+				await durable.controller.submit(content, behavior);
 			}
 			break;
 		}
 		case "steer": {
-			if (!cmd.message) {
-				respond.error(cmd.id, "steer", "Missing message");
+			const content = toDurableInput(cmd.message, cmd.images);
+			if (!content) {
+				respond.error(cmd.id, "steer", "Missing message or images");
 				return;
 			}
 			respond.success(cmd.id, "steer");
@@ -86,9 +97,9 @@ export async function handleActiveSessionCommand(
 				if (!conv) {
 					throw new Error(`Conversation not found: ${cmd.conversationId}`);
 				}
-				await conv.submit({ type: "input", content: cmd.message, whenBusy: "steer" }, BACKGROUND_CONTEXT);
+				await conv.submit({ type: "input", content, whenBusy: "steer" }, BACKGROUND_CONTEXT);
 			} else {
-				await durable.controller.submit(cmd.message, "steer");
+				await durable.controller.submit(content, "steer");
 			}
 			break;
 		}

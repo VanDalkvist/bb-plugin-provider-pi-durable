@@ -63,12 +63,15 @@ export function createDurableController(ctx: ControllerContext): DurableControll
 	};
 
 	return {
-		submit: (text, whenBusy) =>
+		submit: (input, whenBusy) =>
 			command(async () => {
+				const isStr = typeof input === "string";
+				const prompt = isStr ? input : input.filter((c) => c.type === "text").map((c: any) => c.text).join("\n");
+				const images = isStr ? undefined : (input.filter((c) => c.type === "image") as any[]);
 				if (ctx.extensionRunner && ctx.dynamicSections) {
 					try {
 						const hookRes = await ctx.extensionRunner.emitBeforeAgentStart(
-							{ messageType: "user", prompt: text, images: undefined },
+							{ messageType: "user", prompt, images: images?.length ? images : undefined },
 							{
 								cwd: ctx.cwd ?? process.cwd(),
 								sections: ctx.dynamicSections.getSections(),
@@ -84,7 +87,7 @@ export function createDurableController(ctx: ControllerContext): DurableControll
 						);
 					}
 				}
-				return watchAnswer(await ctx.getCurrent().submit({ type: "input", content: text, whenBusy }, runtimeContext));
+				return watchAnswer(await ctx.getCurrent().submit({ type: "input", content: input, whenBusy }, runtimeContext));
 			}),
 
 		compact: (instructions) =>

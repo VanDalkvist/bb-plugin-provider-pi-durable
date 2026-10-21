@@ -111,12 +111,17 @@ export const promptInputSchema = z
 					.default([]),
 			}),
 			z.object({
+				type: z.literal("image"),
+				url: z.string(),
+			}),
+			z.object({
 				type: z.literal("localImage"),
 				path: z.string(),
 			}),
 			z.object({
 				type: z.literal("localFile"),
 				path: z.string(),
+				name: z.string().optional(),
 			}),
 		]),
 	)

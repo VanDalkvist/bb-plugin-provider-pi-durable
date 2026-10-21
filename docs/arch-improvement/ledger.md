@@ -643,4 +643,53 @@
   - **S9a Architecture Review:** `AP-010`, `AP-019`, `AP-026`, `AP-028` соблюдены. **VERDICT: PASS**.
   - **S9b Product Review:** Happy Path, Zero-Data, Error Recovery протестированы. **VERDICT: PASS**.
 
+---
+
+## Cycle 97: Streaming Integrity, Bundled Version & Context Property Descriptors
+
+### Slices Summary (v0.2.44)
+- **Slice 97.1 (P1):** Устранен сброс `text_start` / `thinking_start` при возобновлении стриминга после вызова тулов (Issue #10).
+- **Slice 97.2 (P1):** Запечена версия плагина в хост-бандл через `import manifest with { type: "json" }` для предотвращения `0.0.0-unknown` (PR #15 / Issue #18).
+- **Slice 97.3 (P2):** Сохранение дескрипторов контекста инструментов (`Object.getOwnPropertyDescriptors`) при shallow copy `{ ...ctx }` в `tool-adapter.ts` (Issue #21).
+- **Двухконтурный гейт S9:** S9a и S9b подтвердили PASS (276 тестов). Версия v0.2.44 выпущена.
+
+---
+
+## Cycle 98: Multimodal Image Attachments Pipeline & Subagent Sync Bug Documentation (Issue #11, AP-010, AP-013, AP-019, AP-026, AP-028)
+
+### Slices Summary (v0.2.45)
+- **Slice 98.1 (P1):** Multimodal Input Schema & Local Image Resolver (`src/host/types.ts` & `src/host/prompt-input.ts`).
+  - Расширена схема `promptInputSchema` чанками `image` (URL / data URL), `localImage` (`path`), `localFile` (`path`, `name`).
+  - Реализован канонический парсер `extractPiPromptInput`, извлекающий `localImage` в base64 `ImageContent` с автодетекцией MIME, преобразующий `localFile` в подсказки `[Attached file: ...]`, декодирующий `data:` URL и нормализующий упоминания команд скиллов.
+- **Slice 98.2 (P1):** Host-to-Runner Multimodal Bridge & Controller Submission (`src/host/bridge-router.ts`, `src/host/session.ts`, `src/runner/`).
+  - Ликвидирована ошибка `-32602 Missing input text` при отправке изображения без сопроводительного текста: `bridge-router` разрешает ход, если есть хотя бы одна валидная картинка (`!text && images.length === 0`).
+  - Обновлен RPC wire-контракт: `session.prompt(text, images, conversationId)` и `session.steer(text, images, conversationId)` передают массив `ImageContent`.
+  - В раннере `session-commands.ts` функция `toDurableInput` объединяет текст и изображения в канонический `UserInput` (`(TextContent | ImageContent)[]`) для передачи в `durable.controller.submit` и `conversation.submit`.
+  - В `runtime-controller.ts` изображения пробрасываются в хук `emitBeforeAgentStart({ messageType: "user", prompt, images })`.
+
+#### Architectural Findings & Discovered Bugs
+| ID | Issue / Component | Severity | Rule | Disposition | Root Cause & Resolution |
+|---|---|---|---|---|---|
+| **F-98-1** | Дроп картинок в `promptInputSchema` и `extractInputText` | **P1** | AP-010, AP-026 | `fix-now` (Cycle 98) | Входная схема дропала `image`, а экстрактор отфильтровывал только `text`, возвращая пустую строку при наличии картинок. Исправлено в `src/host/prompt-input.ts` и `src/host/types.ts`. |
+| **F-98-2** | Ошибка `-32602 Missing input text` на ходах только с картинками | **P1** | AP-013, AP-026 | `fix-now` (Cycle 98) | `bridge-router.ts` безусловно падал при пустом тексте. Исправлено: ошибка отдается только если `!text && images.length === 0`. |
+| **F-98-3** | Рассинхронизация и таймаут сабагентов при длительных вызовах (Subagent Unanswered / Parent Blind Spot) | **P1** | AP-013, AP-027, AP-034 | `logged-for-cycle-99` | **Формулировка бага:** При вызове `subagent` в синхронном режиме, если задача дочернего агента выполняется дольше внутреннего лимита pi harness или запускает длительные дочерние команды, harness выбивает ошибку `Subagent failed: unanswered`. При этом дочерний тред в BB (`thr_a85j76x8et`) продолжает реально работать в фоне (`Status: active`). Родительский агент теряет прямую видимость хода сабагента и не получает автоматически отложенные дельты завершения без принудительного опроса треда. Чтение сырых логов CLI (`bb thread log`) объемом >1МБ вызывает аборт инструмента `bash` по лимиту вывода. Требуется в Cycle 99 реализовать supervisor-поллинг и потоковый heartbeat между родителем и дочерним сабагентом. |
+
+#### Verification Evidence
+- `npx tsc --noEmit`: **0 errors (exit code 0)**.
+- `node --test tests/multimodal*.test.ts`: **6 / 6 pass (0 fails)**.
+- `npm test`: **282 / 282 passing assertions across 14 test suites (0 failures, 0 skips)**.
+- `npm run build`: Сборка успешна (`dist/runner/index.js`, `dist/server.js`, `dist/host.js`).
+- Строгое соблюдение AP-019:
+  - `src/runner/session-commands.ts`: **199 строк** (бюджет < 200).
+  - `src/runner/runtime-controller.ts`: **174 строки** (бюджет < 200).
+  - `src/runner/runtime-types.ts`: **104 строки** (бюджет < 200).
+  - `src/host/bridge-router.ts`: **243 строки** (бюджет < 250).
+  - `src/host/session.ts`: **244 строки** (бюджет < 250).
+  - `src/host/prompt-input.ts`: **167 строк** (бюджет < 250).
+  - `src/host/types.ts`: **130 строк** (бюджет < 250).
+- Двухконтурный гейт S9:
+  - **S9a Architecture Review (`thr_ary4wktzzy`):** `AP-010`, `AP-013`, `AP-019`, `AP-026`, `AP-028`, `AP-034` соблюдены. **VERDICT: PASS**.
+  - **S9b Product Review (`thr_a85j76x8et`):** Happy Path (Image-only, Text+Image, LocalFile, Zero-Data Rejection) проверены black-box тестами. **VERDICT: PASS**.
+
+
 

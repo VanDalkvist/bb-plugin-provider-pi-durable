@@ -920,11 +920,14 @@ function createDurableController(ctx) {
     return model;
   };
   return {
-    submit: (text, whenBusy) => command(async () => {
+    submit: (input, whenBusy) => command(async () => {
+      const isStr = typeof input === "string";
+      const prompt = isStr ? input : input.filter((c) => c.type === "text").map((c) => c.text).join("\n");
+      const images = isStr ? void 0 : input.filter((c) => c.type === "image");
       if (ctx.extensionRunner && ctx.dynamicSections) {
         try {
           const hookRes = await ctx.extensionRunner.emitBeforeAgentStart(
-            { messageType: "user", prompt: text, images: void 0 },
+            { messageType: "user", prompt, images: images?.length ? images : void 0 },
             {
               cwd: ctx.cwd ?? process.cwd(),
               sections: ctx.dynamicSections.getSections()
@@ -940,7 +943,7 @@ function createDurableController(ctx) {
           );
         }
       }
-      return watchAnswer(await ctx.getCurrent().submit({ type: "input", content: text, whenBusy }, runtimeContext));
+      return watchAnswer(await ctx.getCurrent().submit({ type: "input", content: input, whenBusy }, runtimeContext));
     }),
     compact: (instructions) => command(async () => {
       const id = await ctx.getCurrent().compact(instructions, runtimeContext);
@@ -2439,14 +2442,22 @@ function parseConversationId(id) {
   }
   return num;
 }
+function toDurableInput(message, images) {
+  const msg = message ?? "";
+  const imgs = Array.isArray(images) ? images : [];
+  if (!msg && imgs.length === 0) return null;
+  if (imgs.length === 0) return msg;
+  return [...msg ? [{ type: "text", text: msg }] : [], ...imgs];
+}
 async function handleActiveSessionCommand(cmd, durable, modelRuntime, args2, respond) {
   if (await handleBindingCommand(cmd, durable, respond)) {
     return;
   }
   switch (cmd.type) {
     case "prompt": {
-      if (!cmd.message) {
-        respond.error(cmd.id, "prompt", "Missing message");
+      const content = toDurableInput(cmd.message, cmd.images);
+      if (!content) {
+        respond.error(cmd.id, "prompt", "Missing message or images");
         return;
       }
       respond.success(cmd.id, "prompt");
@@ -2457,15 +2468,16 @@ async function handleActiveSessionCommand(cmd, durable, modelRuntime, args2, res
         if (!conv) {
           throw new Error(`Conversation not found: ${cmd.conversationId}`);
         }
-        await conv.submit({ type: "input", content: cmd.message, whenBusy: behavior }, BACKGROUND_CONTEXT2);
+        await conv.submit({ type: "input", content, whenBusy: behavior }, BACKGROUND_CONTEXT2);
       } else {
-        await durable.controller.submit(cmd.message, behavior);
+        await durable.controller.submit(content, behavior);
       }
       break;
     }
     case "steer": {
-      if (!cmd.message) {
-        respond.error(cmd.id, "steer", "Missing message");
+      const content = toDurableInput(cmd.message, cmd.images);
+      if (!content) {
+        respond.error(cmd.id, "steer", "Missing message or images");
         return;
       }
       respond.success(cmd.id, "steer");
@@ -2475,9 +2487,9 @@ async function handleActiveSessionCommand(cmd, durable, modelRuntime, args2, res
         if (!conv) {
           throw new Error(`Conversation not found: ${cmd.conversationId}`);
         }
-        await conv.submit({ type: "input", content: cmd.message, whenBusy: "steer" }, BACKGROUND_CONTEXT2);
+        await conv.submit({ type: "input", content, whenBusy: "steer" }, BACKGROUND_CONTEXT2);
       } else {
-        await durable.controller.submit(cmd.message, "steer");
+        await durable.controller.submit(content, "steer");
       }
       break;
     }

@@ -49,7 +49,7 @@ export interface DurableViewSource {
 }
 
 export interface DurableController {
-	submit(text: string, whenBusy: "steer" | "followUp"): Promise<void>;
+	submit(content: string | (import("@earendil-works/pi-ai").TextContent | import("@earendil-works/pi-ai").ImageContent)[], whenBusy: "steer" | "followUp"): Promise<void>;
 	compact(instructions: string | undefined): Promise<void>;
 	abort(): Promise<void>;
 	cycleThinking(): Promise<void>;
