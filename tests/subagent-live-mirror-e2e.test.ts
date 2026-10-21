@@ -109,7 +109,24 @@ test("End-to-End Mirror Sync: Subagent execution events stream into child BB thr
 			"Early buffered text deltas MUST be delivered to child thread!",
 		);
 
-		// --- PHASE 4: Subagent continues streaming in real-time ---
+		// --- PHASE 4: Subagent executes tool (e.g. bash) and streams in real-time ---
+		const toolStart: RunnerEvent = {
+			type: "tool_execution_start",
+			conversationId: "77",
+			parentRef: "call_sub_1",
+			toolCallId: "call_sub_1:bash_1",
+			toolName: "bash",
+			args: { command: "git status" },
+		};
+		const toolEnd: RunnerEvent = {
+			type: "tool_execution_end",
+			conversationId: "77",
+			parentRef: "call_sub_1",
+			toolCallId: "call_sub_1:bash_1",
+			toolName: "bash",
+			result: "nothing to commit, working tree clean",
+			isError: false,
+		};
 		const liveDelta2: RunnerEvent = {
 			type: "message_update",
 			conversationId: "77",
@@ -120,6 +137,8 @@ test("End-to-End Mirror Sync: Subagent execution events stream into child BB thr
 				delta: "Step 2: Verification complete: PASS\n",
 			},
 		};
+		await (session as any).handleRunnerEvent(toolStart);
+		await (session as any).handleRunnerEvent(toolEnd);
 		await (session as any).handleRunnerEvent(liveDelta2);
 
 		// --- PHASE 5: Subagent finishes (agent_end) ---
@@ -139,6 +158,15 @@ test("End-to-End Mirror Sync: Subagent execution events stream into child BB thr
 			updatedChildDeltas.some((d) => d.kind === "item.textDelta" && d.text.includes("Step 2: Verification complete")),
 			"Live text deltas MUST be delivered to child thread!",
 		);
+
+		// Verify child thread received tool execution without parentRef
+		const childToolOpen = updatedChildDeltas.find((d) => d.kind === "item.open" && d.item?.type === "command");
+		assert.ok(childToolOpen, "Child thread must receive tool execution item.open");
+		assert.equal(childToolOpen.key?.parentRef, undefined, "Child tool item must not have parentRef");
+
+		const childToolClose = updatedChildDeltas.find((d) => d.kind === "item.close" && d.item?.type === "command");
+		assert.ok(childToolClose, "Child thread must receive tool execution item.close");
+		assert.equal(childToolClose.status, "completed");
 
 		assert.ok(
 			updatedChildDeltas.some((d) => d.kind === "turn.boundary" && d.status === "completed"),
