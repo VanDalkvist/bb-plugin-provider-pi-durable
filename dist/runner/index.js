@@ -589,7 +589,7 @@ var ExecutionEnvs = class {
   }
 };
 async function findInitialAgentModel(settingsManager, modelRuntime, cli) {
-  if (cli !== void 0) {
+  if (cli?.model !== void 0) {
     const resolved = resolveCliModel({ cliProvider: cli.provider, cliModel: cli.model, modelRuntime });
     if (resolved.error !== void 0 || resolved.model === void 0) {
       throw new Error(`Could not resolve model: ${resolved.error ?? cli.model}`);
@@ -961,10 +961,13 @@ function createDurableController(ctx) {
     compact: (instructions) => command(async () => {
       if (ctx.extensionRunner) {
         try {
+          const ctxView = await ctx.getCurrent().context(runtimeContext).catch(() => void 0);
+          const msgs = ctxView?.messages ? [...ctxView.messages] : [];
+          const entries = ctxView?.entries ? [...ctxView.entries] : [];
           await ctx.extensionRunner.emit({
             type: "session_before_compact",
-            preparation: { firstKeptEntryId: "", messagesToSummarize: [], turnPrefixMessages: [], isSplitTurn: false, tokensBefore: 0, fileOps: { read: /* @__PURE__ */ new Set(), written: /* @__PURE__ */ new Set(), edited: /* @__PURE__ */ new Set() }, settings: {} },
-            branchEntries: [],
+            preparation: { firstKeptEntryId: ctxView?.head?.id !== void 0 ? String(ctxView.head.id) : "", messagesToSummarize: msgs, turnPrefixMessages: [], isSplitTurn: false, tokensBefore: 0, fileOps: { read: /* @__PURE__ */ new Set(), written: /* @__PURE__ */ new Set(), edited: /* @__PURE__ */ new Set() }, settings: {} },
+            branchEntries: entries,
             customInstructions: instructions,
             reason: "manual",
             willRetry: false,
@@ -1003,14 +1006,17 @@ function createDurableController(ctx) {
     cycleThinking: () => command(async () => {
       const model = agentModel();
       if (!model.reasoning) throw new Error("Current model does not support thinking");
-      const levels = getSupportedThinkingLevels(model);
-      const level = agentOf(ctx.getState().conversation).thinkingLevel ?? "off";
-      const next = levels[(levels.indexOf(level) + 1) % levels.length] ?? "off";
-      await ctx.getCurrent().configure({ thinkingLevel: next }, runtimeContext);
+      const levels = getSupportedThinkingLevels(model), level = agentOf(ctx.getState().conversation).thinkingLevel ?? "off";
+      await ctx.getCurrent().configure({ thinkingLevel: levels[(levels.indexOf(level) + 1) % levels.length] ?? "off" }, runtimeContext);
     }),
     setThinkingLevel: (targetLevel) => command(async () => {
       const model = agentModel();
-      if (!model.reasoning) throw new Error("Current model does not support thinking");
+      if (!model.reasoning) {
+        if (targetLevel === "off" || targetLevel === "none") {
+          return void await ctx.getCurrent().configure({ thinkingLevel: "off" }, runtimeContext);
+        }
+        throw new Error("Current model does not support thinking");
+      }
       await ctx.getCurrent().configure({ thinkingLevel: clampThinkingLevel(model, targetLevel) }, runtimeContext);
     }),
     setModel: (ref) => command(async () => {
@@ -1301,16 +1307,23 @@ async function setupExtensionRunner(options) {
       return options.modelRuntime.getAvailableSnapshot()[0];
     },
     getScopedModels: () => options.modelRuntime.getAvailableSnapshot().map((model) => ({ model })),
-    isIdle: () => true,
+    isIdle: () => options.isIdle ? options.isIdle() : true,
     isProjectTrusted: () => true,
     getSignal: () => void 0,
     abort: () => {
+      options.onAbort?.();
     },
     hasPendingMessages: () => false,
     shutdown: () => {
     },
-    getContextUsage: () => void 0,
-    compact: () => {
+    getContextUsage: () => {
+      const u = options.getContextUsage?.();
+      if (!u) return void 0;
+      const pct = typeof u.tokens === "number" && u.contextWindow > 0 ? u.tokens / u.contextWindow * 100 : null;
+      return { tokens: u.tokens, contextWindow: u.contextWindow, percent: pct };
+    },
+    compact: (opts) => {
+      options.onCompact?.(typeof opts === "string" ? opts : opts?.customInstructions);
     },
     getSystemPrompt: () => "",
     getSystemPromptOptions: () => ({ cwd: options.cwd }),
@@ -1346,11 +1359,7 @@ function createNestedToolExecutor(registry, getExtensionRunner, getEnv) {
       }
     }
     if (!target) {
-      return {
-        toolCall: { type: "toolCall", id: `${callerId}/nested`, name, arguments: args2 },
-        result: { content: [{ type: "text", text: `Tool ${name} not found` }], details: {} },
-        isError: true
-      };
+      return { toolCall: { type: "toolCall", id: `${callerId}/nested`, name, arguments: args2 }, result: { content: [{ type: "text", text: `Tool ${name} not found` }], details: {} }, isError: true };
     }
     if (runner?.hasHandlers("tool_call")) {
       const hook = await runner.emitToolCall({
@@ -1397,11 +1406,7 @@ function createNestedToolExecutor(registry, getExtensionRunner, getEnv) {
           isError: !!res?.isError
         });
       }
-      return {
-        toolCall: { type: "toolCall", id: `${callerId}/nested`, name, arguments: args2 },
-        result: { content, details: res?.details },
-        isError: !!res?.isError
-      };
+      return { toolCall: { type: "toolCall", id: `${callerId}/nested`, name, arguments: args2 }, result: { content, details: res?.details }, isError: !!res?.isError };
     } catch (err) {
       const errorContent = [{ type: "text", text: err instanceof Error ? err.message : String(err) }];
       if (runner?.hasHandlers("tool_result")) {
@@ -1416,15 +1421,11 @@ function createNestedToolExecutor(registry, getExtensionRunner, getEnv) {
           isError: true
         });
       }
-      return {
-        toolCall: { type: "toolCall", id: `${callerId}/nested`, name, arguments: args2 },
-        result: { content: errorContent, details: {} },
-        isError: true
-      };
+      return { toolCall: { type: "toolCall", id: `${callerId}/nested`, name, arguments: args2 }, result: { content: errorContent, details: {} }, isError: true };
     }
   };
 }
-async function mountExtensionBridge(location, modelRuntime, extensionsResult, registry, executeToolFn, report, dynamicSections, onNotice, settingsManager, dynamicNamespaces) {
+async function mountExtensionBridge(location, modelRuntime, extensionsResult, registry, executeToolFn, report, dynamicSections, onNotice, settingsManager, dynamicNamespaces, actionsDelegate) {
   let extensionRunner;
   try {
     const syncToolsToRegistry = () => {
@@ -1454,7 +1455,11 @@ async function mountExtensionBridge(location, modelRuntime, extensionsResult, re
       },
       onToolsChanged: syncToolsToRegistry,
       onNotice,
-      settingsManager
+      settingsManager,
+      onAbort: () => actionsDelegate?.onAbort?.(),
+      onCompact: (i) => actionsDelegate?.onCompact?.(i),
+      getContextUsage: () => actionsDelegate?.getContextUsage?.(),
+      isIdle: () => actionsDelegate?.isIdle ? actionsDelegate.isIdle() : true
     });
     if (extensionRunner) {
       extensionRunner.onError((err) => {
@@ -1568,7 +1573,9 @@ async function loadHarnessEnvironment(location, options, envs) {
     cwd: location.cwd,
     agentDir: getAgentDir2(),
     settingsManager,
-    extensionFactories: createStandardExtensionFactories()
+    extensionFactories: createStandardExtensionFactories(),
+    additionalSkillPaths: options.cli?.skills,
+    additionalExtensionPaths: options.cli?.extension ? [options.cli.extension] : void 0
   });
   await resourceLoader.reload();
   const extensionsResult = resourceLoader.getExtensions();
@@ -1599,6 +1606,7 @@ async function loadHarnessEnvironment(location, options, envs) {
     () => runnerRef,
     () => envs.env({ cwd: location.cwd })
   );
+  const actionsDelegate = {};
   const mounted = await mountExtensionBridge(
     location,
     modelRuntime,
@@ -1615,7 +1623,8 @@ async function loadHarnessEnvironment(location, options, envs) {
       }
     },
     settingsManager,
-    dynamicNamespaces
+    dynamicNamespaces,
+    actionsDelegate
   );
   runnerRef = mounted.extensionRunner;
   const harness = await Harness.open(
@@ -1639,6 +1648,7 @@ async function loadHarnessEnvironment(location, options, envs) {
     },
     cleanup: mounted.cleanup,
     extensionRunner: mounted.extensionRunner,
+    actionsDelegate,
     dynamicSections,
     setNoticeForwarder: (forwarder) => {
       liveNoticeForwarder = forwarder;
@@ -1648,12 +1658,11 @@ async function loadHarnessEnvironment(location, options, envs) {
 
 // src/runner/runtime.ts
 async function loadSummaries(harness, rootId) {
-  const label = (id) => id === rootId ? "main" : `subagent ${id}`;
   const summaries = [];
   let cursor;
   do {
     const page = await harness.commit((tx) => tx.scanConversations({}, 256, cursor), runtimeContext);
-    for (const { id } of page.items) summaries.push({ id, label: label(id), ...await firstInput(harness, id) });
+    for (const { id } of page.items) summaries.push({ id, label: id === rootId ? "main" : `subagent ${id}`, ...await firstInput(harness, id) });
     cursor = page.next;
   } while (cursor !== void 0);
   return summaries;
@@ -1781,6 +1790,20 @@ async function openDurable(options = {}) {
       dynamicSections: activeEnvState.dynamicSections,
       cwd: location.cwd
     });
+    if (activeEnvState.actionsDelegate) {
+      activeEnvState.actionsDelegate.onAbort = () => {
+        void controller.abort();
+      };
+      activeEnvState.actionsDelegate.onCompact = (i) => {
+        void controller.compact(i);
+      };
+      activeEnvState.actionsDelegate.isIdle = () => true;
+      activeEnvState.actionsDelegate.getContextUsage = () => {
+        const doc = state.conversation.docs["pi.agent"] ?? {};
+        const p = doc.model?.provider, m = doc.model?.modelId ?? doc.model?.id;
+        return { tokens: null, contextWindow: (p && m ? modelRuntime.getModel(p, m)?.contextWindow : void 0) ?? 128e3 };
+      };
+    }
     const saved = agentOf(state.conversation).model;
     if (!saved) notice("warning", "No model configured; select one with /model.");
     else if (!modelRuntime.getModel(saved.provider, saved.modelId)) {
@@ -2421,7 +2444,10 @@ function parseCliArgs(argv2) {
     else if (arg === "--append-system-prompt" && i + 1 < argv2.length) args2.appendSystemPromptPath = argv2[++i];
     else if (arg === "--cwd" && i + 1 < argv2.length) args2.cwd = argv2[++i];
     else if (arg === "--extension" && i + 1 < argv2.length) args2.extension = argv2[++i];
-    else if (arg.startsWith("-")) {
+    else if (arg === "--skill" && i + 1 < argv2.length) {
+      args2.skills ??= [];
+      args2.skills.push(argv2[++i]);
+    } else if (arg.startsWith("-")) {
       if (i + 1 < argv2.length && !argv2[i + 1].startsWith("-")) {
         i++;
       }
@@ -3115,7 +3141,13 @@ async function main() {
     cwd: args.cwd,
     continueSession: args.continueSession,
     session: args.session,
-    cli: args.model ? { provider: args.provider, model: args.model, thinking: args.thinking } : void 0,
+    cli: {
+      provider: args.provider,
+      model: args.model,
+      thinking: args.thinking,
+      skills: args.skills,
+      extension: args.extension
+    },
     prompt: {
       systemPromptPath: args.systemPromptPath,
       appendSystemPromptPath: args.appendSystemPromptPath

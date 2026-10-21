@@ -106,7 +106,15 @@ export class ModelCatalog {
 			if (!isScoped) continue;
 
 			const isDefault = fullId === this.modelScope.defaultModelId;
-			const reasoningEfforts = (m.reasoningEfforts ?? ["low", "medium", "high"]).map((r: string) => ({
+			const isReasoning = m.reasoning === true;
+			const levels: string[] = isReasoning
+				? ["none", "low", "medium", "high", "xhigh", "max"].filter((lvl) => {
+						if (!m.thinkingLevelMap) return true;
+						const mapped = m.thinkingLevelMap[lvl === "none" ? "off" : lvl];
+						return mapped !== null && (lvl === "xhigh" || lvl === "max" ? mapped !== undefined : true);
+					})
+				: [];
+			const reasoningEfforts = levels.map((r: string) => ({
 				reasoningEffort: r,
 				description: `${r.charAt(0).toUpperCase() + r.slice(1)} reasoning effort`,
 			}));
@@ -118,7 +126,7 @@ export class ModelCatalog {
 				routeProviderId: m.provider,
 				description: `${m.provider} model via Pi Durable`,
 				supportedReasoningEfforts: reasoningEfforts,
-				defaultReasoningEffort: m.defaultReasoningEffort ?? "high",
+				defaultReasoningEffort: isReasoning ? (m.defaultReasoningEffort ?? "high") : "none",
 				isDefault,
 			});
 		}

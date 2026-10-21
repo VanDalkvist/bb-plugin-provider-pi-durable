@@ -4,6 +4,7 @@ import {
 } from "@get-bb/plugin-sdk/host";
 import { experimental_defineProviderBridge } from "@get-bb/plugin-sdk/provider-bridge";
 import { ProviderBridge } from "./bridge.ts";
+import { resolvePiNativeRoots } from "./native-roots.ts";
 
 const bridge = new ProviderBridge((line) => {
 	process.stdout.write(line);
@@ -53,7 +54,7 @@ export default experimental_defineHostEntry({
 	contract: experimental_nativeRootsHostContract,
 	handlers: {
 		resolveNativeRoots: () => {
-			return { skills: [] };
+			return resolvePiNativeRoots(process.env);
 		},
 	},
 });

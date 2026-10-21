@@ -121,7 +121,13 @@ async function main() {
 		cwd: args.cwd,
 		continueSession: args.continueSession,
 		session: args.session,
-		cli: args.model ? { provider: args.provider, model: args.model, thinking: args.thinking } : undefined,
+		cli: {
+			provider: args.provider,
+			model: args.model,
+			thinking: args.thinking,
+			skills: args.skills,
+			extension: args.extension,
+		},
 		prompt: {
 			systemPromptPath: args.systemPromptPath,
 			appendSystemPromptPath: args.appendSystemPromptPath,

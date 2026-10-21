@@ -14,12 +14,11 @@ export * from "./runtime-types.ts";
 export * from "./runtime-controller.ts";
 
 async function loadSummaries(harness: Harness, rootId: ConversationId): Promise<ConversationSummary[]> {
-	const label = (id: ConversationId): string => (id === rootId ? "main" : `subagent ${id}`);
 	const summaries: ConversationSummary[] = [];
 	let cursor: Cursor | undefined;
 	do {
 		const page = await harness.commit((tx) => tx.scanConversations({}, 256, cursor), runtimeContext);
-		for (const { id } of page.items) summaries.push({ id, label: label(id), ...(await firstInput(harness, id)) });
+		for (const { id } of page.items) summaries.push({ id, label: id === rootId ? "main" : `subagent ${id}`, ...(await firstInput(harness, id)) });
 		cursor = page.next;
 	} while (cursor !== undefined);
 	return summaries;
@@ -146,6 +145,17 @@ export async function openDurable(options: OpenDurableOptions = {}): Promise<Ope
 			cwd: location.cwd,
 		});
 
+		if (activeEnvState.actionsDelegate) {
+			activeEnvState.actionsDelegate.onAbort = () => { void controller.abort(); };
+			activeEnvState.actionsDelegate.onCompact = (i?: string) => { void controller.compact(i); };
+			activeEnvState.actionsDelegate.isIdle = () => true;
+			activeEnvState.actionsDelegate.getContextUsage = () => {
+				const doc = (state.conversation.docs["pi.agent"] ?? {}) as { model?: { provider?: string; id?: string; modelId?: string } };
+				const p = doc.model?.provider, m = doc.model?.modelId ?? doc.model?.id;
+				return { tokens: null, contextWindow: (p && m ? modelRuntime.getModel(p, m)?.contextWindow : undefined) ?? 128000 };
+			};
+		}
+
 		const saved = agentOf(state.conversation).model;
 		if (!saved) notice("warning", "No model configured; select one with /model.");
 		else if (!modelRuntime.getModel(saved.provider, saved.modelId)) {
@@ -168,14 +178,9 @@ export async function openDurable(options: OpenDurableOptions = {}): Promise<Ope
 			harness,
 			close() {
 				return closing ??= (async () => {
-					unsubscribeConversation();
-					unsubscribeCommits();
-					conversation.dispose();
-					closeTasks();
+					unsubscribeConversation(); unsubscribeCommits(); conversation.dispose(); closeTasks();
 					try {
-						await opened.close(runtimeContext);
-						await envs.cleanup(runtimeContext);
-						await activeEnvState.cleanup?.();
+						await opened.close(runtimeContext); await envs.cleanup(runtimeContext); await activeEnvState.cleanup?.();
 					} finally {
 						await location.release();
 					}

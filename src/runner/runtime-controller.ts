@@ -102,10 +102,13 @@ export function createDurableController(ctx: ControllerContext): DurableControll
 			command(async () => {
 				if (ctx.extensionRunner) {
 					try {
+						const ctxView = await ctx.getCurrent().context(runtimeContext).catch(() => undefined);
+						const msgs = ctxView?.messages ? [...ctxView.messages] : [];
+						const entries = ctxView?.entries ? [...ctxView.entries] : [];
 						await ctx.extensionRunner.emit({
 							type: "session_before_compact",
-							preparation: { firstKeptEntryId: "", messagesToSummarize: [], turnPrefixMessages: [], isSplitTurn: false, tokensBefore: 0, fileOps: { read: new Set(), written: new Set(), edited: new Set() }, settings: {} as any },
-							branchEntries: [], customInstructions: instructions, reason: "manual", willRetry: false, signal: new AbortController().signal,
+							preparation: { firstKeptEntryId: ctxView?.head?.id !== undefined ? String(ctxView.head.id) : "", messagesToSummarize: msgs as any, turnPrefixMessages: [], isSplitTurn: false, tokensBefore: 0, fileOps: { read: new Set(), written: new Set(), edited: new Set() }, settings: {} as any },
+							branchEntries: entries as any, customInstructions: instructions, reason: "manual", willRetry: false, signal: new AbortController().signal,
 						});
 					} catch (err) {
 						ctx.notice("warning", `session_before_compact error: ${err instanceof Error ? err.message : String(err)}`);
@@ -125,8 +128,7 @@ export function createDurableController(ctx: ControllerContext): DurableControll
 							}).catch(() => {});
 						}
 						const { entryId, submissionId } = outcome.result;
-						const status = submissionId === undefined ? undefined
-							: (await (await ctx.opened.submission(submissionId, runtimeContext))?.status(runtimeContext))?.status;
+						const status = submissionId === undefined ? undefined : (await (await ctx.opened.submission(submissionId, runtimeContext))?.status(runtimeContext))?.status;
 						const msg = entryId !== undefined || status === "done" ? "Compacted."
 							: status === "queued" ? "Compaction summary queued; it is placed at the next turn boundary."
 							: status === "unanswered" ? "Compaction summary dropped: the context changed under it."
@@ -146,16 +148,19 @@ export function createDurableController(ctx: ControllerContext): DurableControll
 			command(async () => {
 				const model = agentModel();
 				if (!model.reasoning) throw new Error("Current model does not support thinking");
-				const levels = getSupportedThinkingLevels(model);
-				const level = agentOf(ctx.getState().conversation).thinkingLevel ?? "off";
-				const next = levels[(levels.indexOf(level) + 1) % levels.length] ?? "off";
-				await ctx.getCurrent().configure({ thinkingLevel: next }, runtimeContext);
+				const levels = getSupportedThinkingLevels(model), level = agentOf(ctx.getState().conversation).thinkingLevel ?? "off";
+				await ctx.getCurrent().configure({ thinkingLevel: levels[(levels.indexOf(level) + 1) % levels.length] ?? "off" }, runtimeContext);
 			}),
 
 		setThinkingLevel: (targetLevel: ModelThinkingLevel) =>
 			command(async () => {
 				const model = agentModel();
-				if (!model.reasoning) throw new Error("Current model does not support thinking");
+				if (!model.reasoning) {
+					if (targetLevel === "off" || (targetLevel as string) === "none") {
+						return void (await ctx.getCurrent().configure({ thinkingLevel: "off" }, runtimeContext));
+					}
+					throw new Error("Current model does not support thinking");
+				}
 				await ctx.getCurrent().configure({ thinkingLevel: clampThinkingLevel(model, targetLevel) }, runtimeContext);
 			}),
 
@@ -185,10 +190,8 @@ export function createDurableController(ctx: ControllerContext): DurableControll
 				const next = await ctx.opened.conversation(id, runtimeContext);
 				if (next === undefined) throw new Error(`Conversation ${id} does not exist`);
 				const nextState = await next.viewState(runtimeContext);
-				ctx.getUnsubscribeConversation()();
-				ctx.getConversationState().dispose();
-				ctx.setCurrent(next);
-				ctx.setConversationState(nextState);
+				ctx.getUnsubscribeConversation()(); ctx.getConversationState().dispose();
+				ctx.setCurrent(next); ctx.setConversationState(nextState);
 				ctx.setUnsubscribeConversation(nextState.subscribe((value) => ctx.update({ conversation: value })));
 			}),
 	};

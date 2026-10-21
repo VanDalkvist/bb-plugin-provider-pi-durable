@@ -63,7 +63,13 @@ export interface OpenDurableOptions {
 	readonly cwd?: string;
 	readonly continueSession?: boolean;
 	readonly session?: string;
-	readonly cli?: { readonly provider?: string; readonly model: string; readonly thinking?: ModelThinkingLevel };
+	readonly cli?: {
+		readonly provider?: string;
+		readonly model?: string;
+		readonly thinking?: ModelThinkingLevel;
+		readonly skills?: string[];
+		readonly extension?: string;
+	};
 	readonly prompt?: PromptOptions;
 }
 

@@ -34,6 +34,7 @@ export interface LoadedHarnessEnvironment {
 	setActiveModelRef: (ref: ModelRef | undefined) => void;
 	cleanup?: () => Promise<void>;
 	extensionRunner?: import("@earendil-works/pi-coding-agent").ExtensionRunner;
+	actionsDelegate?: import("./extension-mount.ts").ExtensionActionsDelegate;
 	dynamicSections?: DynamicPromptSections;
 	setNoticeForwarder?: (forwarder: (level: "info" | "warning" | "error", message: string) => void) => void;
 }
@@ -74,6 +75,8 @@ export async function loadHarnessEnvironment(
 		agentDir: getAgentDir(),
 		settingsManager,
 		extensionFactories: createStandardExtensionFactories(),
+		additionalSkillPaths: options.cli?.skills,
+		additionalExtensionPaths: options.cli?.extension ? [options.cli.extension] : undefined,
 	});
 	await resourceLoader.reload();
 	const extensionsResult = resourceLoader.getExtensions();
@@ -109,6 +112,7 @@ export async function loadHarnessEnvironment(
 		() => runnerRef,
 		() => envs.env({ cwd: location.cwd } as unknown as import("@earendil-works/pi-durable").EnvTarget),
 	);
+	const actionsDelegate: import("./extension-mount.ts").ExtensionActionsDelegate = {};
 	const mounted = await mountExtensionBridge(
 		location,
 		modelRuntime,
@@ -126,6 +130,7 @@ export async function loadHarnessEnvironment(
 		},
 		settingsManager,
 		dynamicNamespaces,
+		actionsDelegate,
 	);
 	runnerRef = mounted.extensionRunner;
 
@@ -152,6 +157,7 @@ export async function loadHarnessEnvironment(
 		setActiveModelRef: (ref) => { activeModelRef = ref; },
 		cleanup: mounted.cleanup,
 		extensionRunner: mounted.extensionRunner,
+		actionsDelegate,
 		dynamicSections,
 		setNoticeForwarder: (forwarder) => {
 			liveNoticeForwarder = forwarder;

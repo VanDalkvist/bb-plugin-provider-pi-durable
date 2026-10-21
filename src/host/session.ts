@@ -58,10 +58,7 @@ export class PiThreadSession {
 
 	private getChildTranslator(threadId: string): DeltaTranslator {
 		let t = this.childTranslators.get(threadId);
-		if (!t) {
-			t = new DeltaTranslator();
-			this.childTranslators.set(threadId, t);
-		}
+		if (!t) { t = new DeltaTranslator(); this.childTranslators.set(threadId, t); }
 		return t;
 	}
 
@@ -201,9 +198,7 @@ export class PiThreadSession {
 			const images = Array.isArray(imagesOrConversationId) ? imagesOrConversationId : undefined;
 			const targetConvId = typeof imagesOrConversationId === "string" ? imagesOrConversationId : conversationId;
 			await this.runner.requestOk({ type: "prompt", message: text, ...(images?.length ? { images } : {}), streamingBehavior: "followUp", conversationId: targetConvId });
-		} finally {
-			this.isProcessing = false;
-		}
+		} finally { this.isProcessing = false; }
 	}
 	public async steer(text: string, imagesOrConversationId?: import("./prompt-input.ts").PiPromptImage[] | string, conversationId?: string): Promise<void> {
 		const images = Array.isArray(imagesOrConversationId) ? imagesOrConversationId : undefined;
@@ -211,19 +206,20 @@ export class PiThreadSession {
 		await this.runner.requestOk({ type: "steer", message: text, ...(images?.length ? { images } : {}), conversationId: targetConvId });
 	}
 	public async abort(conversationId?: string): Promise<void> {
-		try {
-			await this.runner.requestOk({ type: "abort", conversationId });
-		} catch (err) {
-			console.warn(`[PiThreadSession] Abort request failed: ${err}`);
-		}
+		try { await this.runner.requestOk({ type: "abort", conversationId }); } catch (err) { console.warn(`[PiThreadSession] Abort request failed: ${err}`); }
 	}
 	public async compact(instructions?: string): Promise<void> {
 		this.isProcessing = true;
-		try {
-			await this.runner.requestOk({ type: "compact", instructions });
-		} finally {
-			this.isProcessing = false;
-		}
+		try { await this.runner.requestOk({ type: "compact", instructions }); } finally { this.isProcessing = false; }
+	}
+
+	public async setModel(provider: string, modelId: string): Promise<void> {
+		await this.runner.requestOk({ type: "set_model", provider, modelId });
+		this.options.model = { provider, id: modelId };
+	}
+	public async setThinkingLevel(level: string): Promise<void> {
+		await this.runner.requestOk({ type: "set_thinking_level", level });
+		this.options.thinkingLevel = level;
 	}
 
 	public async refreshContextUsage(): Promise<void> {

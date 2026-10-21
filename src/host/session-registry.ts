@@ -37,6 +37,15 @@ export interface SessionCreationParams {
 export class SessionRegistry {
 	private sendNotification: (method: string, params: Record<string, unknown>) => void;
 	private sessions = new Map<string, PiThreadSession>();
+	private sharedSkillRoots: string[] = [];
+
+	public getSharedSkillRoots(): readonly string[] {
+		return this.sharedSkillRoots;
+	}
+
+	public setSharedSkillRoots(roots: readonly string[]): void {
+		this.sharedSkillRoots = [...roots];
+	}
 
 	constructor(sendNotification: (method: string, params: Record<string, unknown>) => void) {
 		this.sendNotification = sendNotification;
@@ -91,36 +100,15 @@ export class SessionRegistry {
 		}
 
 		if (sharedSession) {
-			const text = extractInputText(params.input)
-				|| (typeof params.prompt === "string" ? params.prompt.trim() : "")
-				|| (typeof params.task === "string" ? params.task.trim() : "");
-
-			const paramConvId = typeof params.conversationId === "string" && params.conversationId.trim() !== ""
-				? params.conversationId.trim()
-				: undefined;
-
-			const existingBoundConvId = typeof (sharedSession as any).getConversationIdForThread === "function"
-				? (sharedSession as any).getConversationIdForThread(threadId)
-				: undefined;
-
-			const targetConversationId = conversationId
-				?? paramConvId
-				?? existingBoundConvId
-				?? (text && typeof sharedSession.findSubagentConversationForTask === "function"
-					? sharedSession.findSubagentConversationForTask(text)
-					: undefined);
+			const text = extractInputText(params.input) || (typeof params.prompt === "string" ? params.prompt.trim() : "") || (typeof params.task === "string" ? params.task.trim() : "");
+			const paramConvId = typeof params.conversationId === "string" && params.conversationId.trim() !== "" ? params.conversationId.trim() : undefined;
+			const existingBoundConvId = typeof (sharedSession as any).getConversationIdForThread === "function" ? (sharedSession as any).getConversationIdForThread(threadId) : undefined;
+			const targetConvId = conversationId ?? paramConvId ?? existingBoundConvId ?? (text && typeof sharedSession.findSubagentConversationForTask === "function" ? sharedSession.findSubagentConversationForTask(text) : undefined);
 
 			this.sessions.set(threadId, sharedSession);
-			sharedSession.registerThread?.(threadId, targetConversationId);
-			this.sendNotification("thread/identity", {
-				threadId,
-				providerThreadId,
-				sessionRestorable: true,
-			});
-			this.sendNotification("thread/delta", {
-				threadId,
-				deltas: [{ kind: "session.reset" }],
-			});
+			sharedSession.registerThread?.(threadId, targetConvId);
+			this.sendNotification("thread/identity", { threadId, providerThreadId, sessionRestorable: true });
+			this.sendNotification("thread/delta", { threadId, deltas: [{ kind: "session.reset" }] });
 			return sharedSession;
 		}
 
@@ -128,93 +116,46 @@ export class SessionRegistry {
 		let resolvedModel: { provider: string; id: string } | undefined;
 		if (typeof rawModel === "string") {
 			const parts = rawModel.split("/");
-			if (parts.length >= 2) {
-				resolvedModel = { provider: parts[0], id: parts.slice(1).join("/") };
-			}
+			if (parts.length >= 2) resolvedModel = { provider: parts[0], id: parts.slice(1).join("/") };
 		} else if (typeof rawModel === "object" && rawModel !== null && "provider" in rawModel && "id" in rawModel) {
-			const candidate = rawModel as { provider: unknown; id: unknown };
-			if (typeof candidate.provider === "string" && typeof candidate.id === "string") {
-				resolvedModel = { provider: candidate.provider, id: candidate.id };
-			}
+			const cand = rawModel as { provider: unknown; id: unknown };
+			if (typeof cand.provider === "string" && typeof cand.id === "string") resolvedModel = { provider: cand.provider, id: cand.id };
 		}
 
 		const rawThinking = params.thinkingLevel ?? params.options?.reasoningLevel ?? params.options?.thinkingLevel;
 		const resolvedThinking = typeof rawThinking === "string" ? rawThinking : undefined;
-
 		const rawEnv = params.shellEnvOverrides ?? params.options?.envVars;
 		let resolvedEnv: Record<string, string> | undefined;
 		if (typeof rawEnv === "object" && rawEnv !== null) {
-			const envObj: Record<string, string> = {};
-			for (const [k, v] of Object.entries(rawEnv as Record<string, unknown>)) {
-				if (typeof v === "string") envObj[k] = v;
-			}
-			resolvedEnv = envObj;
+			resolvedEnv = Object.fromEntries(Object.entries(rawEnv as Record<string, unknown>).filter(([, v]) => typeof v === "string")) as Record<string, string>;
 		}
 
 		const rawProviderOptions = params.options?.providerOptions ?? params.providerOptions;
-		const providerOptions = typeof rawProviderOptions === "object" && rawProviderOptions !== null && !Array.isArray(rawProviderOptions)
-			? (rawProviderOptions as Record<string, unknown>)
-			: undefined;
+		const providerOptions = typeof rawProviderOptions === "object" && rawProviderOptions !== null && !Array.isArray(rawProviderOptions) ? (rawProviderOptions as Record<string, unknown>) : undefined;
+		const sessionDir = resolveSessionDir(), sessionFilePath = resolveSessionFilePath(sessionKey), extensionPath = requireExtensionPath(), scratchDir = requireScratchDir();
+		const rawSkills = (params.additionalSkillPaths as string[]) ?? ((params.options as any)?.additionalSkillPaths as string[]);
+		const skillRoots = Array.from(new Set([...(rawSkills ?? []), ...this.sharedSkillRoots]));
 
-		const sessionDir = resolveSessionDir();
-		const sessionFilePath = resolveSessionFilePath(sessionKey);
-		const extensionPath = requireExtensionPath();
-		const scratchDir = requireScratchDir();
-
-		const session = new PiThreadSession(
-			{
-				threadId,
-				providerThreadId,
-				cwd: params.cwd,
-				sessionFilePath,
-				sessionDir,
-				extensionPath,
-				scratchDir,
-				model: resolvedModel,
-				thinkingLevel: resolvedThinking,
-				shellEnvOverrides: resolvedEnv,
-				...resolveSessionPrompts(params),
-				providerOptions,
-			},
-			this.sendNotification,
-		);
+		const session = new PiThreadSession({
+			threadId, providerThreadId, cwd: params.cwd, sessionFilePath, sessionDir, extensionPath, scratchDir,
+			model: resolvedModel, thinkingLevel: resolvedThinking, shellEnvOverrides: resolvedEnv,
+			...resolveSessionPrompts(params), providerOptions, ...(skillRoots.length > 0 ? { additionalSkillPaths: skillRoots } : {}),
+		}, this.sendNotification);
 
 		await session.start();
 		session.registerThread?.(threadId, conversationId);
 		this.sessions.set(threadId, session);
-
-		// Send initial identity & reset boundary
-		this.sendNotification("thread/identity", {
-			threadId,
-			providerThreadId,
-			sessionRestorable: true,
-		});
-		this.sendNotification("thread/delta", {
-			threadId,
-			deltas: [{ kind: "session.reset" }],
-		});
-
+		this.sendNotification("thread/identity", { threadId, providerThreadId, sessionRestorable: true });
+		this.sendNotification("thread/delta", { threadId, deltas: [{ kind: "session.reset" }] });
 		return session;
 	}
 
 	public async reconcileCwd(threadId: string, targetCwd?: string): Promise<PiThreadSession | undefined> {
 		const session = this.get(threadId);
-		if (!session) {
-			return undefined;
-		}
-		if (!targetCwd || session.options.cwd === targetCwd) {
-			return session;
-		}
-
-		// Workspace location changed, recreate session in new directory
+		if (!session || !targetCwd || session.options.cwd === targetCwd) return session;
 		await session.closeGracefully();
 		this.sessions.delete(threadId);
-
-		const updatedParams: SessionCreationParams = {
-			...session.options,
-			cwd: targetCwd,
-		};
-		return this.createOrGet(threadId, session.options.providerThreadId, updatedParams);
+		return this.createOrGet(threadId, session.options.providerThreadId, { ...session.options, cwd: targetCwd });
 	}
 
 	public async stop(threadId: string): Promise<void> {
@@ -222,18 +163,13 @@ export class SessionRegistry {
 		if (session) {
 			session.unregisterThread?.(threadId);
 			this.sessions.delete(threadId);
-			const isStillShared = Array.from(this.sessions.values()).includes(session);
-			if (!isStillShared) {
-				await session.closeGracefully();
-			}
+			if (!Array.from(this.sessions.values()).includes(session)) await session.closeGracefully();
 		}
 	}
 
 	public async stopAll(): Promise<void> {
 		const uniqueSessions = new Set(this.sessions.values());
 		this.sessions.clear();
-		for (const session of uniqueSessions) {
-			await session.closeGracefully();
-		}
+		for (const session of uniqueSessions) await session.closeGracefully();
 	}
 }

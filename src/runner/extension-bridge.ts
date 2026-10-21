@@ -30,6 +30,10 @@ export interface SetupExtensionRunnerOptions {
 	onToolsChanged?: () => void;
 	onNotice?: (level: "info" | "warning" | "error", message: string) => void;
 	settingsManager?: SettingsManager;
+	onAbort?: () => void;
+	onCompact?: (instructions?: string) => void;
+	getContextUsage?: () => { tokens: number | null; contextWindow: number } | undefined;
+	isIdle?: () => boolean;
 }
 
 export function createExtensionUIContext(
@@ -146,14 +150,21 @@ export async function setupExtensionRunner(options: SetupExtensionRunnerOptions)
 			return options.modelRuntime.getAvailableSnapshot()[0];
 		},
 		getScopedModels: () => options.modelRuntime.getAvailableSnapshot().map((model) => ({ model })),
-		isIdle: () => true,
+		isIdle: () => (options.isIdle ? options.isIdle() : true),
 		isProjectTrusted: () => true,
 		getSignal: () => undefined,
-		abort: () => {},
+		abort: () => { options.onAbort?.(); },
 		hasPendingMessages: () => false,
 		shutdown: () => {},
-		getContextUsage: () => undefined,
-		compact: () => {},
+		getContextUsage: () => {
+			const u = options.getContextUsage?.();
+			if (!u) return undefined;
+			const pct = typeof u.tokens === "number" && u.contextWindow > 0 ? (u.tokens / u.contextWindow) * 100 : null;
+			return { tokens: u.tokens, contextWindow: u.contextWindow, percent: pct };
+		},
+		compact: (opts?: { customInstructions?: string } | string) => {
+			options.onCompact?.(typeof opts === "string" ? opts : opts?.customInstructions);
+		},
 		getSystemPrompt: () => "",
 		getSystemPromptOptions: () => ({ cwd: options.cwd }),
 		executeTool: (callerId: string, name: string, args: unknown, opts?: { signal?: AbortSignal }) =>

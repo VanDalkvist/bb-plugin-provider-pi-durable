@@ -56,8 +56,14 @@ export default function plugin(bb: any) {
       { id: "max", label: "Max" },
     ],
     experimental_nativeSkillRoots: {
-      user: [".pi/agent/skills", ".agents/skills"],
-      project: [".pi/skills", ".agents/skills"],
+      user: [
+        { path: ".pi/agent/skills", recursive: true },
+        { path: ".agents/skills", recursive: true },
+      ],
+      project: [
+        { path: ".pi/skills", recursive: true },
+        { path: ".agents/skills", recursive: true, ancestors: true },
+      ],
     },
     experimental_resolvesNativeRoots: true,
     composerActions: [],

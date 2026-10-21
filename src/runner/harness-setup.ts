@@ -134,9 +134,9 @@ export interface InitialModel {
 export async function findInitialAgentModel(
 	settingsManager: SettingsManager,
 	modelRuntime: ModelRuntime,
-	cli?: { readonly provider?: string; readonly model: string; readonly thinking?: ModelThinkingLevel },
+	cli?: { readonly provider?: string; readonly model?: string; readonly thinking?: ModelThinkingLevel },
 ): Promise<InitialModel> {
-	if (cli !== undefined) {
+	if (cli?.model !== undefined) {
 		const resolved = resolveCliModel({ cliProvider: cli.provider, cliModel: cli.model, modelRuntime });
 		if (resolved.error !== undefined || resolved.model === undefined) {
 			throw new Error(`Could not resolve model: ${resolved.error ?? cli.model}`);

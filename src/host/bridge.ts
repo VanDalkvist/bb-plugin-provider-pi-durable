@@ -134,6 +134,11 @@ export class ProviderBridge {
 				}
 
 				case "skills/configure": {
+					const rawRoots = (params as { roots?: Array<{ path?: string } | string> })?.roots;
+					const roots = Array.isArray(rawRoots)
+						? rawRoots.map((r) => (typeof r === "object" && r !== null && typeof r.path === "string" ? r.path : String(r))).filter(Boolean)
+						: [];
+					this.registry.setSharedSkillRoots(roots);
 					this.sendResult(id, { ok: true });
 					break;
 				}

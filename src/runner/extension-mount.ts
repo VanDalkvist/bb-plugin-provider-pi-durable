@@ -32,11 +32,7 @@ export function createNestedToolExecutor(
 		}
 
 		if (!target) {
-			return {
-				toolCall: { type: "toolCall", id: `${callerId}/nested`, name, arguments: args },
-				result: { content: [{ type: "text", text: `Tool ${name} not found` }], details: {} },
-				isError: true,
-			};
+			return { toolCall: { type: "toolCall", id: `${callerId}/nested`, name, arguments: args }, result: { content: [{ type: "text", text: `Tool ${name} not found` }], details: {} }, isError: true };
 		}
 
 		if (runner?.hasHandlers("tool_call")) {
@@ -77,43 +73,30 @@ export function createNestedToolExecutor(
 
 			if (runner?.hasHandlers("tool_result")) {
 				await runner.emitToolResult({
-					type: "tool_result",
-					toolName: name,
-					toolCallId: `${callerId}/nested`,
-					parentToolCallId: callerId,
-					input: (args ?? {}) as Record<string, unknown>,
-					content,
-					details: res?.details,
-					isError: !!res?.isError,
+					type: "tool_result", toolName: name, toolCallId: `${callerId}/nested`, parentToolCallId: callerId,
+					input: (args ?? {}) as Record<string, unknown>, content, details: res?.details, isError: !!res?.isError,
 				});
 			}
 
-			return {
-				toolCall: { type: "toolCall", id: `${callerId}/nested`, name, arguments: args },
-				result: { content, details: res?.details },
-				isError: !!res?.isError,
-			};
+			return { toolCall: { type: "toolCall", id: `${callerId}/nested`, name, arguments: args }, result: { content, details: res?.details }, isError: !!res?.isError };
 		} catch (err: unknown) {
 			const errorContent = [{ type: "text" as const, text: err instanceof Error ? err.message : String(err) }];
 			if (runner?.hasHandlers("tool_result")) {
 				await runner.emitToolResult({
-					type: "tool_result",
-					toolName: name,
-					toolCallId: `${callerId}/nested`,
-					parentToolCallId: callerId,
-					input: (args ?? {}) as Record<string, unknown>,
-					content: errorContent,
-					details: {},
-					isError: true,
+					type: "tool_result", toolName: name, toolCallId: `${callerId}/nested`, parentToolCallId: callerId,
+					input: (args ?? {}) as Record<string, unknown>, content: errorContent, details: {}, isError: true,
 				});
 			}
-			return {
-				toolCall: { type: "toolCall", id: `${callerId}/nested`, name, arguments: args },
-				result: { content: errorContent, details: {} },
-				isError: true,
-			};
+			return { toolCall: { type: "toolCall", id: `${callerId}/nested`, name, arguments: args }, result: { content: errorContent, details: {} }, isError: true };
 		}
 	};
+}
+
+export interface ExtensionActionsDelegate {
+	onAbort?: () => void;
+	onCompact?: (instructions?: string) => void;
+	getContextUsage?: () => { tokens: number | null; contextWindow: number } | undefined;
+	isIdle?: () => boolean;
 }
 
 export async function mountExtensionBridge(
@@ -127,6 +110,7 @@ export async function mountExtensionBridge(
 	onNotice?: (level: "info" | "warning" | "error", message: string) => void,
 	settingsManager?: import("@earendil-works/pi-coding-agent").SettingsManager,
 	dynamicNamespaces?: DynamicCodemodeNamespaces,
+	actionsDelegate?: ExtensionActionsDelegate,
 ): Promise<MountedExtensionBridge> {
 	let extensionRunner: ExtensionRunner | undefined;
 	try {
@@ -159,6 +143,10 @@ export async function mountExtensionBridge(
 			onToolsChanged: syncToolsToRegistry,
 			onNotice,
 			settingsManager,
+			onAbort: () => actionsDelegate?.onAbort?.(),
+			onCompact: (i) => actionsDelegate?.onCompact?.(i),
+			getContextUsage: () => actionsDelegate?.getContextUsage?.(),
+			isIdle: () => (actionsDelegate?.isIdle ? actionsDelegate.isIdle() : true),
 		});
 
 		if (extensionRunner) {

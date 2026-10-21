@@ -71,6 +71,11 @@ export function buildRunnerArgs(options: SessionOptions): string[] {
 	if (options.thinkingLevel) {
 		args.push("--thinking", options.thinkingLevel);
 	}
+	if (options.additionalSkillPaths) {
+		for (const p of options.additionalSkillPaths) {
+			args.push("--skill", p);
+		}
+	}
 	return args;
 }
 
