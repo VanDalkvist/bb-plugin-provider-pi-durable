@@ -103,3 +103,18 @@
 - Use next time: Strictly obey the Arch Improvement Loop state machine: S0 Bootstrap -> S1 Memory -> S2 Orientation -> S3 Brainstorm & Gate -> S4 Review -> S5 Triage -> S6 Plan Write -> S7 Plan Review -> S8 TDD Execution -> S9 Dual-Circuit Gate -> S10 Ledger -> S11 Memory. Zero code edits before a written and approved plan exists.
 - Evidence: Reverted ad-hoc edits, Cycle 99 execution plan `docs/superpowers/plans/2026-10-21-arch-improvement-cycle-99-offline-bindings-and-unanswered-settlement.md`.
 
+## 2026-10-22 - Beyond Boundaries Core Converts Any Parent Tool with Nested Children to Subagent Delegation (Cycle 103)
+- Context: Nested tool executions inside `codemode` in Beyond Boundaries timeline.
+- Symptom: A turn executing `codemode` was rendered as "Running 1 subagent" / "Ran 1 subagent" with a Bot icon, and `codemode` was converted into a subagent delegation card.
+- Cause: In Beyond Boundaries' internal UI engine (`SemanticProjectionBuilder`), any tool whose `callId` appears as `parentToolCallId` in any child tool execution is automatically promoted to `message.kind = "delegation"` and counted as `delegations`. In addition, child rows (`childRows`) are only supported on delegations; if a tool is not a delegation, child rows are dropped. When `codemode` ran nested tools, `BBEventAdapter` unconditionally forwarded `parentToolCallId` as `parentRef`, which triggered BB's delegation converter.
+- Use next time: Never forward `parentRef` on wire deltas unless the parent tool is genuinely a delegation (`subagent`, `agent_spawn`, `agent_spawn_graph`). Nested tools run by in-process script engines (`codemode`) must have their `parentRef` suppressed so they stream directly into the timeline as first-class commands/tools. Always provide explicit `presentation` metadata (`icon: { glyph: "Code" }`, `{ pending: "Running code", completed: "Ran code" }`) so the UI does not fall back to generic delegation labels.
+- Evidence: `src/host/tool-presentations.ts`, `src/host/tool-item-shape.ts`, `src/runner/bridge/bb-event-adapter.ts`, `tests/codemode-presentation-parity.test.ts`, Issue reported in `thr_bwub2bzpfr`.
+
+## 2026-10-22 - Session Reconcile Options Must Support Mid-Session Dynamic Switching Without Full Restart (Cycle 102)
+- Context: Reconciling provider session options (model, thinking level) in `session-commands.ts`.
+- Symptom: Changing model or reasoning level in BB UI dropdowns mid-thread had no effect; turns continued with initial model parameters.
+- Cause: `reconcileSessionOptions` was a no-op stub that did not propagate dynamic model options to the active `PiThreadSession` / `SessionRegistry`.
+- Use next time: Ensure session command handlers dynamically synchronize updated model IDs and thinking levels to runner process state. Write explicit tests asserting that option changes mid-turn alter subsequent prompt parameters without crashing or dropping session state.
+- Evidence: `src/runner/session-commands.ts`, `tests/stubs-remediation.test.ts`.
+
+
