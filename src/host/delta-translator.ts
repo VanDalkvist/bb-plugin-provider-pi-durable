@@ -102,7 +102,9 @@ export class DeltaTranslator {
 			}
 
 			case "tool_execution_start": {
-				const { shape, delta } = translateToolStart(event, fallbackCwd);
+				const parentRef = event.parentRef ? String(event.parentRef) : (event.parentToolCallId ? String(event.parentToolCallId) : undefined);
+				const parentShape = parentRef ? this.activeTools.get(parentRef) : undefined;
+				const { shape, delta } = translateToolStart(event, fallbackCwd, parentShape);
 				this.activeTools.set(String(event.toolCallId), shape);
 				deltas.push(delta);
 				break;
@@ -117,7 +119,9 @@ export class DeltaTranslator {
 						cached.childRef = String(detailsObj.conversationId);
 					}
 				}
-				const delta = translateToolUpdate(event);
+				const parentRef = event.parentRef ? String(event.parentRef) : (event.parentToolCallId ? String(event.parentToolCallId) : undefined);
+				const parentShape = parentRef ? this.activeTools.get(parentRef) : undefined;
+				const delta = translateToolUpdate(event, parentShape);
 				if (delta) deltas.push(delta);
 				break;
 			}
@@ -126,7 +130,9 @@ export class DeltaTranslator {
 				const callId = String(event.toolCallId);
 				const cachedShape = this.activeTools.get(callId);
 				this.activeTools.delete(callId);
-				deltas.push(translateToolEnd(event, cachedShape, fallbackCwd));
+				const parentRef = event.parentRef ? String(event.parentRef) : (event.parentToolCallId ? String(event.parentToolCallId) : undefined);
+				const parentShape = parentRef ? this.activeTools.get(parentRef) : undefined;
+				deltas.push(translateToolEnd(event, cachedShape, fallbackCwd, parentShape));
 				break;
 			}
 

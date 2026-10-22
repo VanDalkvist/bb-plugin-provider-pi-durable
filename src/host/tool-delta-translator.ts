@@ -5,120 +5,52 @@ import {
 	normalizeGitPatch,
 	resolveFileChangeItem,
 } from "./diff-utils.ts";
+import {
+	isDelegationTool,
+	getDelegationPresentation,
+	extractCodemodeTitle,
+	getCodemodePresentation,
+	resolveToolPresentation,
+} from "./tool-presentations.ts";
+import { buildToolItemShape } from "./tool-item-shape.ts";
 
-export { normalizeFilePath, synthesizeAddDiff, normalizeGitPatch, resolveFileChangeItem };
+export {
+	normalizeFilePath,
+	synthesizeAddDiff,
+	normalizeGitPatch,
+	resolveFileChangeItem,
+	isDelegationTool,
+	getDelegationPresentation,
+	extractCodemodeTitle,
+	getCodemodePresentation,
+	resolveToolPresentation,
+	buildToolItemShape,
+};
 
-interface RawEditItem {
-	oldText?: unknown;
-	newText?: unknown;
-}
-
-function isDelegationTool(name: string): boolean {
-	return name === "subagent" || name === "agent_spawn" || name === "agent_spawn_graph";
-}
-
-/**
- * Translates tool execution events into BB thread deltas.
- */
-export function buildToolItemShape(
-	toolName: string,
-	args: Record<string, unknown>,
-	fallbackCwd: string,
-): Record<string, unknown> {
-	if (toolName === "bash") {
-		return {
-			type: "command",
-			command: typeof args.command === "string" ? args.command : "",
-			cwd: typeof args.cwd === "string" ? args.cwd : fallbackCwd,
-		};
+function resolveSafeParentRef(
+	rawParentRef: unknown,
+	parentShape?: Record<string, unknown>,
+): string | undefined {
+	if (!rawParentRef) return undefined;
+	const refStr = String(rawParentRef);
+	if (parentShape?.tool === "codemode" || (parentShape && parentShape.type !== "delegation")) {
+		return undefined;
 	}
-
-	if (isDelegationTool(toolName)) {
-		let task = typeof args.task === "string" ? args.task : "";
-		const name = typeof args.name === "string" ? args.name : "";
-		if (!task && Array.isArray(args.agents) && args.agents.length > 0) {
-			task = `Graph: ${name || "pipeline"} (${args.agents.length} agents)`;
-		}
-		const defaultLabel = toolName === "agent_spawn_graph" ? `Graph: ${name || "pipeline"}` : (toolName === "subagent" ? "Subagent delegation" : "Agent delegation");
-		const label = task ? (task.length > 80 ? `${task.slice(0, 77)}...` : task) : defaultLabel;
-		const childRef = String(args.conversationId || args.childRef || name || (toolName === "subagent" ? "subagent" : "agent"));
-		const isBackground = args.background !== false;
-		return {
-			type: "delegation",
-			childRef,
-			label,
-			background: isBackground,
-			summary: task || undefined,
-		};
-	}
-
-	if (toolName === "write") {
-		const filePath = normalizeFilePath(args.path, fallbackCwd);
-		const newText = typeof args.content === "string" ? args.content : undefined;
-		return {
-			type: "fileChange",
-			changes: filePath
-				? [{ path: filePath, kind: "add", ...(newText !== undefined ? { newText } : {}) }]
-				: [],
-		};
-	}
-
-	if (toolName === "edit") {
-		const filePath = normalizeFilePath(args.path, fallbackCwd);
-		if (!filePath) {
-			return { type: "fileChange", changes: [] };
-		}
-		const edits = Array.isArray(args.edits) ? args.edits : [];
-		if (edits.length > 0) {
-			const changes = edits.map((edit: unknown) => {
-				const e = typeof edit === "object" && edit !== null ? (edit as RawEditItem) : undefined;
-				return {
-					path: filePath,
-					kind: "update",
-					...(typeof e?.oldText === "string" ? { oldText: e.oldText } : {}),
-					...(typeof e?.newText === "string" ? { newText: e.newText } : {}),
-				};
-			});
-			return { type: "fileChange", changes };
-		}
-		return {
-			type: "fileChange",
-			changes: [{ path: filePath, kind: "update" }],
-		};
-	}
-
-	return {
-		type: "tool",
-		tool: toolName,
-		server: "pi",
-		args,
-	};
-}
-
-function getDelegationPresentation(title: unknown): Record<string, unknown> {
-	return {
-		label: { pending: "Running subagent", completed: "Subagent completed" },
-		icon: { glyph: "Bot" },
-		title: String(title ?? "Subagent"),
-	};
+	return refStr;
 }
 
 export function translateToolStart(
 	event: RunnerEvent,
 	fallbackCwd: string,
+	parentShape?: Record<string, unknown>,
 ): { shape: Record<string, unknown>; delta: ThreadDelta } {
 	const callId = String(event.toolCallId);
 	const toolName = String(event.toolName);
 	const args = (event.args && typeof event.args === "object" ? event.args : {}) as Record<string, unknown>;
 	const shape = buildToolItemShape(toolName, args, fallbackCwd);
+	const presentation = resolveToolPresentation(toolName, shape, args);
+	const parentRef = resolveSafeParentRef(event.parentRef ?? event.parentToolCallId, parentShape);
 
-	const presentation = shape.type === "delegation"
-		? getDelegationPresentation(shape.label)
-		: undefined;
-
-	const parentRef = event.parentRef
-		? String(event.parentRef)
-		: (event.parentToolCallId ? String(event.parentToolCallId) : undefined);
 	const delta: ThreadDelta = {
 		kind: "item.open",
 		key: {
@@ -134,12 +66,13 @@ export function translateToolStart(
 	return { shape, delta };
 }
 
-export function translateToolUpdate(event: RunnerEvent): ThreadDelta | null {
+export function translateToolUpdate(
+	event: RunnerEvent,
+	parentShape?: Record<string, unknown>,
+): ThreadDelta | null {
 	const callId = String(event.toolCallId);
 	const toolName = String(event.toolName);
-	const parentRef = event.parentRef
-		? String(event.parentRef)
-		: (event.parentToolCallId ? String(event.parentToolCallId) : undefined);
+	const parentRef = resolveSafeParentRef(event.parentRef ?? event.parentToolCallId, parentShape);
 	if (!event.partialResult) return null;
 
 	if (toolName === "bash") {
@@ -167,6 +100,7 @@ export function translateToolEnd(
 	event: RunnerEvent,
 	cachedShape?: Record<string, unknown>,
 	fallbackCwd = process.cwd(),
+	parentShape?: Record<string, unknown>,
 ): ThreadDelta {
 	const callId = String(event.toolCallId);
 	const toolName = String(event.toolName);
@@ -216,13 +150,12 @@ export function translateToolEnd(
 		};
 	}
 
-	const presentation = item.type === "delegation"
-		? getDelegationPresentation(item.label)
-		: undefined;
-
-	const parentRef = event.parentRef
-		? String(event.parentRef)
-		: (event.parentToolCallId ? String(event.parentToolCallId) : undefined);
+	const presentation = resolveToolPresentation(
+		toolName,
+		item,
+		typeof item.args === "object" && item.args ? (item.args as Record<string, unknown>) : undefined,
+	);
+	const parentRef = resolveSafeParentRef(event.parentRef ?? event.parentToolCallId, parentShape);
 
 	return {
 		kind: "item.close",

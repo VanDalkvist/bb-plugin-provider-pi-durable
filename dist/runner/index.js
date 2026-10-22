@@ -2281,6 +2281,7 @@ var BBEventAdapter = class {
   output;
   resolveContextWindow;
   submissions = /* @__PURE__ */ new Map();
+  activeToolNames = /* @__PURE__ */ new Map();
   lastTaskError;
   lastAssistantMessage;
   lastCheckpointId;
@@ -2295,6 +2296,12 @@ var BBEventAdapter = class {
     if (!this.isInThinking) return;
     this.isInThinking = false;
     this.output({ type: "message_update", assistantMessageEvent: { type: "thinking_end", contentIndex: 0, content: this.currentThinking } });
+  }
+  resolveParentRef(parentToolCallId) {
+    if (parentToolCallId === void 0) return void 0;
+    const name = this.activeToolNames.get(parentToolCallId);
+    if (name === "codemode" || name !== void 0 && name !== "subagent" && name !== "agent_spawn" && name !== "agent_spawn_graph") return void 0;
+    return String(parentToolCallId);
   }
   createChildAdapter(parentCallId, conversationId) {
     return new BBChildEventAdapter(this.output, parentCallId, conversationId);
@@ -2338,6 +2345,7 @@ var BBEventAdapter = class {
         this.currentThinking = "";
         this.isInThinking = false;
         this.lastAssistantMessage = void 0;
+        this.activeToolNames.clear();
         this.output({ type: "agent_start" });
         break;
       }
@@ -2363,16 +2371,18 @@ var BBEventAdapter = class {
       }
       case "tool_execution_start": {
         this.closeThinkingIfNeeded();
-        this.output({ type: "tool_execution_start", toolCallId: event.toolCallId, toolName: event.toolName, args: event.args ?? {}, ...event.parentToolCallId !== void 0 ? { parentRef: event.parentToolCallId } : {} });
+        this.activeToolNames.set(event.toolCallId, event.toolName);
+        const parentRef = this.resolveParentRef(event.parentToolCallId);
+        this.output({ type: "tool_execution_start", toolCallId: event.toolCallId, toolName: event.toolName, args: event.args ?? {}, ...parentRef !== void 0 ? { parentRef } : {} });
         break;
       }
       case "tool_execution_update": {
-        const update = buildToolExecutionUpdate(event, event.parentToolCallId);
+        const update = buildToolExecutionUpdate(event, this.resolveParentRef(event.parentToolCallId));
         if (update) this.output(update);
         break;
       }
       case "tool_execution_end": {
-        this.output(buildToolExecutionEnd(event, event.parentToolCallId));
+        this.output(buildToolExecutionEnd(event, this.resolveParentRef(event.parentToolCallId)));
         break;
       }
       case "message_end": {

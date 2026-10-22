@@ -30,6 +30,7 @@ export class BBEventAdapter {
 	private readonly output: (event: BBWireEvent) => void;
 	private readonly resolveContextWindow?: (provider?: string, modelId?: string) => number | undefined;
 	private readonly submissions = new Map<string | number, { status: string; reason?: string; detail?: string }>();
+	private readonly activeToolNames = new Map<string | number, string>();
 	private lastTaskError?: string;
 	private lastAssistantMessage?: BBAssistantMessage;
 	private lastCheckpointId?: string;
@@ -46,6 +47,13 @@ export class BBEventAdapter {
 		if (!this.isInThinking) return;
 		this.isInThinking = false;
 		this.output({ type: "message_update", assistantMessageEvent: { type: "thinking_end", contentIndex: 0, content: this.currentThinking } });
+	}
+
+	private resolveParentRef(parentToolCallId?: string | number): string | undefined {
+		if (parentToolCallId === undefined) return undefined;
+		const name = this.activeToolNames.get(parentToolCallId);
+		if (name === "codemode" || (name !== undefined && name !== "subagent" && name !== "agent_spawn" && name !== "agent_spawn_graph")) return undefined;
+		return String(parentToolCallId);
 	}
 
 	public createChildAdapter(parentCallId: string, conversationId?: string | number): BBChildEventAdapter {
@@ -94,6 +102,7 @@ export class BBEventAdapter {
 				this.currentThinking = "";
 				this.isInThinking = false;
 				this.lastAssistantMessage = undefined;
+				this.activeToolNames.clear();
 				this.output({ type: "agent_start" });
 				break;
 			}
@@ -122,16 +131,18 @@ export class BBEventAdapter {
 
 			case "tool_execution_start": {
 				this.closeThinkingIfNeeded();
-				this.output({ type: "tool_execution_start", toolCallId: event.toolCallId, toolName: event.toolName, args: event.args ?? {}, ...(event.parentToolCallId !== undefined ? { parentRef: event.parentToolCallId } : {}) });
+				this.activeToolNames.set(event.toolCallId, event.toolName);
+				const parentRef = this.resolveParentRef(event.parentToolCallId);
+				this.output({ type: "tool_execution_start", toolCallId: event.toolCallId, toolName: event.toolName, args: event.args ?? {}, ...(parentRef !== undefined ? { parentRef } : {}) });
 				break;
 			}
 			case "tool_execution_update": {
-				const update = buildToolExecutionUpdate(event, event.parentToolCallId);
+				const update = buildToolExecutionUpdate(event, this.resolveParentRef(event.parentToolCallId));
 				if (update) this.output(update);
 				break;
 			}
 			case "tool_execution_end": {
-				this.output(buildToolExecutionEnd(event, event.parentToolCallId));
+				this.output(buildToolExecutionEnd(event, this.resolveParentRef(event.parentToolCallId)));
 				break;
 			}
 			case "message_end": {
