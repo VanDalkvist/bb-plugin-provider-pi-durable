@@ -1,12 +1,14 @@
+import { ROOT_CONVERSATION_ID } from "@earendil-works/pi-durable";
 import { parseProviderThreadId } from "./composite-id.ts";
 
 export interface ChildTurnSessionLike {
 	options?: { threadId?: string; model?: { provider: string; id: string }; thinkingLevel?: string };
 	getSubagentState?: (convId: string | number) => import("./subagent-mirror.ts").SubagentMirrorRecord | undefined;
 	getConversationIdForThread?: (threadId: string) => string | undefined;
-	runner?: { requestOk: (cmd: Record<string, unknown>) => Promise<any> };
+	runner?: { requestOk: (cmd: Record<string, unknown>) => Promise<unknown> };
 }
 
+const ROOT_CONVERSATION_ID_STR = String(ROOT_CONVERSATION_ID);
 const CREQ_REGEX = /^creq_[23456789abcdefghijkmnpqrstuvwxyz]{10}$/u;
 
 export function sendInputAccepted(
@@ -25,13 +27,13 @@ export function resolveTargetConversationId(
 ): string | undefined {
 	if (params.providerThreadId) {
 		const parsed = parseProviderThreadId(params.providerThreadId).conversationId;
-		if (parsed && parsed !== "0") return parsed;
+		if (parsed && parsed !== ROOT_CONVERSATION_ID_STR) return parsed;
 	}
 	const bound = session.getConversationIdForThread?.(params.threadId);
-	if (bound && bound !== "0") return bound;
+	if (bound && bound !== ROOT_CONVERSATION_ID_STR) return bound;
 	if (!session.options?.threadId || params.threadId === session.options.threadId) {
 		const parsed = parseProviderThreadId(session.options?.providerThreadId ?? params.threadId).conversationId;
-		if (parsed && parsed !== "0") return parsed;
+		if (parsed && parsed !== ROOT_CONVERSATION_ID_STR) return parsed;
 	}
 	return undefined;
 }
@@ -54,14 +56,14 @@ export function isChildTurn(
 ): boolean {
 	if (params.providerThreadId) {
 		const parsed = parseProviderThreadId(params.providerThreadId);
-		if (parsed.conversationId && parsed.conversationId !== "0") return true;
+		if (parsed.conversationId && parsed.conversationId !== ROOT_CONVERSATION_ID_STR) return true;
 	}
 	if (session?.options?.threadId && params.threadId !== session.options.threadId) {
 		return true;
 	}
 	if (session?.getConversationIdForThread) {
 		const bound = session.getConversationIdForThread(params.threadId);
-		if (bound && bound !== "0") return true;
+		if (bound && bound !== ROOT_CONVERSATION_ID_STR) return true;
 	}
 	if (session?.options?.threadId && session.options.threadId === params.threadId) {
 		return false;
@@ -96,7 +98,7 @@ export async function validateChildTurn(
 	session: ChildTurnSessionLike,
 	targetConversationId?: string,
 ): Promise<{ valid: true } | { valid: false; code: number; message: string }> {
-	if (!targetConversationId || targetConversationId === "0") return { valid: true };
+	if (!targetConversationId || targetConversationId === ROOT_CONVERSATION_ID_STR) return { valid: true };
 
 	const mirror = session.getSubagentState?.(targetConversationId);
 	let actualModel = mirror?.actualModel;

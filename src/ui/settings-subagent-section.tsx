@@ -57,7 +57,7 @@ export const SubagentSettingsSection: FC = () => {
 		);
 	}, [effectiveProfile, models]);
 
-	const canSaveConfigured = currentMode === "configured" && isModelAvailable && !isLoadingCatalog;
+	const canSaveConfigured = currentMode === "configured" && isModelAvailable && !isLoadingCatalog && !catalogError && !modelLoadError;
 	const canSave = (currentMode === "inherit" || canSaveConfigured) && hasUnsavedChanges && !isSaving && !isLoading;
 
 	if (isLoading) {
@@ -94,12 +94,7 @@ export const SubagentSettingsSection: FC = () => {
 							value="inherit"
 							disabled={isSaving}
 							checked={currentMode === "inherit"}
-							onChange={() => {
-								setDraftPolicy((prev) => ({
-									mode: "inherit",
-									configuredProfile: prev?.configuredProfile ?? effectiveProfile ?? undefined,
-								}));
-							}}
+							onChange={() => setDraftPolicy((prev) => ({ mode: "inherit", configuredProfile: prev?.configuredProfile ?? effectiveProfile ?? undefined }))}
 						/>
 						<span>Наследовать модель родительского треда</span>
 					</label>
@@ -110,11 +105,7 @@ export const SubagentSettingsSection: FC = () => {
 							value="configured"
 							disabled={isSaving}
 							checked={currentMode === "configured"}
-							onChange={() => {
-								if (effectiveProfile) {
-									setDraftPolicy({ mode: "configured", configuredProfile: effectiveProfile });
-								}
-							}}
+							onChange={() => { if (effectiveProfile) setDraftPolicy({ mode: "configured", configuredProfile: effectiveProfile }); }}
 						/>
 						<span>Использовать фиксированную модель</span>
 					</label>
@@ -131,7 +122,11 @@ export const SubagentSettingsSection: FC = () => {
 					</div>
 				) : null}
 
-				{!routing ? (
+				{isLoadingCatalog ? (
+					<div className="text-xs text-muted-foreground">
+						Загрузка каталога...
+					</div>
+				) : catalogError ? null : !routing ? (
 					<div className="text-xs text-muted-foreground">
 						Нет доступных хостов или окружений для предпросмотра моделей.
 					</div>
@@ -152,7 +147,7 @@ export const SubagentSettingsSection: FC = () => {
 					/>
 				) : (
 					<div className="text-xs text-muted-foreground">
-						{isLoadingCatalog ? "Загрузка каталога..." : "Каталог моделей недоступен."}
+						Каталог моделей недоступен.
 					</div>
 				)}
 

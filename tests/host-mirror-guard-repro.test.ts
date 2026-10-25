@@ -1,10 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { ROOT_CONVERSATION_ID } from "@earendil-works/pi-durable";
 import {
 	validateChildTurn,
 	isChildTurn,
 	resolveTargetConversationId,
 } from "../src/host/child-turn-guard.ts";
+import { detectNativeChild } from "../src/host/session-owner.ts";
 
 test("validateChildTurn: parses flat runner DTO and blocks model override on cold mirror (P1 repro)", async () => {
 	const session = {
@@ -113,11 +115,28 @@ test("isChildTurn: manual BB subthread with parentThreadId is NOT a child if it 
 	);
 });
 
-test("isChildTurn: explicit root conversation '0' in composite ID is not a child", () => {
+test("isChildTurn and detectNativeChild: explicit ROOT_CONVERSATION_ID in composite ID is not a child", () => {
+	const rootConvIdStr = String(ROOT_CONVERSATION_ID);
 	const params = {
 		threadId: "root_thread",
-		providerThreadId: "session_key_1:0",
+		providerThreadId: `session_key_1:${ROOT_CONVERSATION_ID}`,
 	};
-	assert.equal(isChildTurn(params), false, "Conversation 0 is root, not a child");
+	assert.equal(isChildTurn(params), false, `Conversation ${ROOT_CONVERSATION_ID} is root, not a child`);
 	assert.equal(resolveTargetConversationId(params, { options: { threadId: "root_thread" } }), undefined);
+
+	// detectNativeChild must NOT treat ROOT_CONVERSATION_ID as native child
+	const rootResolution = detectNativeChild("root_thread", rootConvIdStr, undefined, undefined);
+	assert.equal(rootResolution.isNative, false, "Root conversation ID must not be classified as native child");
+
+	// Real child (e.g. conversation "2" or "conv_42") MUST be classified as child
+	const childParams = {
+		threadId: "child_thread",
+		providerThreadId: `session_key_1:2`,
+	};
+	assert.equal(isChildTurn(childParams), true, "Conversation 2 is a child");
+	assert.equal(resolveTargetConversationId(childParams, { options: { threadId: "root_thread" } }), "2");
+
+	const childResolution = detectNativeChild("child_thread", "2", undefined, undefined);
+	assert.equal(childResolution.isNative, true);
+	assert.equal(childResolution.conversationId, "2");
 });
