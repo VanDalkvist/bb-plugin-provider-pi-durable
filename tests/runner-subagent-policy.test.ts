@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { createSubagentPolicyHolder } from "../src/runner/subagent-policy-state.ts";
 import { loadSubagentPolicyHolder } from "../src/runner/subagent-policy-ack.ts";
 import { handleActiveSessionCommand } from "../src/runner/session-commands.ts";
-import { parseConversationId } from "../src/runner/session-commands.ts";
+import { parseConversationId } from "../src/runner/conversation-id.ts";
 import { SubagentRevisionConflictError } from "../src/policy/errors.ts";
 import type { SubagentPolicyRecord } from "../src/policy/types.ts";
 import { Harness, MemoryStorage, ROOT_CONVERSATION_ID, createRegistry } from "@earendil-works/pi-durable";

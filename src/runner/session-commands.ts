@@ -6,41 +6,8 @@ import type { CliArgs } from "./cli-args.ts";
 import { handleBindingCommand } from "./binding-commands.ts";
 import { handleSessionStateCommand } from "./session-state-commands.ts";
 import { subagentPolicyRecordSchema } from "../policy/schema.ts";
-
-export interface CommandResponder {
-	success: (id: string | undefined, command: string, data?: unknown) => void;
-	error: (id: string | undefined, command: string, message: string) => void;
-}
-
-export interface RunnerCommandPayload {
-	type?: string;
-	id?: string;
-	message?: string;
-	images?: import("@earendil-works/pi-ai").ImageContent[];
-	streamingBehavior?: string;
-	provider?: string;
-	modelId?: string;
-	instructions?: string;
-	level?: import("@earendil-works/pi-ai").ModelThinkingLevel;
-	conversationId?: string | number;
-	bbThreadId?: string;
-	parentThreadId?: string;
-	sessionId?: string;
-	policyRecord?: unknown;
-}
-
-export function parseConversationId(id: string | number | undefined | null): import("@earendil-works/pi-durable").ConversationId {
-	if (id === undefined || id === null) return ROOT_CONVERSATION_ID;
-	const trimmed = typeof id === "string" ? id.trim() : id;
-	if (trimmed === "") {
-		throw new Error(`Invalid conversationId: ${String(id)}`);
-	}
-	const num = typeof trimmed === "number" ? trimmed : Number(trimmed);
-	if (!Number.isInteger(num) || num <= 0) {
-		throw new Error(`Invalid conversationId: ${String(id)}`);
-	}
-	return num as import("@earendil-works/pi-durable").ConversationId;
-}
+import type { CommandResponder, RunnerCommandPayload } from "../contracts/runner-command.ts";
+import { parseConversationId } from "./conversation-id.ts";
 
 function toDurableInput(message?: string, images?: import("@earendil-works/pi-ai").ImageContent[]): string | (import("@earendil-works/pi-ai").TextContent | import("@earendil-works/pi-ai").ImageContent)[] | null {
 	const msg = message ?? "";

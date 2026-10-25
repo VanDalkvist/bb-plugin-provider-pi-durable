@@ -257,4 +257,38 @@
 - Existing SDK placement exit 1 remains a documented exception; package version 0.2.52, SDK 0.6.79, Pi 1.3.0 unchanged. No new unrelated cleanup selected.
 - Durable lesson: GBrain `docs/research/pi-durable-native-edit-file-change-micro-loop-2026-10-25`; repository memory contains only the execution index.
 
+---
+
+## Integrated pre-1.4 remediation — Cycle 104/105 handoff, 2026-10-25
+
+### Context and authority
+- Source handoff: `HANDOFF-PIDURABLE-104-105-BEFORE-1.4`, thr_q5zsegjn7j → thr_ct3kk9xne6. Sender performed review/design only at **83ee4a3 / 0.2.51**, no source/test/package implementation. Its parallel cycle stops; integration/execution belongs to the existing 1.4 loop.
+- Canonical accepted inventory: GBrain `docs/arch-improvement/pi-durable-cycle-105-remediation-design-2026-10-25`; proposal.md overrides its older detailed draft. Historical 308/308 is not current evidence.
+- Current reconciliation: **7d0b5b83258958eaa2e6c8b725ef0e779c0ecce1 / 0.2.53 / Pi 1.3.0 / SDK 0.6.79**; src/tests unchanged from ee18035 while another authorized release updated metadata. No competing feature work staged by this integration.
+- Execution plan and full traceability/design: [R0–R6](../superpowers/plans/2026-10-25-durable-1.4-boundary-remediation.md); master updated. All **4 P2 + 7 P3** included before 1.4 cutover. Latest user request: execute economically, defer architecture/product reviewers until all implementation steps, final 0.2.x bump + push main; no implicit installation/restart.
+
+### Reconciled findings and decisions
+- [P2] F-104-1 IPC contract/decoder — **fix-now R1**. Evidence: runner-rpc-channel.ts:27/33/50 casts/raw-line logs; host/types.ts independent open RunnerEvent. Impact: malformed boundary data/correlation risk. Rule: AP-026/029/024.
+- [P2] F-104-2 import SCC — **fix-now R0**. Evidence: current SCC now includes session-state-commands and actual value parseConversationId edge. Impact: coupled contract ownership, not proven deadlock. Rule: AP-025.
+- [P2] F-104-3 size/owners — **partial, fix-now R2/R3**. Evidence: session.ts now 180 lines and has semantic handler extraction; message-delta-translator remains 249. Impact: remaining responsibilities/budget violation. Rule: AP-018/019. Do not claim old 240-line session is still present.
+- [P2] F-104-4 compact hook observability — **fix-now R3**. Evidence: runtime-controller.ts:105/128 still suppress context/hook errors. Impact: best-effort failures disappear. Rule: AP-022/023.
+- [P3] P3-1 prompt/steer DTO — **fix-now R2**; current imagesOrConversationId overload/router ternaries. Rule: AP-026.
+- [P3] P3-2 mirror adoption owner — **fix-now R2**; router:69–106 still owns consume/register/completion policy; existing child guard does not close it. Rule: AP-020/021.
+- [P3] P3-3 four typed fixture seams — **fix-now R5**; no test compiler project, legacy partial casts remain. Rule: AP-026/028/029. No meaningless global any rewrite.
+- [P3] P3-4 diagnostics/title locality — **fix-now R4**; diagnostics still imports host from runner, title shared from runner. Rule: AP-018/020/025. No false process-isolation claim.
+- [P3] P3-5 direct type imports — **partial, fix-now R4**; task-graph-bridge is correct, six bridge/watcher imports and index still pass through runtime.ts. Rule: AP-025.
+- [P3] P3-6 runtime state/subscription owner — **fix-now R3**; independent getter/setter context remains. Rule: AP-011/018/023.
+- [P3] P3-7 diagnostics_get schema (additional) — **fix-now R4**; active RPC still z.custom report. Rule: AP-026/029. Preserve working Doctor/UI.
+
+### Fresh baseline verification — not remediation acceptance
+- `npm test`: **399 Node + 9 UI = 408 passed**, 0 fail/skip/cancel; source `tsc --noEmit`: exit 0. Receipt files in `thr_ct3kk9xne6/handoff-104-105-{npm-test.log,tsc.log}`.
+- Read-only TypeScript AST inventory: **89 src files / 207 static edges**, SCC binding-commands/session-commands/session-state-commands; value SCC session-commands/session-state-commands. Only source over strict <200 budget: message-delta-translator.ts **249**. Source session/router/controller: **180/196/198**. Metrics and audit script in same thread storage.
+- No 1.4 source upgrade, new feature tests, post-fix type-test project/build or independent product/architecture PASS is claimed at this integration checkpoint. All eleven items await actual RED/GREEN closure; upstream 1.4 does not automatically replace adapter-owned boundaries.
+
+### Preserved contracts / residual risk
+- Keep real response wire `{id,type:'response',command,success,data/error}`, native root/child identity and model/reasoning policy; unknown-type vs known-invalid dispositions explicit; no raw payload/secret logs or guessed parent failure.
+- Keep existing real SDK SQLite regression, native-edit canonical patch and early/late mirror completion fixes; no revival of rejected DDL/complexity/import-count claims.
+- Current production provider remains separate from this checkout. User manual no-mandatory-backup path stays in force; no source-switch/remove/reload/quit/kill or original SQLite open is implied by this record.
+- Architecture verification: AP-019/025/026/029/022 remain open for implementation; final dual-circuit review is **NOT RUN**. Planning inventory coverage is 11/11, not code PASS.
+
 

@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { ROOT_CONVERSATION_ID } from "@earendil-works/pi-durable";
-import { parseConversationId } from "../src/runner/session-commands.ts";
+import { parseConversationId } from "../src/runner/conversation-id.ts";
 
 test("parseConversationId accepts valid numeric and string IDs", () => {
 	// Undefined / null -> defaults to root conversation id (1)

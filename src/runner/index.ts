@@ -4,7 +4,8 @@ import { openDurable, type OpenDurableOptions, type OpenDurableResult } from "./
 import { BBEventAdapter } from "./bridge/bb-event-adapter.ts";
 import type { BBWireEvent } from "./bridge/contracts.ts";
 import { parseCliArgs } from "./cli-args.ts";
-import { handleActiveSessionCommand, type RunnerCommandPayload } from "./session-commands.ts";
+import { handleActiveSessionCommand } from "./session-commands.ts";
+import type { RunnerCommandPayload } from "../contracts/runner-command.ts";
 import { getPiDurableVersion } from "./version.ts";
 import { createBridgeSender, initBridgeInboundChannel } from "./bridge-channel.ts";
 import { startSubagentWatcher, type SubagentWatcherController } from "./subagent-watcher.ts";

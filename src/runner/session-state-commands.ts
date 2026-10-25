@@ -4,8 +4,8 @@ import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { estimateContextTokens } from "@earendil-works/pi-ai/utils/estimate";
 import type { OpenDurableResult } from "./runtime-types.ts";
 import type { CliArgs } from "./cli-args.ts";
-import type { CommandResponder, RunnerCommandPayload } from "./session-commands.ts";
-import { parseConversationId } from "./session-commands.ts";
+import type { CommandResponder, RunnerCommandPayload } from "../contracts/runner-command.ts";
+import { parseConversationId } from "./conversation-id.ts";
 
 interface SessionAgentDoc {
 	model?: { provider?: string; id?: string; modelId?: string };
