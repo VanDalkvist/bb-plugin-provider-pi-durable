@@ -25,12 +25,13 @@ export function resolveTargetConversationId(
 ): string | undefined {
 	if (params.providerThreadId) {
 		const parsed = parseProviderThreadId(params.providerThreadId).conversationId;
-		if (parsed) return parsed;
+		if (parsed && parsed !== "0") return parsed;
 	}
 	const bound = session.getConversationIdForThread?.(params.threadId);
-	if (bound) return bound;
+	if (bound && bound !== "0") return bound;
 	if (!session.options?.threadId || params.threadId === session.options.threadId) {
-		return parseProviderThreadId(session.options?.providerThreadId ?? params.threadId).conversationId;
+		const parsed = parseProviderThreadId(session.options?.providerThreadId ?? params.threadId).conversationId;
+		if (parsed && parsed !== "0") return parsed;
 	}
 	return undefined;
 }
@@ -53,14 +54,17 @@ export function isChildTurn(
 ): boolean {
 	if (params.providerThreadId) {
 		const parsed = parseProviderThreadId(params.providerThreadId);
-		if (parsed.conversationId) return true;
+		if (parsed.conversationId && parsed.conversationId !== "0") return true;
 	}
 	if (session?.options?.threadId && params.threadId !== session.options.threadId) {
 		return true;
 	}
-	const parent = params.parentThreadId ?? params.options?.parentThreadId;
-	if (typeof parent === "string" && parent.trim() !== "") {
-		return true;
+	if (session?.getConversationIdForThread) {
+		const bound = session.getConversationIdForThread(params.threadId);
+		if (bound && bound !== "0") return true;
+	}
+	if (session?.options?.threadId && session.options.threadId === params.threadId) {
+		return false;
 	}
 	return false;
 }
@@ -92,32 +96,42 @@ export async function validateChildTurn(
 	session: ChildTurnSessionLike,
 	targetConversationId?: string,
 ): Promise<{ valid: true } | { valid: false; code: number; message: string }> {
-	if (!targetConversationId) return { valid: true };
+	if (!targetConversationId || targetConversationId === "0") return { valid: true };
 
-	let mirror = session.getSubagentState?.(targetConversationId);
+	const mirror = session.getSubagentState?.(targetConversationId);
 	let actualModel = mirror?.actualModel;
 	let thinkingLevel = mirror?.thinkingLevel;
 
-	if (!actualModel && session.runner?.requestOk) {
+	if ((!actualModel || thinkingLevel === undefined) && session.runner?.requestOk) {
 		try {
-			const res = await session.runner.requestOk({ type: "get_state", conversationId: targetConversationId });
-			const agentDoc = (res as any)?.state?.agent ?? (res as any)?.agent;
-			if (agentDoc?.model?.provider && (agentDoc?.model?.id || agentDoc?.model?.modelId)) {
-				actualModel = {
-					provider: agentDoc.model.provider,
-					modelId: agentDoc.model.id || agentDoc.model.modelId,
-				};
+			const raw = await session.runner.requestOk({ type: "get_state", conversationId: targetConversationId });
+			const payload = ((raw as Record<string, unknown>)?.data ?? raw) as Record<string, unknown> | undefined;
+			if (payload?.model && typeof payload.model === "object") {
+				const m = payload.model as Record<string, unknown>;
+				if (typeof m.provider === "string" && (typeof m.modelId === "string" || typeof m.id === "string")) {
+					actualModel = {
+						provider: m.provider,
+						modelId: (m.modelId ?? m.id) as string,
+					};
+				}
 			}
-			if (typeof agentDoc?.thinkingLevel === "string") {
-				thinkingLevel = agentDoc.thinkingLevel;
+			if (typeof payload?.thinkingLevel === "string") {
+				thinkingLevel = payload.thinkingLevel;
 			}
 		} catch {
-			// Non-fatal if state fetch fails; fall back to root/defaults
+			// Handled by fail-closed checks below
 		}
 	}
 
 	const reqModel = parseModelRef(params.options?.model);
-	if (reqModel && actualModel) {
+	if (reqModel) {
+		if (!actualModel) {
+			return {
+				valid: false,
+				code: -32602,
+				message: "CHILD_MODEL_POLICY_LOCKED: Could not resolve subagent child thread model to validate requested model override",
+			};
+		}
 		if (reqModel.provider !== actualModel.provider || reqModel.modelId !== actualModel.modelId) {
 			return {
 				valid: false,
@@ -128,13 +142,20 @@ export async function validateChildTurn(
 	}
 
 	const reqThinking = normalizeThinkingLevel(params.options?.reasoningLevel ?? params.options?.thinkingLevel);
-	const actThinking = normalizeThinkingLevel(thinkingLevel);
-	if (reqThinking !== undefined && actThinking !== undefined) {
+	if (reqThinking !== undefined) {
+		if (thinkingLevel === undefined) {
+			return {
+				valid: false,
+				code: -32602,
+				message: "CHILD_MODEL_POLICY_LOCKED: Could not resolve subagent child thread thinking level to validate requested thinking override",
+			};
+		}
+		const actThinking = normalizeThinkingLevel(thinkingLevel);
 		if (reqThinking !== actThinking) {
 			return {
 				valid: false,
 				code: -32602,
-				message: `CHILD_MODEL_POLICY_LOCKED: Subagent child thread thinking level (${actThinking}) cannot be overridden with (${reqThinking})`,
+				message: `CHILD_MODEL_POLICY_LOCKED: Subagent child thread thinking level (${actThinking ?? thinkingLevel}) cannot be overridden with (${reqThinking})`,
 			};
 		}
 	}

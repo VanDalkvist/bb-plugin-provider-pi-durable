@@ -62,8 +62,8 @@ export class SessionRegistry {
 		params: SessionCreationParams = {},
 	): Promise<PiThreadSession> {
 		const existing = this.sessions.get(threadId);
-		if (existing && !existing.runner.exited) return existing;
-		if (existing && existing.runner.exited) this.sessions.delete(threadId);
+		if (existing && !existing.runner?.exited) return existing;
+		if (existing && existing.runner?.exited) this.sessions.delete(threadId);
 
 		const { sessionKey, conversationId } = parseProviderThreadId(providerThreadId);
 		const rawParent = params.parentThreadId ?? params.options?.parentThreadId;

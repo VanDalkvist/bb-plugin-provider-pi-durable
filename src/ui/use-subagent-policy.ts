@@ -46,16 +46,22 @@ export function useSubagentPolicy(): UseSubagentPolicyResult {
 
 	const save = useCallback(async (): Promise<boolean> => {
 		if (!draftPolicy || !savedRecord) return false;
+		const snapshotToSave = draftPolicy;
 		setIsSaving(true);
 		setError(null);
 		setIsConflict(false);
 		try {
 			const res = await rpc.call("subagent_policy_set", {
-				policy: draftPolicy,
+				policy: snapshotToSave,
 				expectedRevision: savedRecord.revision,
 			});
 			setSavedRecord(res.record);
-			setDraftPolicy(res.record.policy);
+			setDraftPolicy((currentDraft) => {
+				if (currentDraft && JSON.stringify(currentDraft) === JSON.stringify(snapshotToSave)) {
+					return res.record.policy;
+				}
+				return currentDraft;
+			});
 			return true;
 		} catch (err: unknown) {
 			const code = (err as { code?: string })?.code;

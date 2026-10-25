@@ -71,7 +71,7 @@ export const SubagentSettingsSection: FC = () => {
 			<div>
 				<h3 className="text-base font-medium text-foreground">Политика модели субагентов</h3>
 				<p className="text-muted-foreground mt-1">
-					Настройка применяется глобально для всех новых субагентов Pi Durable на этом сервере BB.
+					Настройка применяется глобально для новых запусков субагентов со следующего хода владельца; уже запущенные агенты не изменяются.
 				</p>
 			</div>
 
@@ -92,6 +92,7 @@ export const SubagentSettingsSection: FC = () => {
 							type="radio"
 							name="policy-mode"
 							value="inherit"
+							disabled={isSaving}
 							checked={currentMode === "inherit"}
 							onChange={() => {
 								setDraftPolicy((prev) => ({
@@ -107,6 +108,7 @@ export const SubagentSettingsSection: FC = () => {
 							type="radio"
 							name="policy-mode"
 							value="configured"
+							disabled={isSaving}
 							checked={currentMode === "configured"}
 							onChange={() => {
 								if (effectiveProfile) {
@@ -129,7 +131,11 @@ export const SubagentSettingsSection: FC = () => {
 					</div>
 				) : null}
 
-				{pickerValue && routing ? (
+				{!routing ? (
+					<div className="text-xs text-muted-foreground">
+						Нет доступных хостов или окружений для предпросмотра моделей.
+					</div>
+				) : pickerValue ? (
 					<ProviderModelPicker
 						value={pickerValue}
 						disabled={currentMode === "inherit" || isSaving}

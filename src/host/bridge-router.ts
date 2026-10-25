@@ -41,16 +41,15 @@ export interface ThreadStopParams {
 }
 
 export async function handleTurnStart(id: string | number, params: TurnStartParams, ctx: BridgeRouterContext): Promise<void> {
-	const existing = ctx.registry.get(params.threadId);
-	const isChild = isChildTurn(params, existing);
+	const providerThreadId = params.providerThreadId || `pi_durable_${Date.now()}`;
+	const session = await ctx.registry.createOrGet(params.threadId, providerThreadId, params);
+	const isChild = isChildTurn(params, session);
 
 	if (isChild) {
 		if (isCompactCommand(params.input)) {
 			ctx.sendError(id, -32602, "Context compaction is not supported on child subagent thread");
 			return;
 		}
-		const providerThreadId = params.providerThreadId || `pi_durable_${Date.now()}`;
-		const session = await ctx.registry.createOrGet(params.threadId, providerThreadId, params);
 		const promptInput = extractPiPromptInput(params.input);
 		if (!promptInput) {
 			ctx.sendError(id, -32602, "Missing input text");
@@ -114,8 +113,9 @@ export async function handleTurnStart(id: string | number, params: TurnStartPara
 	}
 
 	const targetCwd = params.cwd || params.options?.cwd;
-	const providerThreadId = params.providerThreadId || `pi_durable_${Date.now()}`;
-	const session = await ctx.registry.reconcileCwd(params.threadId, targetCwd) ?? await ctx.registry.createOrGet(params.threadId, providerThreadId, params);
+	if (targetCwd) {
+		await ctx.registry.reconcileCwd(params.threadId, targetCwd);
+	}
 
 	if (isCompactCommand(params.input)) {
 		sendInputAccepted(ctx.sendNotification, params.threadId, params.clientRequestId);
