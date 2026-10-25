@@ -27,4 +27,14 @@ User approval: implement the agreed scope via arch loop, latest SDK with no lega
 
 ## Execution decision
 
-Task1 may execute now as a separate bounded migration. Tasks2–10 are BLOCKED until their plan amendment is reviewed. This is not a runtime S9 PASS. No scope expansion to generic provider rewrite, standalone config, role registry, or public release.
+Task1 was implemented locally in `1deba49`: 332 tests pass, root server now included in tsc, build passes. SDK check exits1 because the CLI requests devDependency placement despite provider-bridge runtime imports; version is correct, deviation retained explicitly. Independent review thread hit a transport timeout; no final review PASS is inferred.
+
+### Parent S7 readback — next bounded slice
+
+The recovery planner saved a 685-line amended plan before a second transport failure. Parent read all amended sections and corrected remaining contradictions directly in the canonical repository plan.
+
+**Tasks2–3: APPROVED** for domain schemas/resolver + serialized KV store and async startup. Pure resolver now consumes real `readonly Model<Api>[]` and native public `getSupportedThinkingLevels`; no fictitious native auth API. Canonical native thinking type includes minimal, strict JSON DTO boundaries, defensive snapshots, fixed clock tests, serialized CAS and failed-write invariants. Startup must be tested pending/error/success and all old server-entry fixtures await async initialization. Get/set are the only new exposed RPCs until catalog routing exists.
+
+**Tasks4–10: still pending targeted seam review**, not blanket approved. Parent corrected identical same-revision idempotence, explicit host route, final S9 naming, and accidental thread-storage handoff instructions. Remaining phase checks include actual registry construction order (Task4/5), real lifecycle terminal events and failed/interrupted semantics (Task7), public picker props/host selection + behavior—not source-string—tests (Task8), and workspace instruction scope (Task9).
+
+This is not a runtime S9 PASS. Keep S8 selected slices separate from final two-circuit verification. No scope expansion to generic provider rewrite, standalone config, role registry, or public release.

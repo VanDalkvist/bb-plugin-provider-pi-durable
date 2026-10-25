@@ -4,7 +4,7 @@
 
 **Canonical location:** This repository file is the working execution plan, per the user's explicit correction on 2026-10-25. Thread-storage copies are drafts, not the source of truth.
 
-**Execution baseline:** User approved implementation in `thr_3e4z9meeqs`. Repository `main`, HEAD `4d02d4c`, version `0.2.52`; 330 baseline tests and `npx tsc --noEmit` pass. Remote is PUBLIC: local commits are allowed, but this task does not authorize public push/tag/release. Installed BB0.47.1 / latest stable SDK0.6.79 confirmed. Task1 is approved after S7 correction below; Tasks2–10 require the critical-review amendments to be resolved before execution.
+**Execution baseline:** User approved implementation in `thr_3e4z9meeqs`. Repository `main`, HEAD `4d02d4c`, version `0.2.52`; 330 baseline tests and `npx tsc --noEmit` pass. Remote is PUBLIC: local commits are allowed, but this task does not authorize public push/tag/release. Installed BB0.47.1 / latest stable SDK0.6.79 confirmed. Task1 is implemented locally in `1deba49` (332 tests pass; root server is typechecked). SDK CLI check reports version match but exits1 on its generic devDependency advice; retain runtime dependency per provider-bridge contract and document this deviation, never label that command PASS. Independent migration review hit transport timeout and remains pending. After the parent S7 readback, Tasks2–3 are approved as the next bounded slice; Tasks4–10 remain pending their concrete seam review. No final S9 PASS has been issued.
 
 **Goal:** Implement centralized user subagent model policy (inherit/configured), Pi catalog integration, typed runtime delivery, native child conversation application, lifecycle/mirror fixes, instruction separation, and dual-circuit verification on latest BB SDK 0.6.79 without backwards compatibility.
 
@@ -93,14 +93,15 @@
 - **RPC Methods:**
   - `subagent_policy_get`: returns current `{ record: SubagentPolicyRecord }`
   - `subagent_policy_set`: input `{ policy: SubagentPolicy, expectedRevision: number }`, returns `{ record: SubagentPolicyRecord }`
-  - `subagent_catalog_bootstrap`: input `{}`, returns `{ defaultProfile: SubagentModelProfile, availableModels: ModelReference[] }`
+  - `subagent_catalog_bootstrap` (added in Task8): input explicit execution routing `{ hostId: string; environmentId?: string }`, returns `{ defaultProfile?: SubagentModelProfile, availableModels: SubagentModelReference[] }`. Validate route and use the same route for the public picker and host catalog preview. No implicit per-environment policy.
 - **Runner Command Type:** `"set_subagent_policy"` with payload `{ policyRecord: SubagentPolicyRecord }`
 
 ### Wire DTO Types (`src/policy/types.ts`)
 ```typescript
 export type SubagentPolicyMode = "inherit" | "configured";
 
-export type SubagentThinkingLevel = "off" | "low" | "medium" | "high" | "xhigh" | "max";
+// Native type authority; boundary Zod enum must cover this installed Pi1.3 contract.
+export type SubagentThinkingLevel = import("@earendil-works/pi-ai").ModelThinkingLevel;
 
 export interface SubagentModelReference {
   provider: string;
@@ -119,18 +120,18 @@ export type SubagentPolicy =
 export interface SubagentPolicyRecord {
   version: 1;
   revision: number;
-  updatedAt: string;
+  updatedAt?: string;
   policy: SubagentPolicy;
 }
 
-export interface ModelAvailabilityPort {
-  getModel(provider: string, modelId: string): { thinking?: boolean; reasoningLevels?: string[] } | undefined;
-  hasCredentials(provider: string): boolean;
+export interface SubagentPolicyHolder {
+  getRecord(): SubagentPolicyRecord;
+  setRecord(record: SubagentPolicyRecord): void;
 }
 
 export interface ResolvedChildConfiguration {
-  model: { provider: string; modelId: string };
-  thinkingLevel: string;
+  model: SubagentModelReference;
+  thinkingLevel: SubagentThinkingLevel;
   source: "parent_inherited" | "user_configured";
   policyRevision: number;
 }
@@ -147,7 +148,9 @@ export interface ResolvedChildConfiguration {
 **Files:**
 - Modify: `package.json:1-45`
 - Modify: `tests/package-integrity.test.ts:1-60`
-- Target: `package-lock.json`
+- Modify: `server.ts` (required current public SDK calls and factory typing)
+- Modify: `tsconfig.json` (include root `server.ts` so SDK boundary is typechecked; old Doctor app remains excluded until replaced by Task8)
+- Target: `package-lock.json`, build-generated `dist` metadata/bundles
 
 - [ ] **Step 1: Write the failing test for SDK 0.6.79 exact pin and engine constraints**
 
@@ -195,7 +198,7 @@ bb plugin types --check
 npm run build
 npm test
 ```
-Expected output: PASS (all tests pass, `bb plugin types --check` succeeds with host 0.6.79 matching pin 0.6.79).
+Actual Task1: tests/build/tsc pass; `bb plugin types --check` exits1 with matching0.6.79 versions because its generic devDependency placement rule conflicts with provider-bridge production runtime imports. Retain SDK in dependencies; document the exact exit instead of claiming clean check.
 
 - [ ] **Step 5: Commit migration slice**
 
@@ -209,7 +212,7 @@ git commit -m "chore: migrate to @get-bb/plugin-sdk 0.6.79 with engines >=0.47.1
 ### Task 2: Shared Strict Subagent Policy DTOs, Schemas & Pure Resolver Service
 
 **Boundary:** Domain & Validation Boundary.  
-**AP Gates:** `AP-011` (Strict input validation), `AP-012` (Typed errors), `AP-020` (SRP), `AP-022` (Dependency Inversion), `AP-028` (Deterministic tests).  
+**AP Gates:** `AP-011` (Low coupling and high cohesion), `AP-012` (Fail-fast and explicit error contracts), `AP-020` (Clean Architecture boundaries), `AP-022` (Typed errors and preserved causes), `AP-026` (API contracts and DTO boundaries), `AP-028` (Deterministic tests), `AP-050` (Enum semantics).  
 **Files:**
 - Create: `src/policy/types.ts`
 - Create: `src/policy/schema.ts`
@@ -217,173 +220,43 @@ git commit -m "chore: migrate to @get-bb/plugin-sdk 0.6.79 with engines >=0.47.1
 - Test: `tests/subagent-policy-schema.test.ts`
 - Test: `tests/subagent-policy-resolver.test.ts`
 
-- [ ] **Step 1: Write the failing tests for policy schemas and resolver**
+- [ ] **Step 1: Write failing tests for schemas, resolver, boundary mapping, and availability checks**
 
-Create `tests/subagent-policy-schema.test.ts`:
-```typescript
-import test from "node:test";
-import assert from "node:assert/strict";
-import { subagentPolicyRecordSchema, subagentPolicySetInputSchema } from "../src/policy/schema.ts";
+In `tests/subagent-policy-schema.test.ts`:
+- Assert `subagentPolicyRecordSchema` validates valid `inherit` and `configured` shapes.
+- Assert rejection of `configured` without `configuredProfile`, unknown keys (`.strict()`), and invalid thinking levels (accepting `"off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max"`).
+- Assert `subagentPolicySetInputSchema` validates `{ policy, expectedRevision }`.
 
-test("subagentPolicyRecordSchema accepts valid inherit policy", () => {
-  const record = {
-    version: 1,
-    revision: 0,
-    updatedAt: new Date().toISOString(),
-    policy: { mode: "inherit" },
-  };
-  const parsed = subagentPolicyRecordSchema.parse(record);
-  assert.equal(parsed.policy.mode, "inherit");
-  assert.equal(parsed.revision, 0);
-});
-
-test("subagentPolicyRecordSchema rejects configured mode without configuredProfile", () => {
-  const record = {
-    version: 1,
-    revision: 1,
-    updatedAt: new Date().toISOString(),
-    policy: { mode: "configured" },
-  };
-  assert.throws(() => subagentPolicyRecordSchema.parse(record));
-});
-
-test("subagentPolicyRecordSchema rejects unknown extra properties", () => {
-  const record = {
-    version: 1,
-    revision: 1,
-    updatedAt: new Date().toISOString(),
-    policy: { mode: "inherit", unknownProp: 123 },
-  };
-  assert.throws(() => subagentPolicyRecordSchema.parse(record));
-});
-```
-
-Create `tests/subagent-policy-resolver.test.ts`:
-```typescript
-import test from "node:test";
-import assert from "node:assert/strict";
-import { resolveSubagentModelConfiguration } from "../src/policy/resolver.ts";
-import type { SubagentPolicyRecord } from "../src/policy/types.ts";
-
-test("resolveSubagentModelConfiguration: inherit mode uses calling parent model and thinking level", () => {
-  const record: SubagentPolicyRecord = {
-    version: 1,
-    revision: 2,
-    updatedAt: "2026-10-25T12:00:00Z",
-    policy: { mode: "inherit" },
-  };
-  const parent = {
-    model: { provider: "anthropic", modelId: "claude-3-7-sonnet" },
-    thinkingLevel: "high",
-  };
-  const mockPort = {
-    getModel: () => ({ thinking: true, reasoningLevels: ["low", "medium", "high"] }),
-    hasCredentials: () => true,
-  };
-
-  const resolved = resolveSubagentModelConfiguration(record, parent, mockPort);
-  assert.deepEqual(resolved, {
-    model: { provider: "anthropic", modelId: "claude-3-7-sonnet" },
-    thinkingLevel: "high",
-    source: "parent_inherited",
-    policyRevision: 2,
-  });
-});
-
-test("resolveSubagentModelConfiguration: configured mode applies configured profile and maps none to off", () => {
-  const record: SubagentPolicyRecord = {
-    version: 1,
-    revision: 5,
-    updatedAt: "2026-10-25T12:00:00Z",
-    policy: {
-      mode: "configured",
-      configuredProfile: {
-        model: { provider: "google", modelId: "gemini-2.5-pro" },
-        thinkingLevel: "low",
-      },
-    },
-  };
-  const parent = {
-    model: { provider: "openai", modelId: "gpt-4o" },
-    thinkingLevel: "off",
-  };
-  const mockPort = {
-    getModel: (p: string, id: string) => (p === "google" && id === "gemini-2.5-pro" ? { thinking: true } : undefined),
-    hasCredentials: (p: string) => p === "google",
-  };
-
-  const resolved = resolveSubagentModelConfiguration(record, parent, mockPort);
-  assert.deepEqual(resolved, {
-    model: { provider: "google", modelId: "gemini-2.5-pro" },
-    thinkingLevel: "low",
-    source: "user_configured",
-    policyRevision: 5,
-  });
-});
-
-test("resolveSubagentModelConfiguration: throws SUBAGENT_MODEL_UNAVAILABLE when configured model credentials missing", () => {
-  const record: SubagentPolicyRecord = {
-    version: 1,
-    revision: 1,
-    updatedAt: "2026-10-25T12:00:00Z",
-    policy: {
-      mode: "configured",
-      configuredProfile: {
-        model: { provider: "custom-provider", modelId: "deep-thought" },
-        thinkingLevel: "off",
-      },
-    },
-  };
-  const parent = { model: { provider: "openai", modelId: "gpt-4o" }, thinkingLevel: "off" };
-  const mockPort = {
-    getModel: () => undefined,
-    hasCredentials: () => false,
-  };
-
-  assert.throws(
-    () => resolveSubagentModelConfiguration(record, parent, mockPort),
-    (err: any) => err.code === "SUBAGENT_MODEL_UNAVAILABLE",
-  );
-});
-```
+In `tests/subagent-policy-resolver.test.ts`:
+- Resolver signature: `resolveSubagentModelConfiguration(record: SubagentPolicyRecord, parentContext: { model?: SubagentModelReference; thinkingLevel?: SubagentThinkingLevel }, availableModels: readonly Model<Api>[]): ResolvedChildConfiguration`.
+- Test inherit mode: uses parent model and thinking level; throws `SUBAGENT_POLICY_INVALID` if parent model missing.
+- Test configured mode: matches `configuredProfile.model` against `availableModels: readonly Model<Api>[]`. Validates thinking level via public `getSupportedThinkingLevels(model)` from `@earendil-works/pi-ai/models`.
+- Test boundary mapping: BB reasoning level `"none"` ↔ native thinking level `"off"`.
+- Test fail-fast unavailability: if model is absent from `availableModels` (unauthenticated/unregistered), throw typed error `SUBAGENT_MODEL_UNAVAILABLE` with actionable UI path (`Settings → Installed plugins → Pi Durable → Subagents`). No silent fallback to parent or first model.
+- Test unsupported thinking: if thinking level not in `getSupportedThinkingLevels(model)`, throw `SUBAGENT_POLICY_INVALID`.
+- Injected fixed clock in test fixtures; optional `updatedAt`.
 
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `node --test tests/subagent-policy-schema.test.ts tests/subagent-policy-resolver.test.ts`  
-Expected output: FAIL with module not found (`../src/policy/schema.ts`).
+Expected output: FAIL with module resolution / missing file errors.
 
-- [ ] **Step 3: Implement `types.ts`, `schema.ts`, and `resolver.ts`**
+- [ ] **Step 3: Implement `src/policy/types.ts`, `src/policy/schema.ts`, and `src/policy/resolver.ts`**
 
-Write `src/policy/types.ts`:
-- Define `SubagentPolicyMode`, `SubagentThinkingLevel`, `SubagentModelProfile`, `SubagentPolicy`, `SubagentPolicyRecord`, `ModelAvailabilityPort`, `ResolvedChildConfiguration`.
-
-Write `src/policy/schema.ts`:
-- Use Zod (`z.object`, `z.discriminatedUnion("mode", ...)`, `z.strict()`).
-- Validate strict enum for thinkingLevel: `["off", "low", "medium", "high", "xhigh", "max"]`.
-- Define `subagentPolicyRecordSchema`, `subagentPolicySetInputSchema`.
-
-Write `src/policy/resolver.ts`:
-- Export `resolveSubagentModelConfiguration(record, parent, availabilityPort)`.
-- If `mode === "inherit"`:
-  - If parent model is missing, throw `SUBAGENT_POLICY_INVALID`.
-  - Validate parent model against `availabilityPort`.
-  - Return `{ model: parent.model, thinkingLevel: parent.thinkingLevel ?? "off", source: "parent_inherited", policyRevision: record.revision }`.
-- If `mode === "configured"`:
-  - Validate `configuredProfile.model` exists in `availabilityPort.getModel(...)`.
-  - Validate `availabilityPort.hasCredentials(configuredProfile.model.provider)`.
-  - If missing/uncredentialed: throw custom Error with `.code = "SUBAGENT_MODEL_UNAVAILABLE"` and descriptive message: `"Configured subagent model ${provider}/${modelId} is unavailable or unauthenticated on this host. Open Settings → Pi Durable → Subagents to reconfigure."`.
-  - Return `{ model: configuredProfile.model, thinkingLevel: configuredProfile.thinkingLevel, source: "user_configured", policyRevision: record.revision }`.
+- `src/policy/types.ts`: export `SubagentPolicyMode`, `SubagentThinkingLevel`, `SubagentModelReference`, `SubagentModelProfile`, `SubagentPolicy`, `SubagentPolicyRecord`, `SubagentPolicyHolder`, `ResolvedChildConfiguration`.
+- `src/policy/schema.ts`: Zod schemas for all policy types with `.strict()`, strict enum for thinking levels including `"minimal"`, and non-negative integer revisions.
+- `src/policy/resolver.ts`: export `resolveSubagentModelConfiguration`. Uses public `getSupportedThinkingLevels` from `@earendil-works/pi-ai/models`. No fictitious `.hasCredentials` or `.reasoningLevels` properties on `Model`.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `node --test tests/subagent-policy-schema.test.ts tests/subagent-policy-resolver.test.ts`  
-Expected output: PASS (all tests pass).
+Expected output: PASS (all schema and resolver tests green).
 
-- [ ] **Step 5: Commit policy contract and resolver**
+- [ ] **Step 5: Commit policy domain slice**
 
 ```bash
 git add src/policy/ tests/subagent-policy-schema.test.ts tests/subagent-policy-resolver.test.ts
-git commit -m "feat(policy): implement strict subagent policy schemas, DTOs and pure resolver"
+git commit -m "feat(policy): implement strict policy schemas, DTOs and pure resolver service"
 ```
 
 ---
@@ -391,387 +264,139 @@ git commit -m "feat(policy): implement strict subagent policy schemas, DTOs and 
 ### Task 3: Policy KV Store & Hydration Service in Server Entry
 
 **Boundary:** Infrastructure Adapter / BB Plugin Storage & RPC Registration.  
-**AP Gates:** `AP-016` (Single writer, expectedRevision), `AP-020` (SRP), `AP-022` (DIP), `AP-038` (Schema versioning).  
+**AP Gates:** `AP-012` (Fail-fast error contracts), `AP-013` (User-data integrity), `AP-016` (Trusted execution boundary), `AP-020` (Composition root), `AP-023` (Async discipline), `AP-026` (API contracts), `AP-034` (Explicit concurrency strategy: serialized CAS), `AP-035` (Idempotent commands).  
 **Files:**
 - Create: `src/policy/store.ts`
-- Modify: `server.ts`
 - Modify: `src/rpc/contract.ts`
+- Modify: `server.ts`
 - Test: `tests/subagent-policy-store.test.ts`
 
-- [ ] **Step 1: Write the failing tests for `SubagentPolicyStore`**
+- [ ] **Step 1: Write failing tests for SubagentPolicyStore CAS, concurrent updates, and cold hydration**
 
-Create `tests/subagent-policy-store.test.ts`:
-```typescript
-import test from "node:test";
-import assert from "node:assert/strict";
-import { SubagentPolicyStore } from "../src/policy/store.ts";
-
-test("SubagentPolicyStore: hydrates canonical inherit default on clean storage", async () => {
-  const fakeKv = new Map<string, unknown>();
-  const store = new SubagentPolicyStore({
-    get: async (k) => fakeKv.get(k),
-    set: async (k, v) => fakeKv.set(k, v),
-  });
-
-  await store.hydrate();
-  const record = store.getRecord();
-  assert.equal(record.version, 1);
-  assert.equal(record.revision, 0);
-  assert.equal(record.policy.mode, "inherit");
-});
-
-test("SubagentPolicyStore: setPolicy updates revision monotonically", async () => {
-  const fakeKv = new Map<string, unknown>();
-  const store = new SubagentPolicyStore({
-    get: async (k) => fakeKv.get(k),
-    set: async (k, v) => fakeKv.set(k, v),
-  });
-  await store.hydrate();
-
-  const updated = await store.setPolicy(
-    {
-      mode: "configured",
-      configuredProfile: {
-        model: { provider: "google", modelId: "gemini-2.5-flash" },
-        thinkingLevel: "high",
-      },
-    },
-    0, // expectedRevision
-  );
-
-  assert.equal(updated.revision, 1);
-  assert.equal(updated.policy.mode, "configured");
-  assert.equal(store.getRecord().revision, 1);
-});
-
-test("SubagentPolicyStore: throws REVISION_CONFLICT on mismatched expectedRevision without saving", async () => {
-  const fakeKv = new Map<string, unknown>();
-  const store = new SubagentPolicyStore({
-    get: async (k) => fakeKv.get(k),
-    set: async (k, v) => fakeKv.set(k, v),
-  });
-  await store.hydrate();
-
-  await assert.rejects(
-    () => store.setPolicy({ mode: "inherit" }, 99),
-    (err: any) => err.code === "REVISION_CONFLICT",
-  );
-  assert.equal(store.getRecord().revision, 0);
-});
-
-test("SubagentPolicyStore: throws SUBAGENT_POLICY_LOAD_ERROR when storage contains corrupted data", async () => {
-  const fakeKv = new Map<string, unknown>();
-  fakeKv.set("subagent.policy.v1", { corrupted: true });
-  const store = new SubagentPolicyStore({
-    get: async (k) => fakeKv.get(k),
-    set: async (k, v) => fakeKv.set(k, v),
-  });
-
-  await assert.rejects(
-    () => store.hydrate(),
-    (err: any) => err.code === "SUBAGENT_POLICY_LOAD_ERROR",
-  );
-});
-```
+In `tests/subagent-policy-store.test.ts`:
+- Test clean storage: `hydrate()` initializes canonical `inherit` default (`revision: 0`, `mode: "inherit"`).
+- Test serialized CAS mutation: `setPolicy(policy, expectedRevision)` writes whole record to KV with incremented revision and updates cache.
+- Test failed write leaves cache intact: if `kv.set` rejects, in-memory cache retains prior acknowledged record.
+- Test optimistic locking conflict: when `expectedRevision !== current.revision`, throws typed `REVISION_CONFLICT` without updating KV or cache.
+- Test concurrent updates: two simultaneous `setPolicy` calls with the same `expectedRevision` produce exactly 1 success and 1 `REVISION_CONFLICT`.
+- Test observable corruption: corrupted data or storage read errors in `hydrate()` throw explicit `SUBAGENT_POLICY_LOAD_ERROR` — no silent fallback to inherit.
 
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `node --test tests/subagent-policy-store.test.ts`  
 Expected output: FAIL with module not found (`../src/policy/store.ts`).
 
-- [ ] **Step 3: Implement `SubagentPolicyStore`, update `src/rpc/contract.ts` and `server.ts`**
+- [ ] **Step 3: Implement `SubagentPolicyStore`, update `contract.ts` and `server.ts`**
 
-Write `src/policy/store.ts`:
-- Implement `SubagentPolicyStore`:
-  - `hydrate()`: reads `"subagent.policy.v1"`. If undefined, initializes default inherit record with revision 0. If schema validation fails, throws error with `code: "SUBAGENT_POLICY_LOAD_ERROR"`.
-  - `getRecord()`: returns current immutable snapshot.
-  - `setPolicy(policy, expectedRevision)`: validates `policy` with `subagentPolicySchema`. Verifies `expectedRevision === current.revision`. If mismatch, throws Error with `code: "REVISION_CONFLICT"`. Persists whole record to KV with incremented `revision: current.revision + 1` and `updatedAt: new Date().toISOString()`. Updates in-memory cache upon persistence success.
+- `src/policy/store.ts`: `SubagentPolicyStore` wrapping current public `bb.storage.kv` with key `"subagent.policy.v1"`. Serialize the entire expectedRevision comparison + persistence + cache update with a failure-resilient promise queue. Update cache only after successful persistence. Return defensive immutable snapshots. Default revision0 record has no timestamp; inject a clock for mutation timestamps and use fixed test time. Derive plain JSON DTO types from the canonical schemas or use type aliases compatible with public JsonValue; no unsafe casts to force providerOptions.
+- `src/rpc/contract.ts`: register strict RPC contracts:
+  - `subagent_policy_get`: output `{ record: subagentPolicyRecordSchema }`
+  - `subagent_policy_set`: input `{ policy: subagentPolicySchema, expectedRevision: z.number().int().nonnegative() }`, output `{ record: subagentPolicyRecordSchema }`
+- `server.ts`: async public SDK factory awaits `store.hydrate()` before registering RPC handlers and provider. Pass acknowledged `store.getRecord()` via `deriveProviderOptions(ctx)` into `providerOptions.subagentPolicy`. Map typed errors into the public RPC error transport without losing error code/cause. Add a narrow server startup/persistence contract test: hold KV read pending and assert no provider registration; reject/corrupt and assert no registration; successful get/set changes the next derived snapshot. Adapt existing server-entry test fakes (`package-integrity`, `thinking-presentation`, `master-parity-conformance`) with KV and await async initialization. Do not expose unfinished catalog bootstrap until Task8.
 
-Update `src/rpc/contract.ts`:
-- Define RPC contracts:
-  - `subagent_policy_get`: output `z.object({ record: subagentPolicyRecordSchema })`
-  - `subagent_policy_set`: input `z.object({ policy: subagentPolicySchema, expectedRevision: z.number().int().nonnegative() })`, output `z.object({ record: subagentPolicyRecordSchema })`
-  - `subagent_catalog_bootstrap`: output `z.object({ defaultProfile: subagentModelProfileSchema.optional(), availableModels: z.array(z.object({ provider: z.string(), modelId: z.string(), displayName: z.string().optional() })) })`
+- [ ] **Step 4: Run tests to verify they pass**
 
-Update `server.ts`:
-- Make plugin initialization async if supported by SDK or instantiate store, await `store.hydrate()` before registering RPC and provider.
-- In `deriveProviderOptions(ctx)`: inject `subagentPolicy: store.getRecord()`.
+Run: `node --test tests/subagent-policy-store.test.ts`  
+Expected output: PASS (all store and concurrency tests green).
 
-- [ ] **Step 4: Run store tests and full test suite**
-
-Run: `node --test tests/subagent-policy-store.test.ts tests/thinking-presentation.test.ts`  
-Expected output: PASS (all tests pass).
-
-- [ ] **Step 5: Commit policy store and server integration**
+- [ ] **Step 5: Commit store and server integration**
 
 ```bash
 git add src/policy/store.ts src/rpc/contract.ts server.ts tests/subagent-policy-store.test.ts
-git commit -m "feat(policy): implement SubagentPolicyStore in KV with optimistic locking and RPC integration"
+git commit -m "feat(policy): implement SubagentPolicyStore with optimistic CAS, cold hydration, and RPC contracts"
 ```
 
 ---
 
-### Task 4: Runner Subagent Policy Command and Native Model Availability Port
+### Task 4: Runner Policy Holder Instance & Session Commands Wiring
 
 **Boundary:** Runner Process & Session Command Boundary.  
-**AP Gates:** `AP-011`, `AP-012`, `AP-020`, `AP-022`, `AP-025`.  
+**AP Gates:** `AP-011` (Low coupling), `AP-012` (Fail-fast), `AP-019` (Line budgets), `AP-020` (Clean Architecture), `AP-034` (Instance-scoped concurrency, no global mutable singleton), `AP-035` (Idempotent commands), `AP-038` (Traceability).  
 **Files:**
 - Create: `src/runner/subagent-policy-state.ts`
+- Modify: `src/runner/runtime-types.ts`
+- Modify: `src/runner/runtime-loader.ts`
+- Modify: `src/runner/harness-setup.ts`
 - Modify: `src/runner/session-commands.ts`
 - Test: `tests/runner-subagent-policy.test.ts`
 
-- [ ] **Step 1: Write the failing test for runner subagent policy handling**
+- [ ] **Step 1: Write failing tests for instance-scoped policy holder and runner commands**
 
-Create `tests/runner-subagent-policy.test.ts`:
-```typescript
-import test from "node:test";
-import assert from "node:assert/strict";
-import { handleActiveSessionCommand } from "../src/runner/session-commands.ts";
-import { getActiveSubagentPolicy, resetActiveSubagentPolicy } from "../src/runner/subagent-policy-state.ts";
-
-test("runner handles set_subagent_policy command and acknowledges success", async () => {
-  resetActiveSubagentPolicy();
-  const policyRecord = {
-    version: 1,
-    revision: 3,
-    updatedAt: "2026-10-25T12:00:00Z",
-    policy: {
-      mode: "configured",
-      configuredProfile: {
-        model: { provider: "google", modelId: "gemini-2.5-flash" },
-        thinkingLevel: "medium",
-      },
-    },
-  };
-
-  let respondedSuccess = false;
-  const mockResponder = {
-    success: (id: any, command: string) => {
-      if (command === "set_subagent_policy") respondedSuccess = true;
-    },
-    error: (id: any, command: string, msg: string) => {
-      assert.fail(`Unexpected error response: ${msg}`);
-    },
-  };
-
-  await handleActiveSessionCommand(
-    { type: "set_subagent_policy", id: "req-1", policyRecord: policyRecord as any },
-    {} as any,
-    { getAvailableSnapshot: () => [], getModel: () => undefined, hasConfiguredAuth: () => true } as any,
-    {} as any,
-    mockResponder,
-  );
-
-  assert.equal(respondedSuccess, true);
-  assert.deepEqual(getActiveSubagentPolicy(), policyRecord);
-});
-```
+In `tests/runner-subagent-policy.test.ts`:
+- Test holder instance isolation: two independent holders created via `createSubagentPolicyHolder()` maintain separate records without shared module state.
+- Test monotonic revisions: an identical same-revision snapshot is acknowledged idempotently; a different payload at the same revision is `REVISION_CONFLICT`; a lower revision is rejected. A fresh holder can accept initial revision0 inherit without timestamp, matching the store default.
+- Test `handleActiveSessionCommand`: command `set_subagent_policy` validates payload, updates `durable.subagentPolicyHolder`, and responds success before prompt execution.
+- Test `get_state`: when `cmd.conversationId` targets a child conversation, read state for that conversation instead of root.
 
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `node --test tests/runner-subagent-policy.test.ts`  
-Expected output: FAIL with module not found (`../src/runner/subagent-policy-state.ts`).
+Expected output: FAIL with module not found or missing property errors.
 
-- [ ] **Step 3: Implement `subagent-policy-state.ts` and update `session-commands.ts`**
+- [ ] **Step 3: Implement `subagent-policy-state.ts` and modify runner integration files**
 
-Write `src/runner/subagent-policy-state.ts`:
-```typescript
-import type { SubagentPolicyRecord } from "../policy/types.ts";
-
-let activePolicyRecord: SubagentPolicyRecord = {
-  version: 1,
-  revision: 0,
-  updatedAt: new Date(0).toISOString(),
-  policy: { mode: "inherit" },
-};
-
-export function getActiveSubagentPolicy(): SubagentPolicyRecord {
-  return activePolicyRecord;
-}
-
-export function setActiveSubagentPolicy(record: SubagentPolicyRecord): void {
-  activePolicyRecord = record;
-}
-
-export function resetActiveSubagentPolicy(): void {
-  activePolicyRecord = {
-    version: 1,
-    revision: 0,
-    updatedAt: new Date(0).toISOString(),
-    policy: { mode: "inherit" },
-  };
-}
-```
-
-Update `src/runner/session-commands.ts`:
-- In `RunnerCommandPayload`: add `policyRecord?: SubagentPolicyRecord`.
-- In `handleActiveSessionCommand`: add `case "set_subagent_policy"`:
-  - Validate `cmd.policyRecord`. If missing, `respond.error(cmd.id, "set_subagent_policy", "Missing policyRecord")`.
-  - Call `setActiveSubagentPolicy(cmd.policyRecord)`.
-  - Call `respond.success(cmd.id, "set_subagent_policy")`.
+- `src/runner/subagent-policy-state.ts`: export `createSubagentPolicyHolder(initial?: SubagentPolicyRecord): SubagentPolicyHolder`. No module-global mutable singleton. Enforce schema validation and monotonic revision rules.
+- `src/runner/runtime-types.ts`: add `readonly subagentPolicyHolder: SubagentPolicyHolder` to `OpenDurableResult`.
+- `src/runner/runtime-loader.ts`: instantiate `const subagentPolicyHolder = createSubagentPolicyHolder()` per `openDurable`. Pass to `createCodingRegistry` and expose on `OpenDurableResult`.
+- `src/runner/harness-setup.ts`: accept `subagentPolicyHolder: SubagentPolicyHolder` in `createCodingRegistry`, pass getter `() => subagentPolicyHolder.getRecord()` into `createSubagentExtension`.
+- `src/runner/session-commands.ts`: handle `"set_subagent_policy"` via `durable.subagentPolicyHolder.setRecord`. In `"get_state"`, target `parseConversationId(cmd.conversationId)`.
 
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `node --test tests/runner-subagent-policy.test.ts`  
-Expected output: PASS (all tests pass).
+Expected output: PASS (all runner command and holder tests green).
 
-- [ ] **Step 5: Commit runner policy command**
+- [ ] **Step 5: Commit runner policy holder slice**
 
 ```bash
-git add src/runner/subagent-policy-state.ts src/runner/session-commands.ts tests/runner-subagent-policy.test.ts
-git commit -m "feat(runner): handle set_subagent_policy runner command and maintain active policy state"
+git add src/runner/subagent-policy-state.ts src/runner/runtime-types.ts src/runner/runtime-loader.ts src/runner/harness-setup.ts src/runner/session-commands.ts tests/runner-subagent-policy.test.ts
+git commit -m "feat(runner): implement instance-scoped SubagentPolicyHolder and wire set_subagent_policy command"
 ```
 
 ---
 
-### Task 5: Native Subagent Execution: Model Application, Role Separation & Replay Safety
+### Task 5: Native Subagent Tool: Validation, Replay Safety & Role Separation
 
 **Boundary:** Runner Execution & Pi Durable Harness Integration.  
-**AP Gates:** `AP-010` (Thin Adapter), `AP-020` (SRP), `AP-026` (Replay safety), `AP-027` (No duplicate side effects).  
+**AP Gates:** `AP-010` (Thin Adapter), `AP-011` (High cohesion), `AP-012` (Fail-fast validation), `AP-020` (SRP), `AP-026` (Replay safety & contracts), `AP-027` (Validated configuration), `AP-028` (Deterministic tests with real SDK fixture).  
 **Files:**
 - Create: `src/runner/subagent-role.ts`
 - Modify: `src/runner/subagent.ts`
 - Test: `tests/subagent-native-model-application.test.ts`
 
-- [ ] **Step 1: Write the failing tests for neutral role separation and native model application**
+- [ ] **Step 1: Write failing tests for neutral role envelope, real SDK model resolution, and replay safety**
 
-Create `tests/subagent-native-model-application.test.ts`:
-```typescript
-import test from "node:test";
-import assert from "node:assert/strict";
-import { Harness, MemoryStorage, createRegistry, AgentDoc } from "@earendil-works/pi-durable";
-import { createModels } from "@earendil-works/pi-ai/models";
-import { runtimeContext as ctx } from "../src/runner/runtime-types.ts";
-import { Subagent } from "../src/runner/subagent.ts";
-import { Anchor } from "../src/runner/subagent-delivery.ts";
-import { setActiveSubagentPolicy, resetActiveSubagentPolicy } from "../src/runner/subagent-policy-state.ts";
-import { buildTechnicalWorkerRole } from "../src/runner/subagent-role.ts";
-
-test("buildTechnicalWorkerRole: does NOT interpolate task prompt or ban git archaeology", () => {
-  const role = buildTechnicalWorkerRole();
-  assert.match(role, /isolated worker subagent/i);
-  assert.equal(role.includes("archeology"), false);
-  assert.equal(role.includes("archaeology"), false);
-  assert.equal(role.includes("ONLY goal is to solve the delegated task"), false);
-});
-
-test("Subagent execution: configured policy applies configured model and thinking level to child conversation", async () => {
-  resetActiveSubagentPolicy();
-  setActiveSubagentPolicy({
-    version: 1,
-    revision: 10,
-    updatedAt: new Date().toISOString(),
-    policy: {
-      mode: "configured",
-      configuredProfile: {
-        model: { provider: "mock-provider", modelId: "mock-fast-model" },
-        thinkingLevel: "low",
-      },
-    },
-  });
-
-  const registry = createRegistry();
-  registry.install(Subagent);
-  registry.install(Anchor);
-  const storage = new MemoryStorage();
-  const harness = await Harness.open(storage, { models: createModels(), registry }, ctx);
-
-  try {
-    const root = await harness.root(ctx, {
-      agent: {
-        cwd: "/tmp",
-        model: { provider: "parent-provider", modelId: "parent-heavy-model" },
-        thinkingLevel: "high",
-      },
-    });
-    const owner = await root.commit(
-      (tx) => tx.createTask(Anchor, null, { ownership: { kind: "conversation" }, background: true }),
-      ctx,
-    );
-
-    let childId: any;
-    const sentinel = new Error("STOP_AFTER_SPAWN");
-    await assert.rejects(
-      () =>
-        Subagent.tools[0].execute(
-          { task: "Execute targeted unit tests", background: true },
-          {
-            taskId: owner,
-            conversationId: root.id,
-            commit: (fn: any) => root.commit(fn, ctx),
-            details: async (d: any) => {
-              childId = d.conversationId;
-              throw sentinel;
-            },
-          } as any,
-          ctx,
-        ),
-      (err) => err === sentinel,
-    );
-
-    const childDoc = await harness.snapshot(AgentDoc, childId, ctx);
-    assert.deepEqual(childDoc.model, { provider: "mock-provider", modelId: "mock-fast-model" });
-    assert.equal(childDoc.thinkingLevel, "low");
-    assert.match(childDoc.instructions ?? "", /isolated worker subagent/i);
-
-    // Parent AgentDoc must remain completely untouched!
-    const parentDoc = await harness.snapshot(AgentDoc, root.id, ctx);
-    assert.deepEqual(parentDoc.model, { provider: "parent-provider", modelId: "parent-heavy-model" });
-    assert.equal(parentDoc.thinkingLevel, "high");
-  } finally {
-    await harness.close(ctx);
-    await storage.close();
-    resetActiveSubagentPolicy();
-  }
-});
-```
+In `tests/subagent-native-model-application.test.ts`:
+- Test role envelope: `buildTechnicalWorkerRole()` returns static technical envelope; does NOT interpolate task text into system instructions; does NOT ban git archaeology.
+- Real SDK fixture setup: register valid test provider and model on `createModels()`.
+- Test configured execution: fetches `availableModels` via native `api.models.getAvailable()` outside `api.commit`, resolves via pure resolver, creates child conversation, and applies `configure(tx, child.id, { model, thinkingLevel, instructions })`. Parent `AgentDoc` is untouched.
+- Test missing/uncredentialed model fail-fast: if configured model is unregistered or uncredentialed, execution fails BEFORE child creation with typed `SUBAGENT_MODEL_UNAVAILABLE` error (no fallback).
+- Test replay safety: when `SubagentsDoc` already has an entry for the task, reuses existing conversation handle and existing reporter; does NOT recreate `DefaultReporter` or reconfigure child.
 
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `node --test tests/subagent-native-model-application.test.ts`  
-Expected output: FAIL with module not found (`../src/runner/subagent-role.ts`).
+Expected output: FAIL with missing role helper or configuration mismatch.
 
-- [ ] **Step 3: Implement `subagent-role.ts` and update `subagent.ts`**
+- [ ] **Step 3: Implement `subagent-role.ts` and modify `subagent.ts`**
 
-Write `src/runner/subagent-role.ts`:
-```typescript
-export function buildTechnicalWorkerRole(): string {
-  return [
-    "You are an isolated worker subagent.",
-    "Your role is to execute the delegated task using your available tools and return your final answer concisely.",
-    "Rules:",
-    "- Focus strictly on solving the assigned task.",
-    "- Execute the task directly and report findings clearly.",
-  ].join("\n");
-}
-```
-
-Update `src/runner/subagent.ts`:
-- Import `buildTechnicalWorkerRole` from `./subagent-role.ts`.
-- Import `getActiveSubagentPolicy` from `./subagent-policy-state.ts`.
-- In tool `execute`:
-  - When creating child conversation:
-    - Read parent `AgentDoc` via `await tx.doc(AgentDoc, api.conversationId)`.
-    - Read active policy via `getActiveSubagentPolicy()`.
-    - Determine effective child model and thinking level:
-      - If policy is `configured`: use `configuredProfile.model` and `configuredProfile.thinkingLevel`.
-      - If policy is `inherit`: use `parentDoc.model` and `parentDoc.thinkingLevel`.
-    - Call `await configure(tx, created.id, { instructions: buildTechnicalWorkerRole(), model: effectiveModel, thinkingLevel: effectiveThinkingLevel })`.
-  - Replay guard:
-    - If `existing` conversation exists: DO NOT reconfigure child model or instructions!
-    - Only call `tx.createTask(DefaultReporter, ...)` if `record.reporter === undefined`.
-  - Ensure `child` metadata includes `policyRevision` and `source` for observable diagnostics.
+- `src/runner/subagent-role.ts`: export `buildTechnicalWorkerRole(): string`. Static technical boundaries only.
+- `src/runner/subagent.ts`:
+  - Export `createSubagentExtension(getPolicy: () => SubagentPolicyRecord): Extension`.
+  - Replay guard first: check `tx.doc(SubagentsDoc, api.conversationId)`. If existing child exists for task, reuse existing record and reporter.
+  - New child admission: outside `api.commit`, call `await api.models.getAvailable()`, resolve via `resolveSubagentModelConfiguration(getPolicy(), parentContext, availableModels)`.
+  - Inside `api.commit`: create task-owned child conversation, record `actualModel`, `source`, `policyRevision` in metadata, configure with `buildTechnicalWorkerRole()`.
 
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `node --test tests/subagent-native-model-application.test.ts`  
-Expected output: PASS (all tests pass).
+Expected output: PASS (configured child created with correct model/thinking, replay preserved).
 
-- [ ] **Step 5: Commit native subagent model application**
+- [ ] **Step 5: Commit native subagent execution slice**
 
 ```bash
 git add src/runner/subagent-role.ts src/runner/subagent.ts tests/subagent-native-model-application.test.ts
-git commit -m "feat(runner): configure native child model and thinking level from subagent policy"
+git commit -m "feat(runner): configure native child model from policy with replay safety and role separation"
 ```
 
 ---
@@ -779,280 +404,144 @@ git commit -m "feat(runner): configure native child model and thinking level fro
 ### Task 6: Host Reconcile, ProviderOptions Delivery & Root Bridge Guard
 
 **Boundary:** Host Session Options & Provider Bridge Router.  
-**AP Gates:** `AP-016` (No split brain), `AP-019` (Line budgets < 200), `AP-020` (SRP), `AP-028` (Test isolation).  
+**AP Gates:** `AP-011` (High cohesion), `AP-016` (Trusted boundary: root vs mirror), `AP-019` (Line budgets < 200), `AP-020` (SRP), `AP-022` (Typed errors: `CHILD_MODEL_POLICY_LOCKED`), `AP-028` (Test determinism).  
 **Files:**
 - Modify: `src/host/session-reconcile.ts`
 - Modify: `src/host/bridge-router.ts`
 - Modify: `src/host/session.ts`
 - Test: `tests/host-subagent-policy-delivery.test.ts`
+- Test: `tests/subagent-mirror-guard.test.ts`
 
-- [ ] **Step 1: Write the failing tests for root delivery and child mirror isolation**
+- [ ] **Step 1: Write failing tests for root turn delivery and child mirror isolation**
 
-Create `tests/host-subagent-policy-delivery.test.ts`:
-```typescript
-import test from "node:test";
-import assert from "node:assert/strict";
-import { reconcileSessionOptions } from "../src/host/session-reconcile.ts";
+In `tests/host-subagent-policy-delivery.test.ts`:
+- Test that root thread turn with changed `providerOptions.subagentPolicy` calls `session.setSubagentPolicy(record)` which dispatches `set_subagent_policy` command to runner.
+- Test that new policy revision is acknowledged before prompt execution.
 
-test("reconcileSessionOptions sends set_subagent_policy when subagentPolicy changed on root thread", async () => {
-  let dispatchedCommand: any = null;
-  const mockSession = {
-    options: {
-      threadId: "root-thread-1",
-      providerOptions: {},
-    },
-    setSubagentPolicy: async (record: any) => {
-      dispatchedCommand = record;
-    },
-  };
+In `tests/subagent-mirror-guard.test.ts`:
+- Test that child mirror turn (`params.threadId !== session.options.threadId`) NEVER calls `reconcileSessionOptions` on root session, and NEVER mutates root session model, thinking, or policy.
+- Test that child mirror turn attempting to override model with a different model fails with typed RPC error `-32602` (`CHILD_MODEL_POLICY_LOCKED`).
+- Test that child mirror followups correctly route to target `conversationId`.
 
-  const newPolicyRecord = {
-    version: 1,
-    revision: 4,
-    updatedAt: "2026-10-25T12:00:00Z",
-    policy: { mode: "inherit" },
-  };
+- [ ] **Step 2: Run tests to verify they fail**
 
-  await reconcileSessionOptions(mockSession as any, {
-    providerOptions: { subagentPolicy: newPolicyRecord },
-  });
-
-  assert.deepEqual(dispatchedCommand, newPolicyRecord);
-});
-```
-
-- [ ] **Step 2: Run test to verify it fails**
-
-Run: `node --test tests/host-subagent-policy-delivery.test.ts`  
-Expected output: FAIL (`dispatchedCommand` is null).
+Run: `node --test tests/host-subagent-policy-delivery.test.ts tests/subagent-mirror-guard.test.ts`  
+Expected output: FAIL with missing method / unhandled mirror mutation.
 
 - [ ] **Step 3: Update `session-reconcile.ts`, `bridge-router.ts`, and `session.ts`**
 
-Update `src/host/session-reconcile.ts`:
-- Extend `ReconcilableSession` interface to include `setSubagentPolicy?(record: any): Promise<void>`.
-- In `reconcileSessionOptions`:
-  - Check `options.providerOptions?.subagentPolicy`.
-  - If present and its `revision !== (session.options.providerOptions as any)?.subagentPolicy?.revision`:
-    - Await `session.setSubagentPolicy?.(subagentPolicy)`.
-    - Update `session.options.providerOptions = { ...session.options.providerOptions, subagentPolicy }`.
+- `src/host/session-reconcile.ts`: add `setSubagentPolicy?(record: SubagentPolicyRecord): Promise<void>` to `ReconcilableSession`. If `options.providerOptions?.subagentPolicy` revision differs from acknowledged revision, await `session.setSubagentPolicy`.
+- `src/host/session.ts`: implement `setSubagentPolicy(record)` by sending `set_subagent_policy` command to runner.
+- `src/host/bridge-router.ts`: guard `handleTurnStart` and `handleTurnSteer`:
+  - `const isRoot = params.threadId === session.options.threadId;`
+  - If `!isRoot`: do not reconcile root session options. Direct steer/prompt to `targetConversationId`. If `params.options?.model` differs from child model, return RPC error `-32602` with `CHILD_MODEL_POLICY_LOCKED`.
 
-Update `src/host/bridge-router.ts`:
-- In `handleTurnStart` and `handleTurnSteer`:
-  - Check `const isRootThread = params.threadId === session.options.threadId;`
-  - If `!isRootThread`:
-    - DO NOT mutate `session.options.providerOptions`!
-    - DO NOT call `reconcileSessionOptions(session, params.options)` on the root session!
-    - If `params.options?.model` is specified and differs from the child conversation's model, send JSON-RPC error `-32602` with `"CHILD_MODEL_POLICY_LOCKED: Subagent model is managed by provider policy and cannot be overridden from child mirror."`
-
-Update `src/host/session.ts`:
-- Add `public async setSubagentPolicy(record: any): Promise<void>` which calls `await this.runner.requestOk({ type: "set_subagent_policy", policyRecord: record })`.
-
-- [ ] **Step 4: Run test to verify it passes**
+- [ ] **Step 4: Run tests to verify they pass**
 
 Run: `node --test tests/host-subagent-policy-delivery.test.ts tests/subagent-mirror-guard.test.ts`  
-Expected output: PASS (all tests pass).
+Expected output: PASS (all root delivery and mirror guard tests green).
 
-- [ ] **Step 5: Commit host reconciliation and bridge guard**
+- [ ] **Step 5: Commit host reconcile and bridge guard**
 
 ```bash
-git add src/host/session-reconcile.ts src/host/bridge-router.ts src/host/session.ts tests/host-subagent-policy-delivery.test.ts
-git commit -m "feat(host): reconcile subagent policy on root turn and guard root session from child mirror mutations"
+git add src/host/session-reconcile.ts src/host/bridge-router.ts src/host/session.ts tests/host-subagent-policy-delivery.test.ts tests/subagent-mirror-guard.test.ts
+git commit -m "feat(host): reconcile subagent policy on root turn and isolate root session from child mirrors"
 ```
 
 ---
 
-### Task 7: Fix Host Premature markCompleted, Lifecycle & Single Generation
+### Task 7: Host Subagent Lifecycle Extraction, Accurate Outcome States & Early Ack Fix
 
 **Boundary:** Host Session Lifecycle & Subagent Mirror Management.  
-**AP Gates:** `AP-012`, `AP-013`, `AP-019` (Line budget < 200 lines), `AP-026`, `AP-046`.  
+**AP Gates:** `AP-012` (Accurate error contracts), `AP-013` (Data integrity), `AP-019` (Line budgets: `session.ts` < 200 lines), `AP-020` (SRP), `AP-026` (Lifecycle semantics), `AP-050` (Status semantics).  
 **Files:**
-- Create: `src/host/session-subagent-handler.ts` (bounded extraction from `session.ts`)
+- Create: `src/host/session-subagent-handler.ts`
 - Modify: `src/host/session.ts`
 - Modify: `src/host/subagent-mirror.ts`
 - Test: `tests/subagent-lifecycle-fixes.test.ts`
 
-- [ ] **Step 1: Write the failing tests for background spawn acknowledgment and mirror lifecycle**
+- [ ] **Step 1: Write failing tests for background spawn acknowledgment and accurate termination states**
 
-Create `tests/subagent-lifecycle-fixes.test.ts`:
-```typescript
-import test from "node:test";
-import assert from "node:assert/strict";
-import { PiThreadSession } from "../src/host/session.ts";
-import { SubagentMirrorManager } from "../src/host/subagent-mirror.ts";
-
-test("background spawn acknowledgment must NOT mark running subagent completed", async () => {
-  const session = Object.create(PiThreadSession.prototype);
-  session.options = { threadId: "probe-parent", cwd: "/tmp" };
-  session.mirrors = new SubagentMirrorManager();
-  session.bindings = { getThreadId: () => undefined };
-  session.translator = { translate: () => [] };
-  session.sendNotification = () => {};
-
-  session.markSubagentActive("42", { task: "Background worker", parentToolCallId: "call-1" });
-
-  await session.handleRunnerEvent({
-    type: "tool_execution_end",
-    toolName: "subagent",
-    toolCallId: "call-1",
-    result: "Subagent spawned in background (conversation 42).",
-    details: { conversationId: "42", background: true, task: "Background worker" },
-  });
-
-  const state = session.getSubagentState("42");
-  assert.equal(state?.status, "running", "Background subagent must remain running after spawn ack");
-});
-
-test("foreground execution end DOES mark subagent completed with result", async () => {
-  const session = Object.create(PiThreadSession.prototype);
-  session.options = { threadId: "probe-parent", cwd: "/tmp" };
-  session.mirrors = new SubagentMirrorManager();
-  session.bindings = { getThreadId: () => undefined };
-  session.translator = { translate: () => [] };
-  session.sendNotification = () => {};
-
-  session.markSubagentActive("43", { task: "Sync worker", parentToolCallId: "call-2" });
-
-  await session.handleRunnerEvent({
-    type: "tool_execution_end",
-    toolName: "subagent",
-    toolCallId: "call-2",
-    result: "Final calculation result: 42",
-    details: { conversationId: "43", background: false, task: "Sync worker" },
-  });
-
-  const state = session.getSubagentState("43");
-  assert.equal(state?.status, "completed");
-  assert.equal(state?.result, "Final calculation result: 42");
-});
-
-test("aborted or failed child agent_end records accurate outcome status", async () => {
-  const session = Object.create(PiThreadSession.prototype);
-  session.options = { threadId: "probe-parent", cwd: "/tmp" };
-  session.mirrors = new SubagentMirrorManager();
-  session.bindings = { getThreadId: () => "child-thread-99" };
-  session.translator = { translate: () => [] };
-  session.getChildTranslator = () => ({ translate: () => [] });
-  const notifications: any[] = [];
-  session.sendNotification = (method: string, params: any) => notifications.push({ method, params });
-
-  session.markSubagentActive("99", { task: "Aborted worker" });
-
-  await session.handleRunnerEvent({
-    type: "agent_end",
-    conversationId: "99",
-    stopReason: "aborted",
-  });
-
-  const state = session.getSubagentState("99");
-  assert.equal(state?.status, "completed");
-  const boundary = notifications.find((n) => n.method === "thread/delta" && n.params.deltas?.[0]?.kind === "turn.boundary");
-  assert.equal(boundary?.params.deltas[0].status, "interrupted");
-});
-```
+In `tests/subagent-lifecycle-fixes.test.ts`:
+- Test background tool ack: `tool_execution_end` for `subagent` with `background: true` is an admission acknowledgment; subagent MUST remain in `running` status.
+- Test sync tool ack: `tool_execution_end` for `subagent` with `background: false` marks subagent `completed` with output text.
+- Test accurate outcome on child settlement (`agent_end`):
+  - `stopReason === "aborted"`: marks subagent `completed` and emits `turn.boundary` with `status: "interrupted"`.
+  - `stopReason === "error"`: marks subagent `completed` and emits `turn.boundary` with `status: "failed"`.
+  - `stopReason === "completed"`: marks subagent `completed` and emits `turn.boundary` with `status: "completed"`.
+- Test `Anchor` task ownership is preserved without re-creating anchor tasks.
 
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `node --test tests/subagent-lifecycle-fixes.test.ts`  
-Expected output: FAIL with `AssertionError: 'completed' == 'running'`.
+Expected output: FAIL with premature completion assertion failure.
 
-- [ ] **Step 3: Extract `src/host/session-subagent-handler.ts` and fix lifecycle in `src/host/session.ts`**
+- [ ] **Step 3: Extract `session-subagent-handler.ts` and update `session.ts`**
 
-Write `src/host/session-subagent-handler.ts`:
-- Encapsulate `handleSubagentRunnerEvent(session, event)`:
-  - If `event.type === "tool_execution_start"` and `event.toolName === "subagent"`: register mirror active, call `spawnSubthreadInBb` if new.
-  - If `event.type === "tool_execution_end"` and `event.toolName === "subagent"`:
-    - Check `event.details?.background`:
-      - If `background === true`: DO NOT mark completed! Log debug and return.
-      - If `background === false`: call `session.markSubagentCompleted(conversationId, result)`.
-  - If child event and `event.type === "agent_end"`:
-    - Check `event.stopReason`:
-      - If `"aborted"`: emit `turn.boundary` with `status: "interrupted"`.
-      - If `"error"`: emit `turn.boundary` with `status: "failed"`.
-      - Otherwise: emit `turn.boundary` with `status: "completed"`.
-    - Call `session.markSubagentCompleted(conversationId)`.
+- `src/host/session-subagent-handler.ts`: extract subagent lifecycle event handling (~90 lines). Prevent premature completion on background spawn acks. Map child `agent_end` stop reasons accurately.
+- `src/host/session.ts`: delegate subagent events to extracted handler. Verify `session.ts` line count is strictly < 200 lines (AP-019).
+- `src/host/subagent-mirror.ts`: ensure mirror state accurately tracks outcome.
 
-Update `src/host/session.ts`:
-- Delegate subagent event handling to `handleSubagentRunnerEvent`.
-- Verify `wc -l src/host/session.ts` is strictly < 200 lines (e.g. ~170 lines).
+- [ ] **Step 4: Run tests to verify they pass and check line budget**
 
-- [ ] **Step 4: Run test to verify it passes**
+Run:
+```bash
+node --test tests/subagent-lifecycle-fixes.test.ts
+wc -l src/host/session.ts src/host/session-subagent-handler.ts
+```
+Expected output: PASS (all tests pass, `src/host/session.ts` < 200 lines, e.g. ~165 lines).
 
-Run: `node --test tests/subagent-lifecycle-fixes.test.ts tests/subagent-early-completion-race.test.ts`  
-Expected output: PASS (all tests pass).
-
-- [ ] **Step 5: Commit lifecycle fix and session modularization**
+- [ ] **Step 5: Commit lifecycle fixes and session modularization**
 
 ```bash
 git add src/host/session-subagent-handler.ts src/host/session.ts src/host/subagent-mirror.ts tests/subagent-lifecycle-fixes.test.ts
-git commit -m "fix(host): prevent premature completion on background spawn ack and clean up mirror lifecycle"
+git commit -m "fix(host): prevent premature completion on background spawn ack and extract session-subagent-handler"
 ```
 
 ---
 
-### Task 8: BB Settings UI and Model Picker Section
+### Task 8: BB Settings UI, Host Catalog Bootstrap & Model Picker Section
 
 **Boundary:** UI Component & Settings Section Slot Boundary.  
-**AP Gates:** `AP-010` (Thin Adapter), `AP-011` (Schema validation), `AP-019` (Line budget < 200), `AP-020` (SRP), `AP-034` (ISP).  
+**AP Gates:** `AP-010` (Thin Adapter), `AP-011` (Input validation), `AP-019` (Line budgets), `AP-020` (SRP), `AP-021` (Thin entry points), `AP-026` (DTOs), `AP-027` (Configuration fail-fast).  
 **Files:**
 - Create: `src/ui/settings-subagent-section.tsx`
 - Create: `src/ui/model-picker-bootstrap.ts`
+- Modify: `src/host/index.ts`
+- Modify: `src/rpc/contract.ts`
 - Modify: `app.tsx`
-- Modify: `package.json` (add `"app": "./app.tsx"` in `"bb"`)
+- Modify: `package.json` (`"bb": { "app": "./app.tsx" }`)
 - Test: `tests/ui-settings-contract.test.ts`
 
-- [ ] **Step 1: Write the failing test for UI settings registration contract**
+- [ ] **Step 1: Write failing tests for UI settings contracts, manifest, and host catalog bootstrap**
 
-Create `tests/ui-settings-contract.test.ts`:
-```typescript
-import test from "node:test";
-import assert from "node:assert/strict";
-import fs from "node:fs";
-
-test("package.json registers bb.app pointing to ./app.tsx", () => {
-  const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
-  assert.equal(pkg.bb?.app, "./app.tsx", "bb.app must point to ./app.tsx");
-});
-
-test("app.tsx exports definePluginApp registering slots.settingsSection", async () => {
-  const content = fs.readFileSync("app.tsx", "utf8");
-  assert.match(content, /slots:\s*{\s*settingsSection/);
-  assert.equal(content.includes("DoctorView"), false, "app.tsx must not mount unrequested DoctorView as default app");
-});
-```
+In `tests/ui-settings-contract.test.ts`:
+- Assert `package.json` defines `"bb": { "app": "./app.tsx" }`.
+- Assert `app.tsx` calls `definePluginApp` registering `slots.settingsSection`. Assert old `DoctorView` is removed from default mount.
+- Assert composite host contract in `src/host/index.ts` handles `subagentCatalogBootstrap` alongside `resolveNativeRoots`.
+- Assert bootstrap returns valid profile preview without mutating stored policy; handles empty/offline catalog cleanly.
+- Note: verify public SDK methods for host/environment selection (`useBbContext()` or picker `routing`) before coding.
 
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `node --test tests/ui-settings-contract.test.ts`  
-Expected output: FAIL (`pkg.bb?.app` is undefined).
+Expected output: FAIL with missing manifest entry or contract mismatch.
 
-- [ ] **Step 3: Implement `settings-subagent-section.tsx`, `model-picker-bootstrap.ts`, and update `app.tsx` & `package.json`**
+- [ ] **Step 3: Implement host catalog bootstrap, settings section component, and update `app.tsx`**
 
-Write `src/ui/model-picker-bootstrap.ts`:
-- Define helper to fetch real initial profile from host RPC `subagent_catalog_bootstrap` without fake model IDs.
-
-Write `src/ui/settings-subagent-section.tsx`:
-- Render settings section:
-  - Header: "Субагенты" with subtitle "Настройки политики модели для фоновых и синхронных субагентов".
-  - Radio/Segmented control:
-    - Option 1: "Наследовать от родителя" (`inherit`)
-    - Option 2: "Использовать настроенную" (`configured`)
-  - Model & Reasoning Picker:
-    - Component: `experimental_ProviderModelPicker` from `@get-bb/plugin-sdk/app`.
-    - Props: `providerId="pi-durable"`, `disabled={draft.mode === "inherit"}`.
-    - If `draft.mode === "inherit"`: show hint "Модель родителя; сохранённая модель сейчас не используется".
+- `src/host/index.ts`: compose `subagentCatalogBootstrap` with `experimental_nativeRootsHostContract`. Use `ModelRuntime` / `ModelCatalog` from Pi to list available models and select default profile preview; dispose cleanly.
+- `src/ui/model-picker-bootstrap.ts`: helper to query `subagentCatalogBootstrap` via RPC.
+- `src/ui/settings-subagent-section.tsx`:
+  - Radio control for mode: `"inherit"` vs `"configured"`.
+  - Component: `experimental_ProviderModelPicker` from `@get-bb/plugin-sdk/app`, locked to `providerId="pi-durable"`, `allowProviderChange={false}`.
+  - In inherit mode: `disabled={true}`, subtitle "Модель родителя; сохранённая модель сейчас не используется".
   - Scope notice: "Один глобальный профиль для этого плагина на сервере BB (применится к новым субагентам со следующего хода)."
-  - Action footer:
-    - "Сохранить" button: disabled if `draft` equals `applied` or if `draft.mode === "configured"` and no valid model selected.
-    - Error banner: handles `REVISION_CONFLICT` with "Конфигурация была изменена в другом окне. Перезагрузить или Сохранить поверх".
+  - Form state: separate `draft` vs `applied`. "Сохранить" button disabled when draft unchanged or invalid.
+  - Conflict handling: `REVISION_CONFLICT` preserves user draft, offers reload or retry.
+- `app.tsx`: `definePluginApp(setup => { setup.slots.settingsSection(SubagentSettingsSection); })`.
+- `package.json`: register `"app": "./app.tsx"` under `"bb"`.
 
-Update `app.tsx`:
-- Export `definePluginApp({ slots: { settingsSection: SubagentSettingsSection } })`.
-- Remove default `DoctorView`.
-
-Update `package.json`:
-- In `"bb"`: add `"app": "./app.tsx"`.
-
-- [ ] **Step 4: Run test to verify it passes**
+- [ ] **Step 4: Run tests, typecheck and verify UI build**
 
 Run:
 ```bash
@@ -1060,12 +549,12 @@ node --test tests/ui-settings-contract.test.ts
 bb plugin types --check
 npm run build
 ```
-Expected output: PASS (build succeeds, types check passes).
+Expected output: PASS (tests pass, types check succeeds, bundle built cleanly).
 
 - [ ] **Step 5: Commit settings UI and manifest update**
 
 ```bash
-git add package.json app.tsx src/ui/ tests/ui-settings-contract.test.ts
+git add package.json app.tsx src/host/index.ts src/rpc/contract.ts src/ui/ tests/ui-settings-contract.test.ts
 git commit -m "feat(ui): add SubagentSettingsSection with experimental_ProviderModelPicker and manifest app entry"
 ```
 
@@ -1074,38 +563,29 @@ git commit -m "feat(ui): add SubagentSettingsSection with experimental_ProviderM
 ### Task 9: Instruction Docs Scoping & Thin Adapter Clarification
 
 **Boundary:** Workspace Documentation & Repository Operating Contract.  
-**AP Gates:** `AP-010` (Thin Adapter), `AP-020` (SRP).  
+**AP Gates:** `AP-010` (Thin Adapter), `AP-020` (SRP), `AP-026` (Boundary contracts).  
 **Files:**
 - Modify: `AGENTS.md` (local repo)
 - Test: `tests/instructions-conformance.test.ts`
 
-- [ ] **Step 1: Write the failing test for instruction conformance**
+- [ ] **Step 1: Write failing test for repo instruction conformance**
 
-Create `tests/instructions-conformance.test.ts`:
-```typescript
-import test from "node:test";
-import assert from "node:assert/strict";
-import fs from "node:fs";
-
-test("repo AGENTS.md clarifies Thin Adapter role envelope and removes prompt hardcoding", () => {
-  const content = fs.readFileSync("AGENTS.md", "utf8");
-  assert.match(content, /The Thin Adapter Invariant/);
-  assert.match(content, /Technical role contract envelope/);
-  assert.equal(content.includes("claude-sonnet-4-6"), false, "Do not hardcode specific model names in repo instructions");
-});
-```
+In `tests/instructions-conformance.test.ts`:
+- Assert `AGENTS.md` explicitly documents Thin Adapter technical role envelope permissions.
+- Assert `AGENTS.md` scopes coordinator rules to root orchestrator, leaving subagents as task workers governed by runtime policy.
+- Assert `AGENTS.md` contains no hardcoded model name requirements for subagents.
 
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `node --test tests/instructions-conformance.test.ts`  
 Expected output: FAIL.
 
-- [ ] **Step 3: Update `AGENTS.md`**
+- [ ] **Step 3: Update local `AGENTS.md`**
 
-Update `AGENTS.md`:
-- Clarify that minimal technical role contract envelope in `subagent-role.ts` is permitted as a native tool contract.
-- Clarify that base prompt remains upstream `@earendil-works/pi-coding-agent`.
-- Document that coordinator rules apply to root orchestrator, while subagents operate as workers governed by runtime subagent policy.
+In `AGENTS.md`:
+- Clarify that minimal technical role envelope in `subagent-role.ts` is an authorized tool contract, while core system prompt remains upstream `@earendil-works/pi-coding-agent`.
+- Clarify coordinator vs worker distinction: root thread coordinates, while subagents execute bounded briefs under runtime subagent policy.
+- Remove prompt-duplicated model references.
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -1121,12 +601,13 @@ git commit -m "docs(arch): clarify thin adapter role contract and coordinator-on
 
 ---
 
-### Task 10: Dual Independent Reviews, Verification & S6 Plan Artifact Handover
+### Task 10: Dual Independent Reviews, Verification & S6 Plan Handover
 
-**Boundary:** Quality Verification Gate & Orchestrator Handoff.  
-**AP Gates:** All AP-010..AP-071 gates.  
+**Boundary:** Quality Verification Gate & Handover.  
+**AP Gates:** Full AP-010..AP-071 gates.  
 **Files:**
-- Output artifact: `/Users/vanya/.bb/thread-storage/thr_3e4z9meeqs/subagent-policy-implementation-plan.md`
+- Canonical artifact: `docs/superpowers/plans/2026-10-25-subagent-model-policy.md`
+- Existing cycle records: `docs/arch-improvement/ledger.md` and `docs/arch-improvement/memory.md`
 
 - [ ] **Step 1: Run complete repository verification suite**
 
@@ -1134,18 +615,25 @@ Run:
 ```bash
 npm test
 bb plugin types --check
+npx tsc --noEmit
 npm run build
-node scripts/doctor.mjs
 ```
-Expected output: All 330+ tests PASS, types check clean, build succeeds.
+Expected output: All unit/integration tests PASS, types check clean, TypeScript zero errors, build succeeds.
 
-- [ ] **Step 2: Dual-circuit review preparation (S7 Gate)**
+- [ ] **Step 2: Blackbox public RPC and native model smoke verification**
+  - Verify RPC: `subagent_policy_get`, `subagent_policy_set` (including conflict), `subagent_catalog_bootstrap`.
+  - Verify native model application: inherit resolves parent model, configured resolves target model, unauthenticated fails fast before child creation.
+  - Verify no live plugin reload or public push/tag/release without parent decision.
+
+- [ ] **Step 3: Dual-circuit verification (S9 Gate, not proposal/S7 review)**
   - Circuit 1: Architectural Review (`arch-rules-implementation-review`) checking AP-010..AP-071 and line budgets.
   - Circuit 2: Product Review (`arch-improvement-product-review`) checking inherit/configured journeys, error messages, and UX expectations.
 
-- [ ] **Step 3: Finalize plan delivery under parent thread storage**
-  - Verify plan artifact is saved to `/Users/vanya/.bb/thread-storage/thr_3e4z9meeqs/subagent-policy-implementation-plan.md`.
-  - Signal readiness to parent orchestrator (`thr_3e4z9meeqs`).
+- [ ] **Step 4: S10/S11 durable closeout in repository**
+  - Update this canonical repository plan's checkboxes with actual evidence and unresolved items.
+  - Append the cycle to `docs/arch-improvement/ledger.md`; record a durable lesson (or explicit none) in `docs/arch-improvement/memory.md`.
+  - Reports must reference the repository plan; never hand off an internal thread-storage draft as the working plan.
+  - Signal implementation evidence to parent orchestrator (`thr_3e4z9meeqs`); no full completion claim before BOTH final reviewers PASS.
 
 ---
 
@@ -1170,21 +658,31 @@ Expected output: All 330+ tests PASS, types check clean, build succeeds.
 ## 7. Residual Risks & Mitigations
 
 1. **Risk:** Cold-start race between KV read and provider options derivation.  
-   **Mitigation:** Async server factory awaits `store.hydrate()` before registering provider and RPC. Failed reads throw observable error rather than falling back to inherit.
+   **Mitigation:** Async server factory awaits `store.hydrate()` before registering provider and RPC. Failed reads throw observable `SUBAGENT_POLICY_LOAD_ERROR` rather than falling back to inherit.
 2. **Risk:** Host/runner concurrency when user updates policy mid-turn.  
-   **Mitigation:** Policy update is monotonic and delivered on next owner/root turn boundary. Runner acknowledges command before prompt/steer submission. Each child admissions snapshot is immutable.
+   **Mitigation:** Policy update is monotonic and delivered on next owner/root turn boundary. Runner acknowledges command before prompt/steer submission. Each child admission snapshot is immutable.
 3. **Risk:** Missing model credentials on secondary machine.  
-   **Mitigation:** Pure resolver throws typed `SUBAGENT_MODEL_UNAVAILABLE` with actionable UI path ("Settings → Pi Durable → Subagents"), non-retryable.
+   **Mitigation:** Pure resolver throws typed `SUBAGENT_MODEL_UNAVAILABLE` with actionable UI path ("Settings → Installed plugins → Pi Durable → Subagents"), non-retryable.
 4. **Risk:** Background subagent completion race with mirror registration.  
    **Mitigation:** Task 7 strictly disallows `tool_execution_end` from completing background subagents, relying on child `agent_end` or task settlement.
 5. **Risk:** Line budget regression in `src/host/session.ts` (currently 240 lines).  
-   **Mitigation:** Task 7 extracts `session-subagent-handler.ts` (~110 lines), reducing `session.ts` to ~170 lines, cleanly complying with AP-019 (< 200 lines).
+   **Mitigation:** Task 7 extracts `session-subagent-handler.ts` (~90 lines), reducing `session.ts` to ~165 lines, cleanly complying with AP-019 (< 200 lines).
 
 ---
 
-## 8. Handover & Execution Instructions
+## 8. S7 Critical Corrections Resolution
 
-This plan is written for the parent orchestrator in thread `@thread:thr_3e4z9meeqs`.
-- The repository source remains **completely untouched** (clean git working tree on main HEAD 4d02d4c).
-- No subagents were spawned.
-- After parent review and canonical capture to GBrain (`docs/research/pi-durable-subagent-settings-policy-architecture-2026-10-25`), independent S7 plan reviews must be executed before code changes begin.
+Planner amendments address the following review items, but transport failure prevented its final report. The parent read the saved file critically: Tasks2–3 are approved after the corrections above. Future Task4 native wiring order and idempotence, Task7 real terminal-event/status semantics, and Task8 actual public picker props + host route + UI behavior tests must be seam-reviewed before those slices run. The table describes intended resolutions, not a blanket S7 or final S9 PASS:
+
+| Review Item | Priority | Plan Resolution |
+|---|---|---|
+| Runner policy holder scoped per durable runtime instance | P1 | Task 4: `createSubagentPolicyHolder()` per `openDurable`, exposed on `OpenDurableResult`, getter injected into registry; no module-global singleton. |
+| Native execution calls validated pure resolver, real public APIs | P1 | Task 2 & 5: resolver takes `availableModels: readonly Model<Api>[]`, validates via `getSupportedThinkingLevels(model)`, native tool calls `api.models.getAvailable()` outside `commit`. No fictitious `.hasCredentials` or `.reasoningLevels`. |
+| Real SDK integration fixture registers valid test provider/model | P1 | Task 5: fixture registers valid model on `createModels()`; asserts uncredentialed/unregistered model fails before child creation without fallback. |
+| Monotonic revisions, reject downgrade/same-revision, validate shape | P2 | Task 3 & 4: strict schema validation, monotonic revision rejection in holder and CAS store, optimistic conflict handling without losing draft. |
+| Host catalog bootstrap RPC with lifecycle and public contracts | P2 | Task 8: `subagentCatalogBootstrap` composed with `experimental_nativeRootsHostContract` in `src/host/index.ts`, clean runtime disposal. |
+| Thinking enum derives from Pi 1.3 contracts, mapped at BB boundary | P2 | Task 2: canonical `SubagentThinkingLevel` includes `"minimal"`, BB `"none"` ↔ native `"off"` mapped at boundary. |
+| Store mutations serialize CAS + persist + cache update | P2 | Task 3: single-writer queue, cache updated only after successful KV persistence, failed writes leave old cache intact, concurrent test (1 winner). |
+| Typed DTOs, no production `any` or optional current method probes | P2 | Tasks 2–8: strict Zod schemas, exact types, no production `any`, removal of deprecated probes. |
+| Normative AP identifiers matching `/Users/vanya/Projects/arch-rules/arch-rules.md` | P2 | Header Context Map and all Tasks 2–10 use exact normative baseline AP rule names. |
+
