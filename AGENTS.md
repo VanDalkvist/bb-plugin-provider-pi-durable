@@ -22,6 +22,17 @@ Operational guidelines and invariants for `bb-plugin-provider-pi-durable`.
 ⛔ **Dogfooding Invariant: ALL SUBTHREADS ON PI-DURABLE.**
 Все вспомогательные субтреды (воркеры реализации, автономные архитектурные ревьюеры) в этом репозитории ОБЯЗАНЫ запускаться СТРОГО через `--provider pi-durable`. Запрещено съезжать на базовый провайдер `pi`. Догфудинг собственного рантайма является непреложным правилом разработки.
 
+## Subagent Model Policy & Boundary Authority
+
+- **Разделение зон ответственности:**
+  - **Beyond Boundaries (BB)** владеет UI настроек (`app.slots.settingsSection`) и сохранением политики через namespaced KV (`subagent.policy.v1`).
+  - **Pi** владеет каталогом моделей (`ModelCatalog`, `api.models`), аутентификацией/ключами и вычислением поддерживаемых уровней рассуждений (`getSupportedThinkingLevels`).
+  - **Pi Durable** владеет жизненным циклом и выполнением дочерних бесед (`AgentChange`, транзакции `api.commit`, `configure`).
+- **Контракт технического воркера:**
+  - Минимальный технический worker envelope (`subagent-role.ts`) является разрешённым контрактом инструмента, а не собственной системной persona. Базовый системный промпт извлекается динамически из upstream.
+  - Корневой координатор ведёт полный архитектурный цикл (arch loop) и публикацию; нативный воркер выполняет порученный brief в рамках роли, не становясь самостоятельным оркестратором.
+  - Модель и reasoning нативного инструмента `subagent` берутся строго из сохранённой политики провайдера (`inherit` или `configured`), а не из model kwargs или жёстко заданных имён в LLM-промпте.
+
 ## Roadmap & Slices
 - Roadmap & Divergences: `docs/superpowers/plans/2026-10-07-arch-improvement-master-plan-pi-durable-parity.md`
 - PRD & Territories: `docs/superpowers/specs/2026-10-07-prd-pi-durable-territory-ownership-and-decoupling.md`

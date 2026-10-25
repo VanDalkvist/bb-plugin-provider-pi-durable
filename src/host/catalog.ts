@@ -1,3 +1,4 @@
+import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
 import { requireExtensionPath } from "./paths.ts";
 import { RunnerProcess } from "./runner-process.ts";
 import type { AvailableModelDescriptor, ModelScope } from "./types.ts";
@@ -107,13 +108,8 @@ export class ModelCatalog {
 
 			const isDefault = fullId === this.modelScope.defaultModelId;
 			const isReasoning = m.reasoning === true;
-			const levels: string[] = isReasoning
-				? ["none", "low", "medium", "high", "xhigh", "max"].filter((lvl) => {
-						if (!m.thinkingLevelMap) return true;
-						const mapped = m.thinkingLevelMap[lvl === "none" ? "off" : lvl];
-						return mapped !== null && (lvl === "xhigh" || lvl === "max" ? mapped !== undefined : true);
-					})
-				: [];
+			const nativeLevels = isReasoning ? getSupportedThinkingLevels(m) : [];
+			const levels: string[] = nativeLevels.map((lvl) => (lvl === "off" ? "none" : lvl));
 			const reasoningEfforts = levels.map((r: string) => ({
 				reasoningEffort: r,
 				description: `${r.charAt(0).toUpperCase() + r.slice(1)} reasoning effort`,
@@ -126,7 +122,9 @@ export class ModelCatalog {
 				routeProviderId: m.provider,
 				description: `${m.provider} model via Pi Durable`,
 				supportedReasoningEfforts: reasoningEfforts,
-				defaultReasoningEffort: isReasoning ? (m.defaultReasoningEffort ?? "high") : "none",
+				defaultReasoningEffort: isReasoning
+					? (m.defaultReasoningEffort === "off" ? "none" : (m.defaultReasoningEffort ?? "high"))
+					: "none",
 				isDefault,
 			});
 		}

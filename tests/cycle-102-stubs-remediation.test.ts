@@ -163,7 +163,7 @@ describe("Cycle 102 Stubs Remediation Suite", () => {
 		assert.equal(sonnet.defaultReasoningEffort, "medium");
 		assert.deepEqual(
 			sonnet.supportedReasoningEfforts.map((r) => r.reasoningEffort),
-			["none", "low", "medium", "high"],
+			["none", "minimal", "low", "medium", "high"],
 		);
 
 		const haiku = list.find((m) => m.id === "anthropic/claude-3-haiku")!;

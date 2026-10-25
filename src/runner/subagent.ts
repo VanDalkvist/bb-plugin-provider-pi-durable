@@ -22,7 +22,7 @@ export function createSubagentExtension(
 			defineTool({
 				name: "subagent",
 				description:
-					"Delegate a self-contained task to an async subagent. Runs in the background by default without blocking the conversation.",
+					"Delegate a self-contained task to an async subagent. Uses the configured runtime subagent model policy (inherits parent model or uses provider-configured model). Runs in the background by default without blocking the conversation.",
 				parameters: Type.Object({
 					task: Type.String({ description: "What the subagent should do" }),
 					background: Type.Optional(
