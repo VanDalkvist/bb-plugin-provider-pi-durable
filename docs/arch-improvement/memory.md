@@ -124,3 +124,9 @@
 - Use next time: Never assume all tool calls produce conversation entries. Discriminate `entry` vs `result` explicitly. Canonical details live in `model[0].details` or `result.details`, never in `entry.data`. Always test against real SDK producer fixtures (`Harness.open` with `MemoryStorage` and `watchEvents`), and ensure adapter seed keys match live execution prefixing.
 - Evidence: `tests/native-tool-projection.test.ts`, `tests/native-tool-result.test.ts`, `src/runner/bridge/native-tool-result.ts`, `src/runner/bridge/tool-progress-state.ts`, PRD `[[prd/2026-10-25-pi-durable-tool-result-parity]]`.
 
+## 2026-10-25 — Native policy identity and producer-derived fixtures
+- Canonical durable lesson/implementation record: GBrain `docs/research/pi-durable-subagent-policy-implementation-2026-10-25` (knowledge body stays in the brain; this is the repository execution index).
+- Recheck next time: manual BB parenthood is not native child identity; get_state DTO and ROOT_CONVERSATION_ID come from the executed Pi SDK, not a hand-written fixture. Pi 1.3.0 root is 1; an assumed root 0 produced a false corrective test.
+- Evidence: `tests/host-mirror-guard-repro.test.ts`, `tests/ui/ui-settings-fixes.test.ts`, both final policy review targeted-closure sections, ledger cycle `subagent-model-policy-2026-10-25`.
+
+

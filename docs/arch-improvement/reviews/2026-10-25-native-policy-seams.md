@@ -30,3 +30,23 @@ Scope: Bounded architectural seam check for Tasks 4, 5, 6 before implementation.
 
 Amend Tasks 4–6 in `docs/superpowers/plans/2026-10-25-subagent-model-policy.md` with these 4 bounded contract adjustments before code execution.
 VERDICT: Bounded plan amendment recommended (proceed after plan updates).
+
+## Addendum: Tasks 6–7 Seam Proof (Native Pi 1.3 Contracts)
+
+- [P1] Task 7 Native Pi 1.3 `run_end` outcome source & wire DTO translation (AP-012, AP-026, AP-050)
+  - Evidence: In `@earendil-works/pi-durable/dist/harness/events.d.ts`, `run_end` is `{ type: "run_end", inputs: readonly SubmissionId[] }` with NO `stopReason`. Task outcomes in Pi 1.3 are emitted via `{ type: "task_failed", taskId, kind, message }` and `{ type: "submission", record: { status: "unanswered", reason } }`. In `bb-child-event-adapter.ts:121`, `task_failed` is dropped by `default: break;`, and `run_end` emits bare `{ type: "agent_end", messages: [] }`. `session.ts:162` then blindly hardcodes `{ kind: "turn.boundary", status: "completed" }` on every `agent_end`, duplicating boundaries and masking failures.
+  - Fix: 1) `BBChildEventAdapter` captures `task_failed` (sets `lastFailure`) and `submission` (`unanswered` with `reason === "aborted" | "cancelled"`). On `run_end`, emit wire `agent_end` with `{ type: "agent_end", stopReason: lastFailure ? "error" : (isAborted ? "aborted" : "completed"), errorMessage?: lastFailure?.message }`. 2) In `session.ts:162`, remove hardcoded duplicate boundary; let `childTranslator.translate` generate `turn.boundary` (`completed` | `failed` | `interrupted`). If settlement occurs before the mirror thread is bound, buffered `agent_end` retains outcome for `flushBufferedDeltas`.
+  - Fix decision: fix-now (amend plan Task 7).
+
+- [P1] Task 7 Native Pi 1.3 Batch Ordering & Late Binding Terminal Resolution (AP-012, AP-026, AP-035)
+  - Ordering proof: In installed `events.js`, `run_end` is pushed BEFORE `submission` records in the same batch. Sequential per-event handling would process `run_end` before seeing `submission.unanswered`, causing false completion. Furthermore, recoverable tool-level `task_failed` must not override a submission that settled `done`.
+  - Fix: `BBChildEventAdapter.handleBatch` (fed by `subagent-watcher`) must pre-scan submissions across the batch before emitting `agent_end` for `run_end.inputs`. A `done` submission wins over intermediate tool errors (yielding `completed`). If `unanswered` with `aborted`/`cancelled`, yield `interrupted`. Real order test fixtures: `[run_end, submission(unanswered, reason: aborted)]` -> `interrupted`; `[tool task_failed, run_end, submission done]` -> `completed`.
+  - Late binding fix: In `bridge-router.ts:118`, the completed-initial mirror branch calls `registerThread` (flushing buffered deltas including translated terminal boundary) and then synthesizes a redundant hardcoded `completed` boundary. Remove this synthetic duplicate: `flushBufferedDeltas` emits the authoritative terminal boundary preserving actual status (`completed`, `failed`, `interrupted`) exactly once per mirror.
+  - Fix decision: fix-now (amend plan Task 7).
+
+
+- [P1] Task 6 Root guard must precede `registry.reconcileCwd` and check thinking (AP-016, AP-022, AP-027)
+  - Evidence: `bridge-router.ts:74` calls `reconcileCwd(params.threadId, targetCwd)` before checking `isRoot` or resolving the child conversation. In `session-registry.ts:72`, `reconcileCwd` calls `await session.closeGracefully()`. A child turn with a different CWD would terminate and reopen the shared root session.
+  - Fix: 1) Root check must precede `reconcileCwd`. For child turns (`!isRoot`), bypass `reconcileCwd` (child runs in target conversation context; shared session CWD must not mutate). 2) In child turn guard, if `params.options?.reasoningLevel` or `params.options?.thinkingLevel` is provided, compare against child's actual thinking level (normalizing `"none"` ↔ `"off"`). Reject overrides with JSON-RPC error `-32602` (`CHILD_MODEL_POLICY_LOCKED`).
+  - Fix decision: fix-now (amend plan Task 6).
+

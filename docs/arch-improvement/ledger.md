@@ -196,3 +196,40 @@
 - Двухконтурный гейт S9:
   - **S9a Architecture Review:** `AP-010`, `AP-013`, `AP-019`, `AP-026`, `AP-028`, `AP-029` соблюдены. **VERDICT: PASS**.
   - **S9b Product Review:** Загрузка 35 инструментов `gbrain`, ликвидация ложного варнинга `reachesTools`, вызов всех хуков жизненного цикла подтверждены живым рантаймом. **VERDICT: PASS**.
+
+---
+
+## Cycle subagent-model-policy-2026-10-25 — Central Policy, Native Admission and Mirror Isolation
+
+### Context and implemented slices
+- Branch `main`; baseline `4d02d4c` (330 tests), feature/correction tree `9416d0d`. Later update-guidance commits touch README/AGENTS only and belong to another thread.
+- Canonical plan: `docs/superpowers/plans/2026-10-25-subagent-model-policy.md`. Exact SDK 0.6.79 and Pi 1.3.0; no compatibility shims, independent catalog, scheduler or per-call model kwargs.
+- Authority: BB owns policy/UI/KV; Pi owns models/auth/capabilities; Durable owns child execution, admission and replay. Saved policy and native acknowledged execution snapshot serve different purposes.
+- Commits: SDK `1deba49`; policy backend `4754427`; native runtime `43f9362`, `4ba97b0`; host/mirrors `d4a091e`; packaging `6067b6f`; UI/instructions `53c6c6b`; integrated findings `8cce858`, `9416d0d`.
+- Memory used: mid-session model reconciliation, target-aware shared-owner routing, real native event families and batch-correlated outcomes. Rechecked against current source/SDK, not treated as proof.
+
+### Findings and fixes
+| ID | Severity | Evidence / impact | Decision and closure |
+|---|---|---|---|
+| F1 | P1 | Cold child guard read fictitious state.agent/agent instead of the producer's flat get_state model/thinkingLevel, allowing unmatched overrides. AP-012/016/026. | fix-now: typed unknown port, actual DTO, fetch missing thinking, fail-closed requested overrides. `tests/host-mirror-guard-repro.test.ts`. |
+| F2 | P1 | BB parentThreadId misclassified independent manual roots and skipped policy/reconcile/compact. AP-011/020/048. | fix-now: actual session identity after creation and native target/binding; public ROOT_CONVERSATION_ID. A wrong corrective root-0 fixture was rejected; installed Pi 1.3 root is 1. RED/GREEN captured in parent storage. |
+| F3 | P2 | Delayed Save erased a changed mode draft. AP-022. | fix-now: disabled mode radios and compare current draft with submitted snapshot. Public SDK UI regression. |
+| F4 | P2 | AbortController existed without abort; old route requests survived. AP-023/027. | fix-now: abort on route change/unmount, stale-result protection and catalog reset. Public SDK UI regression. |
+| F5 | P2 | Synthetic hostId=default and optional old-SDK probes obscured routing errors. AP-013/026. | fix-now: mandatory current APIs, null routing with no fake query, honest empty/error UI; catalog errors block configured Save, inherit remains available. |
+| F6 | P3 | Workspace model ban could contradict a user-selected native profile; delivery timing unclear. | fixed narrowly: CLI-only wording and next-owner-turn UI scope. Workspace diff remains separate. |
+| F7 | P3 | General UI error panel combines different errors. | log-only: no redesign in this bounded release. |
+
+### Verification and S9 gate
+- Fresh parent receipt: `accepted-policy-verification.json`, thread `thr_3e4z9meeqs`, candidate `4a3dab9` (production tree identical to `9416d0d`).
+- `npm test`: **395 Node + 9 UI = 404 passed, 0 failed**. `npx tsc --noEmit`, `npm run build`, dependency check: **exit 0**. No changed production TS/TSX file reaches 200 lines.
+- Runner: **143947 bytes**, down from 897640 after externalizing runtime Zod. Packaging regression uses an isolated real build fixture.
+- `bb plugin types --check`: **exit 1**, explicitly NOT PASS. Generic devDependency recommendation conflicts with actual production provider-bridge imports; exact version is correct, runtime dependency retained.
+- One final integrated analytical round on `53c6c6b` initially returned FAIL. The original reports are preserved; targeted closure of those findings on `8cce858`/`9416d0d` is **Architecture PASS + Product PASS**. No second broad repository review.
+- Reports: `reviews/2026-10-25-subagent-policy-final-architecture.md` and `reviews/2026-10-25-subagent-policy-final-product.md`.
+
+### Residual risk and handover
+- Code/SDK fixtures verified; no installed-plugin update, live configured-model generation, reload, public push/tag/release claimed. Package remains 0.2.52. Separate update checklist governs deployment; no mandatory BB/host restart is prescribed by this cycle.
+- Canonical implementation/lessons: GBrain `docs/research/pi-durable-subagent-policy-implementation-2026-10-25`; project memory indexes that record.
+- Subsequent user-requested file-change delta micro-loop is separate: `docs/superpowers/plans/2026-10-25-file-change-delta-micro-loop.md`. Its investigation is not included in this policy PASS.
+- User authorized Google Vertex for remaining helpers after Antigravity quota exhaustion; execution provider remains Pi Durable.
+

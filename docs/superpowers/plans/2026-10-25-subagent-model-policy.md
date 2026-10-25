@@ -4,7 +4,30 @@
 
 **Canonical location:** This repository file is the working execution plan, per the user's explicit correction on 2026-10-25. Thread-storage copies are drafts, not the source of truth.
 
+## Current execution checklist — code verified, not deployed
+
+The checklist below is the current execution state. Detailed per-step checkboxes farther down are the preserved pre-execution design/command examples, **not remaining work**; where implementation refined a filename or seam, the actual code, tests and receipts below govern. No claim is made that every illustrative command was run verbatim.
+
+- [x] Task 1 — SDK migration: `1deba49`; exact SDK 0.6.79 / Pi 1.3.0, public current APIs and root entry typecheck.
+- [x] Tasks 2–3 — policy schema/resolver/store/RPC: `4754427`; strict union, serialized CAS, hydrate-before-registration, observable failures.
+- [x] Tasks 4–5 — native acknowledged snapshot, restore/replay and child admission: `43f9362`, `4ba97b0`; instance isolation, validated model/thinking, immutable admitted profile and neutral role.
+- [x] Tasks 6–7 — owner delivery, root/child isolation and real mirror outcomes: `d4a091e`; corrected cold DTO/manual-root cases in `8cce858`, `9416d0d`.
+- [x] Task 7b — external Zod and canonical command only: `6067b6f`; runner 143947 bytes.
+- [x] Task 8 — public SDK settings slot/picker/catalog preview: `53c6c6b`; no custom catalog bootstrap RPC; cancellation, Save and empty/error fixes in `8cce858`, `9416d0d`.
+- [x] Task 9 — scoped runtime-vs-CLI instructions and next-owner-turn UI notice. Workspace AGENTS change is a separate narrow diff, not a blanket workspace commit.
+- [x] Task 9b — all five unique P1/P2 findings from the single integrated round closed; actual public ROOT_CONVERSATION_ID (Pi 1.3.0 = 1), not a fake root-0 fixture.
+- [x] Task 10 / S9 — architecture and product Targeted Closure **PASS**, original FAIL reports retained. One integrated analytical round plus targeted correction acceptance; no second broad review.
+- [x] Task 10 / S10–S11 — repository ledger and canonical brain implementation/lesson record linked from project memory.
+
+**Fresh parent evidence:** `accepted-policy-verification.json` in thread `thr_3e4z9meeqs` storage, source candidate `4a3dab9` (production tree identical to `9416d0d`): **395 Node + 9 UI = 404 pass, 0 fail**; typecheck/build/dependencies exit 0; changed production files <200 lines. `bb plugin types --check` remains **exit 1**, a documented dependency-placement deviation, not a green check. SDK is required at runtime under production-only installation.
+
+**Deployment boundary:** version remains 0.2.52; no install, reload, push, tag or release by this cycle, and no live configured-model rollout is claimed. The later user-requested file-change delta micro-loop is a separate scope under `2026-10-25-file-change-delta-micro-loop.md`. Vertex is authorized for remaining helpers because Antigravity quota is exhausted.
+
+## Historical execution baseline (superseded by the checklist above)
+
 **Execution baseline:** User approved implementation in `thr_3e4z9meeqs`. Repository `main`, HEAD `4d02d4c`, version `0.2.52`; 330 baseline tests and `npx tsc --noEmit` pass. Remote is PUBLIC: local commits are allowed, but this task does not authorize public push/tag/release. Installed BB0.47.1 / latest stable SDK0.6.79 confirmed. Task1 is implemented locally in `1deba49` (332 tests pass; root server is typechecked). SDK CLI check reports version match but exits1 on its generic devDependency advice; retain runtime dependency per provider-bridge contract and document this deviation, never label that command PASS. Independent migration review now PASS (`2026-10-25-sdk-migration-review.md`), slice only. Backend Tasks2–3 implemented in `4754427`, independent backend review PASS, parent fresh focused24/full356 tests, tsc and build PASS; one P3 defense-in-depth mapping suggestion is log-only (SDK input contract already validates). After the parent S7 readback, Tasks2–3 are approved as the next bounded slice; Tasks4–5 are approved as one native batch after `2026-10-25-native-policy-seams.md` and parent readback; Tasks6–10 remain pending their seam review. No final S9 PASS has been issued.
+
+**Latest execution instruction (user, 2026-10-25):** Finish remaining functionality first; no more intermediate implementation reviews. Keep TDD/tests/build. Run ONE final integrated review round on the complete remaining implementation, not repeated per-slice reviews. Native/backend/mirror batches are already implemented; finish UI + narrowly selected packaging/contract/instruction cleanup.
 
 **Goal:** Implement centralized user subagent model policy (inherit/configured), Pi catalog integration, typed runtime delivery, native child conversation application, lifecycle/mirror fixes, instruction separation, and dual-circuit verification on latest BB SDK 0.6.79 without backwards compatibility.
 
@@ -47,7 +70,7 @@
 3. **KV Storage & Async Hydration:** Async server startup awaits `bb.storage.kv.get('subagent.policy.v1')` before registering provider and RPC; single writer with `expectedRevision` check; storage errors are observable (`SUBAGENT_POLICY_LOAD_ERROR`), not silent fallbacks.
 4. **Typed Delivery & Root Guard:** `providerOptions.subagentPolicy` delivered on owner/root turns; runner acknowledges `set_subagent_policy` command before prompt execution; child mirror turns never mutate root session options or reconfigure child; child mirror model mismatch rejected with `CHILD_MODEL_POLICY_LOCKED`.
 5. **Native Child Application & Replay:** Applied to task-owned child conversation in `api.commit` via `configure(tx, childId, { model, thinkingLevel, instructions })`; task brief separated from neutral technical role envelope; child metadata records policy source/revision; replay does not recreate `DefaultReporter` or reconfigure existing child; preserves `Anchor` and owner cancellation semantics.
-6. **BB Settings Section UI:** Connected via `manifest.bb.app: "./app.tsx"` and `app.slots.settingsSection`; `experimental_ProviderModelPicker` locked to `pi-durable`; draft vs applied state; disabled picker in inherit mode; initial preview profile bootstrap via read-only host RPC without fake model IDs; scope clearly labeled as global per plugin/BB server.
+6. **BB Settings Section UI:** Connected via `manifest.bb.app: "./app.tsx"` and `app.slots.settingsSection`; `experimental_ProviderModelPicker` locked to `pi-durable`; draft vs applied state; disabled picker in inherit mode; initial preview via the existing public sdk.providers.models API without fake model IDs or a custom host RPC; scope clearly labeled as global per plugin/BB server.
 7. **Lifecycle & Mirror Defect Fixes:** Fix premature `markSubagentCompleted` on background tool acknowledgment; mirror status accurately reflects `running`, `completed`, `aborted`, or `failed`; single child generation; extract subagent handling to bring `src/host/session.ts` < 200 lines.
 8. **Instruction Separation:** Technical worker envelope specifies boundaries without task text or git archaeology bans; update local and workspace instruction guidance.
 9. **Full Verification:** Dual-circuit independent review (Architecture & Product), unit/integration test suite, `bb plugin types --check`, build, package integrity.
@@ -93,7 +116,7 @@
 - **RPC Methods:**
   - `subagent_policy_get`: returns current `{ record: SubagentPolicyRecord }`
   - `subagent_policy_set`: input `{ policy: SubagentPolicy, expectedRevision: number }`, returns `{ record: SubagentPolicyRecord }`
-  - `subagent_catalog_bootstrap` (added in Task8): input explicit execution routing `{ hostId: string; environmentId?: string }`, returns `{ defaultProfile?: SubagentModelProfile, availableModels: SubagentModelReference[] }`. Validate route and use the same route for the public picker and host catalog preview. No implicit per-environment policy.
+  - Catalog preview uses EXISTING public `useSdk().providers.models({providerId:'pi-durable', hostId OR environmentId, signal})`; no new server/host bootstrap RPC is needed. SDK0.6.79 dts17595–17633 and SystemExecutionOptionsResponse10428 verified. Use the same route for query and public picker. This supersedes earlier own-host-RPC bootstrap recommendations.
 - **Runner Command Type:** `"set_subagent_policy"` with payload `{ policyRecord: SubagentPolicyRecord }`
 
 ### Wire DTO Types (`src/policy/types.ts`)
@@ -391,7 +414,7 @@ Expected output: FAIL with missing role helper or configuration mismatch.
 - `src/runner/subagent.ts`:
   - Export `createSubagentExtension(getPolicy: () => SubagentPolicyRecord): Extension`.
   - Replay guard first: check `tx.doc(SubagentsDoc, api.conversationId)`. If existing child exists for task, reuse existing record and reporter.
-  - New child admission: outside `api.commit`, fetch `await api.models.getAvailable()` and latest parent agent snapshot. Then capture one immutable latest acknowledged policy from `getPolicy()` and resolve via `resolveSubagentModelConfiguration(record, parentContext, availableModels)` before creation. Freeze that snapshot for this admission; no remote/catalog I/O inside durable transaction. No availability checks/reconfiguration for a reused child.
+  - New logical child admission begins after existing-child lookup. Outside `api.commit`, read parent agent and capture one immutable latest acknowledged `getPolicy()` snapshot. Configured mode obtains available models with public `api.models.getAvailable()`; inherit mode may directly copy the validated parent profile without an unnecessary auth/catalog probe. Resolve through `resolveSubagentModelConfiguration(record, parentContext, availableModels)` before creation. Freeze that snapshot for this admission (including any async validation); no remote/catalog I/O inside durable transaction. No availability checks/reconfiguration for a reused child.
   - Inside `api.commit`: rescan ownership before create, preserve existing SubagentsDoc record/reporter, create at most one task-owned child, configure with resolved model/thinking and `buildTechnicalWorkerRole()`. Extend `SubagentRecord` with `actualModel`, `thinkingLevel`, `source: ResolvedChildConfiguration["source"]`, `policyRevision`; preserve optional historical-record fields without reconfiguration.
   - Emit the same actual profile/source/revision in `api.details` and final tool details for mirror observability. Task is user input only, never interpolated into role envelope.
   - Migrate internal tests/callers to explicit factory injection. Do NOT retain `export const Subagent = ...default inherit...` as a legacy fixture shim; no hidden bypass of saved policy. Update registry setup tests with required getter.
@@ -415,22 +438,26 @@ git commit -m "feat(runner): configure native child model from policy with repla
 **Boundary:** Host Session Options & Provider Bridge Router.  
 **AP Gates:** `AP-011` (High cohesion), `AP-016` (Trusted boundary: root vs mirror), `AP-019` (Line budgets < 200), `AP-020` (SRP), `AP-022` (Typed errors: `CHILD_MODEL_POLICY_LOCKED`), `AP-028` (Test determinism).  
 **Files:**
-- Modify: `src/host/session-reconcile.ts`
-- Modify: `src/host/bridge-router.ts`
-- Modify: `src/host/session.ts`
-- Test: `tests/host-subagent-policy-delivery.test.ts`
-- Test: `tests/subagent-mirror-guard.test.ts`
+- Modify: `src/host/session-reconcile.ts`, `src/host/bridge-router.ts`, `src/host/session.ts`
+- Modify: `src/host/session-registry.ts`, `src/host/subagent-mirror.ts`, `src/host/subthread-spawner.ts`
+- Create narrow `src/host/child-turn-guard.ts` and/or `session-owner.ts` if needed to keep touched files <200 lines
+- Test: `tests/host-subagent-policy-delivery.test.ts`, `tests/subagent-mirror-guard.test.ts`
+- Test warm/cold owner identity, non-native CLI child isolation, profile forwarding and actual follow-ups
 
 - [ ] **Step 1: Write failing tests for root turn delivery and child mirror isolation**
 
 In `tests/host-subagent-policy-delivery.test.ts`:
 - Test that root thread turn with changed `providerOptions.subagentPolicy` calls `session.setSubagentPolicy(record)` which dispatches `set_subagent_policy` command to runner.
-- Test that new policy revision is acknowledged before prompt execution.
+- Test first desired configured snapshot is sent even when already present in session.options, including absent params.options / top-level providerOptions. ACK revision starts undefined, separate from desired; wait for runner success before caching ACK and before prompt. Failed ack leaves prior cache and sends no prompt.
+- Test changed revision is acknowledged before prompt; identical ACK isn't resent unnecessarily.
 
 In `tests/subagent-mirror-guard.test.ts`:
 - Test that child mirror turn (`params.threadId !== session.options.threadId`) NEVER calls `reconcileSessionOptions` on root session, and NEVER mutates root session model, thinking, or policy.
 - Test that child mirror turn attempting to override model with a different model fails with typed RPC error `-32602` (`CHILD_MODEL_POLICY_LOCKED`).
-- Test that child mirror followups correctly route to target `conversationId`.
+- Test child thinking override is rejected too; native off and BB none are equivalent. Different child CWD and child compaction may not close/reopen/compact shared root: reject unsupported child context operations explicitly.
+- Test child follow-ups target correct conversation and run exactly once, including text with original task prefix and empty/completed metadata: do not discard them as another initial admission.
+- Cold mirror test: with no active parent but a known native child composite ID/binding + parent thread, reopening must preserve physical root identity and omit child model/thinking from root runner CLI. Child can never become root owner merely because it opened first.
+- Non-native CLI child with different native session key and no native child binding/admission must remain independent; do not share a root merely due to parentThreadId.
 
 - [ ] **Step 2: Run tests to verify they fail**
 
@@ -439,11 +466,12 @@ Expected output: FAIL with missing method / unhandled mirror mutation.
 
 - [ ] **Step 3: Update `session-reconcile.ts`, `bridge-router.ts`, and `session.ts`**
 
-- `src/host/session-reconcile.ts`: add `setSubagentPolicy?(record: SubagentPolicyRecord): Promise<void>` to `ReconcilableSession`. If `options.providerOptions?.subagentPolicy` revision differs from acknowledged revision, await `session.setSubagentPolicy`.
-- `src/host/session.ts`: implement `setSubagentPolicy(record)` by sending `set_subagent_policy` command to runner.
-- `src/host/bridge-router.ts`: guard `handleTurnStart` and `handleTurnSteer`:
-  - `const isRoot = params.threadId === session.options.threadId;`
-  - If `!isRoot`: do not reconcile root session options. Direct steer/prompt to `targetConversationId`. If `params.options?.model` differs from child model, return RPC error `-32602` with `CHILD_MODEL_POLICY_LOCKED`.
+- `session-reconcile.ts`: typed required setter and separately tracked acknowledged revision. Desired record can come from incoming owner options or initial session.options; validate the canonical schema, send first/changed policy and await ACK before prompt. No optional new-method probes or any casts.
+- `session.ts`: send typed set_subagent_policy; update ACK snapshot/revision only after requestOk success. Native ACK restoration already protects resumed jobs; only OWNER turns deliver a newer setting.
+- `bridge-router.ts`: determine actual owner/target BEFORE reconcileCwd and compaction branches, not only before model reconciliation. Child start/steer bypass all root options/CWD/model/thinking/policy mutation; reject true model/thinking/context overrides with actionable JSON-RPC -32602. Targeted get_state from Task4 is the fallback when actual child metadata is absent. Refuse unresolved owner rather than guess.
+- `session-registry.ts`: preserve known root thread/session identity on cold child reconnect; child composer model/thinking must not be passed as root CLI arguments (openDurable would configure root). Existing parent metadata/composite/binding sources only, no new private DB queries. Shared-owner reuse requires known native child admission/binding (or actual owner alias), not arbitrary manual CLI parenthood. Keep alias release ownership correct; no phantom permanent root lease.
+- `subagent-mirror.ts` records actualModel/thinking/source/revision from native details. `subthread-spawner.ts` passes explicit actual native --model and --reasoning-level to BB mirror, normalizing off/none. It remains a mirror, never starts another native generation; no hardcoded user model.
+- Initial mirror admission suppression is one-shot and nonempty/task-specific; real subsequent inputs—including same-prefix text—are routed, not swallowed. Do not invent a new graph DSL or redesign Anchor.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -464,21 +492,22 @@ git commit -m "feat(host): reconcile subagent policy on root turn and isolate ro
 **Boundary:** Host Session Lifecycle & Subagent Mirror Management.  
 **AP Gates:** `AP-012` (Accurate error contracts), `AP-013` (Data integrity), `AP-019` (Line budgets: `session.ts` < 200 lines), `AP-020` (SRP), `AP-026` (Lifecycle semantics), `AP-050` (Status semantics).  
 **Files:**
-- Create: `src/host/session-subagent-handler.ts`
-- Modify: `src/host/session.ts`
-- Modify: `src/host/subagent-mirror.ts`
-- Test: `tests/subagent-lifecycle-fixes.test.ts`
+- Create: `src/host/session-subagent-handler.ts` (bounded extraction from session.ts)
+- Modify: `src/host/session.ts`, `src/host/subagent-mirror.ts`, `src/host/bridge-router.ts`
+- Modify: `src/runner/bridge/bb-child-event-adapter.ts`, `src/runner/subagent-watcher.ts`
+- Create bounded `src/runner/bridge/child-run-outcome.ts` if needed to keep child adapter <200 lines
+- Test: `tests/subagent-lifecycle-fixes.test.ts`, native child batch-outcome tests and late-binding dedup scenarios
 
 - [ ] **Step 1: Write failing tests for background spawn acknowledgment and accurate termination states**
 
 In `tests/subagent-lifecycle-fixes.test.ts`:
 - Test background tool ack: `tool_execution_end` for `subagent` with `background: true` is an admission acknowledgment; subagent MUST remain in `running` status.
-- Test sync tool ack: `tool_execution_end` for `subagent` with `background: false` marks subagent `completed` with output text.
-- Test accurate outcome on child settlement (`agent_end`):
-  - `stopReason === "aborted"`: marks subagent `completed` and emits `turn.boundary` with `status: "interrupted"`.
-  - `stopReason === "error"`: marks subagent `completed` and emits `turn.boundary` with `status: "failed"`.
-  - `stopReason === "completed"`: marks subagent `completed` and emits `turn.boundary` with `status: "completed"`.
-- Test `Anchor` task ownership is preserved without re-creating anchor tasks.
+- Foreground tool result settles only after actual input answer; error must not be labeled success.
+- Native Pi1.3 run_end contains ONLY inputs, no stopReason. Use actual publication order fixtures: `[run_end, submission(unanswered, reason: aborted)]` -> wire aborted -> interrupted; unanswered failure -> failed; `[tool task_failed, run_end, submission(done)]` -> completed (successful input wins over recoverable tool failure).
+- Child adapter pre-scans the full batch before translating run_end, correlating its input IDs with terminal submission receipts. Reset per-run faults; do not invent native stopReason fields or permanently classify every tool error as run failure.
+- Bound mirror receives exactly one translated terminal boundary with actual completed/failed/interrupted status; remove session.ts hardcoded duplicate completed emission.
+- Completion BEFORE mirror binding must buffer/replay the same authoritative outcome exactly once. The bridge-router completed-initial branch may not synthesize a second hardcoded completed boundary after registerThread already flushed it.
+- Background spawn acknowledgment stays running; actual child settlement (not root tool end) closes it. Preserve Anchor/task ownership and cancellation; no speculative Anchor redesign.
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -487,9 +516,10 @@ Expected output: FAIL with premature completion assertion failure.
 
 - [ ] **Step 3: Extract `session-subagent-handler.ts` and update `session.ts`**
 
-- `src/host/session-subagent-handler.ts`: extract subagent lifecycle event handling (~90 lines). Prevent premature completion on background spawn acks. Map child `agent_end` stop reasons accurately.
-- `src/host/session.ts`: delegate subagent events to extracted handler. Verify `session.ts` line count is strictly < 200 lines (AP-019).
-- `src/host/subagent-mirror.ts`: ensure mirror state accurately tracks outcome.
+- `BBChildEventAdapter.handleBatch` (or a narrow outcome helper) pre-scans typed public AgentEvent submissions/task receipts before emission; `subagent-watcher` feeds whole child batches while retaining nested-child discovery. Emit existing typed wire aborted/error fields and errorMessage; native successful input maps to normal completion.
+- `session-subagent-handler.ts`: extract scoped event/lifecycle/mirror handling. Background tool ack never closes child. Forward child terminal through child translator once; cache actual terminal outcome for late binding and deduplicate synthesized/replayed terminal delivery.
+- `session.ts`: delegates focused lifecycle handling and remains <200 lines including new policy setter. No duplicate hardcoded boundary; no root-turn leakage from child events.
+- `subagent-mirror.ts` and `bridge-router.ts`: preserve actual terminal status/result across early settlement, registration flush and admission acknowledgment. One authoritative replay path; no fake completed overwrite or swallowed follow-up.
 
 - [ ] **Step 4: Run tests to verify they pass and check line budget**
 
@@ -509,27 +539,36 @@ git commit -m "fix(host): prevent premature completion on background spawn ack a
 
 ---
 
-### Task 8: BB Settings UI, Host Catalog Bootstrap & Model Picker Section
+### Task 7b: Narrow Packaging / Canonical Command Cleanup
+
+- Evidence: dist/runner grew131161 ->897640 bytes because new policy schema imported Zod and scripts/build-runner.mjs did not externalize it; compiled artifact contains all Zod locales (~20k generated lines). Zod is already a production dependency.
+- RED packaging test uses an isolated temporary fixture with a COPY of the actual production build script, a small Zod-importing entry, and node_modules symlink; assert resulting fixed fixture stays small and its exported schema still works. No shared dist writes or fake source grep.
+- Minimal fix: externalize zod in existing runner build configuration; do not replace the build system, remove validation, or add a framework. GREEN test + full build; measure actual runner byte reduction.
+- Canonical runner control command accepts policyRecord only: remove `(cmd as any).policy` fallback and casts, parse unknown input through canonical schema. RED legacy-body rejection test, then GREEN; no per-call model options.
+- Preserve original commits; only owned artifacts regenerated. No release/install.
+
+### Task 8: BB Settings UI via Existing Public Catalog API
 
 **Boundary:** UI Component & Settings Section Slot Boundary.  
 **AP Gates:** `AP-010` (Thin Adapter), `AP-011` (Input validation), `AP-019` (Line budgets), `AP-020` (SRP), `AP-021` (Thin entry points), `AP-026` (DTOs), `AP-027` (Configuration fail-fast).  
 **Files:**
-- Create: `src/ui/settings-subagent-section.tsx`
-- Create: `src/ui/model-picker-bootstrap.ts`
-- Modify: `src/host/index.ts`
-- Modify: `src/rpc/contract.ts`
-- Modify: `app.tsx`
-- Modify: `package.json` (`"bb": { "app": "./app.tsx" }`)
-- Test: `tests/ui-settings-contract.test.ts`
+- Create: `src/ui/settings-subagent-section.tsx`, small profile codec and bounded policy/preview hooks as needed (<200 lines each).
+- Reuse public sdk.providers.models and existing get/set RPC; NO new host contract, host entry modification, server proxy or custom catalog lifecycle.
+- Modify src/host/catalog.ts only to use public native getSupportedThinkingLevels for reasoning capabilities; server capabilities admit native levels including minimal. No catalog rewrite.
+- Modify app.tsx, tsconfig.json, package.json/lock (bb.app and necessary DEV-only React/DOM/tsx test peers; exact SDK/Pi pins unchanged).
+- Tests: executed SDK app collector plus actual TSX interactions under tests/ui using public testing/app loadPluginApp/renderSlot. npm test keeps baseline Node tests and adds UI tests.
 
 - [ ] **Step 1: Write failing tests for UI settings contracts, manifest, and host catalog bootstrap**
 
 In `tests/ui-settings-contract.test.ts`:
 - Assert `package.json` defines `"bb": { "app": "./app.tsx" }`.
-- Assert `app.tsx` calls `definePluginApp` registering `slots.settingsSection`. Assert old `DoctorView` is removed from default mount.
-- Assert composite host contract in `src/host/index.ts` handles `subagentCatalogBootstrap` alongside `resolveNativeRoots`.
-- Assert bootstrap returns valid profile preview without mutating stored policy; handles empty/offline catalog cleanly.
-- Note: verify public SDK methods for host/environment selection (`useBbContext()` or picker `routing`) before coding.
+- Execute the public definePluginApp collector to assert a settingsSection registration OBJECT and no old Doctor mount; do not substitute source-regex tests.
+- Public SDK testing/app + real React mount exercises draft vs applied, explicit Save, disabled inherit picker, configured validation, conflict/refetch preserving draft, persistence error/retry and saving state.
+- Empty/offline catalog creates NO fake picker value and does not write a profile; switching to inherit can still be saved without catalog availability.
+- Route changes do not reset draft or accept stale async responses. Configured Save disabled while current-route catalog is loading/unavailable or model/thinking invalid. Retain unavailable saved profile with clear warning—never replace it automatically.
+- Query exact public sdk.providers.models({providerId:'pi-durable',hostId OR environmentId,signal}); test route consistency, cancellation/stale responses and modelLoadError. SDK owns environment/host routing; do not implement another proxy.
+- Model/level preview comes from existing provider catalog; native getSupportedThinkingLevels remains capability authority. Preview never persists.
+- Public SDK dts17595–17633 and10428 provide the simpler catalog API missed in the earlier seam report; it supersedes that report's custom host-RPC recommendation.
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -538,17 +577,14 @@ Expected output: FAIL with missing manifest entry or contract mismatch.
 
 - [ ] **Step 3: Implement host catalog bootstrap, settings section component, and update `app.tsx`**
 
-- `src/host/index.ts`: compose `subagentCatalogBootstrap` with `experimental_nativeRootsHostContract`. Use `ModelRuntime` / `ModelCatalog` from Pi to list available models and select default profile preview; dispose cleanly.
-- `src/ui/model-picker-bootstrap.ts`: helper to query `subagentCatalogBootstrap` via RPC.
-- `src/ui/settings-subagent-section.tsx`:
-  - Radio control for mode: `"inherit"` vs `"configured"`.
-  - Component: `experimental_ProviderModelPicker` from `@get-bb/plugin-sdk/app`, locked to `providerId="pi-durable"`, `allowProviderChange={false}`.
-  - In inherit mode: `disabled={true}`, subtitle "Модель родителя; сохранённая модель сейчас не используется".
-  - Scope notice: "Один глобальный профиль для этого плагина на сервере BB (применится к новым субагентам со следующего хода)."
-  - Form state: separate `draft` vs `applied`. "Сохранить" button disabled when draft unchanged or invalid.
-  - Conflict handling: `REVISION_CONFLICT` preserves user draft, offers reload or retry.
-- `app.tsx`: `definePluginApp(setup => { setup.slots.settingsSection(SubagentSettingsSection); })`.
-- `package.json`: register `"app": "./app.tsx"` under `"bb"`.
+- Use existing public providers.models through useSdk: args are a union of {providerId:'pi-durable',hostId,signal} OR {providerId:'pi-durable',environmentId,signal}. Result SystemExecutionOptionsResponse exposes models[], modelLoadError and provider metadata. Query with AbortSignal; ignore obsolete responses. No own host RPC/proxy/process lifecycle.
+- Public browser system.config() gives primaryHostId, hosts.list() gives Host[], environments.list() gives Environment[]. These selectors are catalog PREVIEW only; policy remains global. Do not silently substitute another machine for a selected offline primary. Picker routing and models query must address the same host/environment.
+- Existing ModelCatalog thinking efforts must be generated from public getSupportedThinkingLevels, mapped off->none, rather than independent hardcoded six-level filtering. Provider capabilities/labels admit the native levels, including minimal. No custom catalog/model identifiers.
+- UI mounts shared experimental_ProviderModelPicker with concrete value `{providerId:'pi-durable',model,reasoningLevel}` and allowProviderChange=false; there is NO top-level providerId prop. Use saved profile if present, otherwise genuine catalog default PREVIEW only. If no real value, render empty/error state, not a fake ID.
+- Separate applied record and mutable draft; explicit Save with expectedRevision. Disabled picker in inherit with explanatory copy, but inherit Save works without a catalog and retains optional configured profile. Configured Save validates current-route model/level. Disable policy mutations during saving or otherwise preserve edits made during save.
+- SDK conflict refusal code is conflict; refetch applied record/revision but preserve draft and require explicit retry. Storage/offline errors retain draft; clear loading state. Never auto-persist an initial preview or replace unavailable saved profile.
+- `app.tsx`: definePluginApp(app => app.slots.settingsSection({id:'subagent-model-policy',title:'Субагенты',component:SubagentSettingsSection})). This replaces old Doctor body; manifest bb.app='./app.tsx'. Include root app/new TSX in typechecking.
+- Install only necessary DEV test peers, keep native/SDK exact pins. Add test:ui via tsx + jsdom/public SDK testing/app; npm test runs baseline Node tests PLUS UI tests. Real interactions, not source grep. Touched modules/new test files remain <200 lines.
 
 - [ ] **Step 4: Run tests, typecheck and verify UI build**
 
@@ -610,7 +646,24 @@ git commit -m "docs(arch): clarify thin adapter role contract and coordinator-on
 
 ---
 
-### Task 10: Dual Independent Reviews, Verification & S6 Plan Handover
+### Task 9b: Corrections from the Single Integrated Review
+
+Candidate reviewed: `53c6c6b`. Reports: `2026-10-25-subagent-policy-final-architecture.md` and `2026-10-25-subagent-policy-final-product.md` in `docs/arch-improvement/reviews/`.
+
+Selected fix-now items (one bounded remediation batch, no new broad review round):
+- [P1] Cold child profile guard: decode the actual flat get_state response (model/thinkingLevel), remove unsupported state.agent/agent aliases and production any. If a requested override cannot be validated, return an explicit error; never fall back to root/defaults.
+- [P1] Distinguish native child mirrors from independent manual BB children. Known physical session owner identity and native conversation/binding win over mere BB parentThreadId. Re-evaluate after session creation; independent root receives policy/reconcile and compaction, native child still cannot mutate shared root.
+- [P2] Save must not erase edits made during the pending request. Disable mode radios while saving and preserve a changed draft when handling a delayed response.
+- [P2] Actually abort stale catalog queries on route change/unmount; invalidate current-route readiness immediately so old results cannot enable Save.
+- [P2] Remove synthetic hostId='default' and old-SDK feature probes. Call current mandatory SDK APIs; no real target means routing=null, an honest empty/error state and no model query. Inherit remains saveable.
+- [P3, fix-now] Scope the remaining workspace model prohibition explicitly to CLI fallback. Add clear UI copy that saved policy applies to new admissions from the next owner turn; existing children are unchanged.
+- [P3, log-only] A single general UI error panel is acceptable for this release; do not expand into unrelated styling/layout work.
+
+For each selected behavior: add a failing regression first, capture RED, make the minimal correction and capture GREEN. Reuse public SDK app tests and actual runner DTOs. Parent reproduction for the two host errors is in `final-parent-host-repro.json` in this thread's storage; reports and this repository plan are canonical operational records.
+
+After the batch: full Node + UI tests, typecheck, build, dependency/version check and packaging size check. Close the original findings with targeted evidence in the same review records; do not start another full analytical round. No publication, live installation or reload.
+
+### Task 10: Integrated Verification and Repository Closeout
 
 **Boundary:** Quality Verification Gate & Handover.  
 **AP Gates:** Full AP-010..AP-071 gates.  
@@ -627,10 +680,10 @@ bb plugin types --check
 npx tsc --noEmit
 npm run build
 ```
-Expected output: All unit/integration tests PASS, types check clean, TypeScript zero errors, build succeeds.
+Executed result: tests/typecheck/build pass. SDK CLI confirms version but exits 1 on generic devDependency placement advice; keep the necessary runtime dependency and record this exception explicitly.
 
 - [ ] **Step 2: Blackbox public RPC and native model smoke verification**
-  - Verify RPC: `subagent_policy_get`, `subagent_policy_set` (including conflict), `subagent_catalog_bootstrap`.
+  - Verify RPC get/set (including conflict) and public sdk.providers.models catalog query with explicit routing; no custom bootstrap RPC.
   - Verify native model application: inherit resolves parent model, configured resolves target model, unauthenticated fails fast before child creation.
   - Verify no live plugin reload or public push/tag/release without parent decision.
 
@@ -689,7 +742,7 @@ Planner amendments address the following review items, but transport failure pre
 | Native execution calls validated pure resolver, real public APIs | P1 | Task 2 & 5: resolver takes `availableModels: readonly Model<Api>[]`, validates via `getSupportedThinkingLevels(model)`, native tool calls `api.models.getAvailable()` outside `commit`. No fictitious `.hasCredentials` or `.reasoningLevels`. |
 | Real SDK integration fixture registers valid test provider/model | P1 | Task 5: fixture registers valid model on `createModels()`; asserts uncredentialed/unregistered model fails before child creation without fallback. |
 | Monotonic revisions, reject downgrade/same-revision, validate shape | P2 | Task 3 & 4: strict schema validation, monotonic revision rejection in holder and CAS store, optimistic conflict handling without losing draft. |
-| Host catalog bootstrap RPC with lifecycle and public contracts | P2 | Task 8: `subagentCatalogBootstrap` composed with `experimental_nativeRootsHostContract` in `src/host/index.ts`, clean runtime disposal. |
+| Catalog preview through the existing public SDK | P2 | Superseded seam proposal: Task 8 uses sdk.providers.models directly. No subagentCatalogBootstrap RPC, host contract, proxy or independent catalog lifecycle was implemented. |
 | Thinking enum derives from Pi 1.3 contracts, mapped at BB boundary | P2 | Task 2: canonical `SubagentThinkingLevel` includes `"minimal"`, BB `"none"` ↔ native `"off"` mapped at boundary. |
 | Store mutations serialize CAS + persist + cache update | P2 | Task 3: single-writer queue, cache updated only after successful KV persistence, failed writes leave old cache intact, concurrent test (1 winner). |
 | Typed DTOs, no production `any` or optional current method probes | P2 | Tasks 2–8: strict Zod schemas, exact types, no production `any`, removal of deprecated probes. |
