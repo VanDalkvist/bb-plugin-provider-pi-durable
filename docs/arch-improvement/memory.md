@@ -129,4 +129,10 @@
 - Recheck next time: manual BB parenthood is not native child identity; get_state DTO and ROOT_CONVERSATION_ID come from the executed Pi SDK, not a hand-written fixture. Pi 1.3.0 root is 1; an assumed root 0 produced a false corrective test.
 - Evidence: `tests/host-mirror-guard-repro.test.ts`, `tests/ui/ui-settings-fixes.test.ts`, both final policy review targeted-closure sections, ledger cycle `subagent-model-policy-2026-10-25`.
 
+## 2026-10-25 — Native edit display diff is not the patch contract
+- Canonical lesson: GBrain `docs/research/pi-durable-native-edit-file-change-micro-loop-2026-10-25` (knowledge body stays in the brain).
+- Recheck next time: file identity follows args.path, not replacement-region count; native details.patch is canonical, details.diff is TUI display. Protect semantics with real producer plus exact patch application, not schema acceptance alone.
+- Evidence: `f11f89d`, `tests/native-edit-file-change.test.ts`, both delta acceptance reports, ledger cycle `file-change-delta-2026-10-25`.
+
+
 

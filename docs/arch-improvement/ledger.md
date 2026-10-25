@@ -233,3 +233,28 @@
 - Subsequent user-requested file-change delta micro-loop is separate: `docs/superpowers/plans/2026-10-25-file-change-delta-micro-loop.md`. Its investigation is not included in this policy PASS.
 - User authorized Google Vertex for remaining helpers after Antigravity quota exhaustion; execution provider remains Pi Durable.
 
+---
+
+## Cycle file-change-delta-2026-10-25 — Native Edit Identity and Canonical Patch
+
+### Context and selected findings
+- Separate user-requested micro-loop after policy fixes. Canonical plan: `docs/superpowers/plans/2026-10-25-file-change-delta-micro-loop.md`; investigation: `reviews/2026-10-25-file-change-delta-investigation.md`.
+- Screenshot and actual native records agree: one edit call produced several rows for one file, and the displayed +1/-0 card omitted most hunks. Resident 0.2.52 and checkout had the same mapper defect; BB Core was consuming the supplied contract correctly.
+- **[P1, fix-now, AP-013/026]** `details.diff` is numbered/ellipsized TUI display, while `details.patch` is the authoritative unified patch. Selecting diff first broke the consumer's patch parsing.
+- **[P1, fix-now, AP-013/026/028]** `args.edits` lists replacement regions of one `args.path`, but each was incorrectly mapped to a separate fileChange.changes entry. The old test encoded that wrong expectation.
+
+### Applied fix and evidence
+- Commit **`f11f89de3bebbd805579ebd87edc4c617d90d376`**: only `src/host/tool-item-shape.ts` and `src/host/diff-utils.ts` changed in production. One path/update entry per native edit call; canonical patch preferred; valid diff-only producer remains supported. No custom TUI parser, patch reconstruction, grouping registry or BB Core change.
+- RED before source edits: `thr_squn93nr4e/investigation/red-output.log` (3 entries instead of 1; 0 parsed hunks instead of 1). Phase A's earlier print-only hypothesis script is not counted as RED.
+- `tests/native-edit-file-change.test.ts` uses the real public Pi 1.3 createEditTool on temporary content: all 3 separated hunks survive and applyPatch(before, translated) equals actual after byte-for-byte. Single edit, independent calls/files and valid diff-only producer are covered; obsolete multi-entry assertion corrected.
+- Parent targeted GREEN: **11/11**, `delta-targeted-green.log`. Full fresh receipt `delta-final-verification.json`: **399 Node + 9 UI = 408 pass, 0 fail**; typecheck/build/dependencies exit 0. Source lines **69/183**, test lines **160/194**, runner **143947 bytes**.
+- Initial readback briefly observed dirty generated CSS. Later `delta-post-build-readback.json` verifies src/tests/dist exactly equal the candidate and CSS blob `e26c4bd7694c4225206cc9a97567ce04793756c9`; no CSS reorder/change is established or included.
+
+### S9 acceptance and residuals
+- Narrow architecture **PASS**, `reviews/2026-10-25-file-change-delta-architecture.md`.
+- Product **PASS**, `reviews/2026-10-25-file-change-delta-product.md`: public SDK consumer assembles actual captured notifications for successful multi-region edit, cold/no operations and failed oldText lookup. It verifies one file entry, retained hunks, exact before→after, unchanged file/error status on failure and no fabricated diff.
+- Acceptance is code/data-plane, **not live desktop UI smoke**. No installed plugin update/reload, public push/tag/release or forced history rewrite. Rollout follows the separate update checklist; no BB/host restart requirement is inferred.
+- Existing SDK placement exit 1 remains a documented exception; package version 0.2.52, SDK 0.6.79, Pi 1.3.0 unchanged. No new unrelated cleanup selected.
+- Durable lesson: GBrain `docs/research/pi-durable-native-edit-file-change-micro-loop-2026-10-25`; repository memory contains only the execution index.
+
+
