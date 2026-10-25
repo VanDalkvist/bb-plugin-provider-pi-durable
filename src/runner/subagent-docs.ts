@@ -7,6 +7,11 @@ import {
 	type TaskId,
 	type ToolExecutionApi,
 } from "@earendil-works/pi-durable";
+import type {
+	ResolvedChildConfiguration,
+	SubagentModelReference,
+	SubagentThinkingLevel,
+} from "../policy/types.ts";
 
 export type SubagentRecord = {
 	name: string;
@@ -19,6 +24,10 @@ export type SubagentRecord = {
 	reporter?: TaskId;
 	report?: string;
 	settled?: boolean;
+	actualModel?: SubagentModelReference;
+	thinkingLevel?: SubagentThinkingLevel;
+	source?: ResolvedChildConfiguration["source"];
+	policyRevision?: number;
 };
 
 export type PendingSubagentReport = {

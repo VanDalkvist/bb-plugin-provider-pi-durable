@@ -1,14 +1,19 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { Subagent, buildRoleEnvelope } from "../src/runner/subagent.ts";
+import { buildTechnicalWorkerRole } from "../src/runner/subagent-role.ts";
+import { createSubagentExtension } from "../src/runner/subagent.ts";
 
-test("buildRoleEnvelope creates a focused, non-meta instruction envelope", () => {
-	const task = "Audit authentication routes";
-	const envelope = buildRoleEnvelope(task);
+const Subagent = createSubagentExtension(() => ({
+	version: 1,
+	revision: 0,
+	policy: { mode: "inherit" },
+}));
+
+test("buildTechnicalWorkerRole creates a focused, non-meta instruction envelope", () => {
+	const envelope = buildTechnicalWorkerRole();
 
 	assert.ok(envelope.includes("isolated worker subagent"));
-	assert.ok(envelope.includes(task));
-	assert.ok(envelope.includes("Do not attempt repository-wide meta-discovery"));
+	assert.ok(envelope.includes("Execute the assigned task thoroughly"));
 });
 
 test("Subagent tool parameters accept task and optional background flag", () => {
@@ -29,6 +34,8 @@ test("Subagent tool in background mode returns immediately without waiting for c
 
 	const mockApi: any = {
 		taskId: "task_parent_1",
+		agent: async () => ({ model: { provider: "p", modelId: "m" }, thinkingLevel: "off" }),
+		models: { getAvailable: async () => [] },
 		commit: async (fn: any) => {
 			const mockTx: any = {
 				scanConversations: async () => ({ items: [] }),
@@ -77,6 +84,8 @@ test("Subagent tool in foreground mode (background: false) waits for child compl
 
 	const mockApi: any = {
 		taskId: "task_parent_2",
+		agent: async () => ({ model: { provider: "p", modelId: "m" }, thinkingLevel: "off" }),
+		models: { getAvailable: async () => [] },
 		commit: async (fn: any) => {
 			const mockTx: any = {
 				scanConversations: async () => ({ items: [] }),
@@ -114,6 +123,8 @@ test("Subagent tool execution returns output property according to Durable 1.2.0
 	assert.ok(tool, "Subagent tool must exist");
 	const mockApi: any = {
 		taskId: "task_test_subagent_output",
+		agent: async () => ({ model: { provider: "p", modelId: "m" }, thinkingLevel: "off" }),
+		models: { getAvailable: async () => [] },
 		commit: async (fn: any) => fn({
 			scanConversations: async () => ({ items: [] }),
 			createConversation: async () => ({ id: "conv_child_output_test" }),

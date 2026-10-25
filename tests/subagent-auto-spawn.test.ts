@@ -1,8 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { Subagent } from "../src/runner/subagent.ts";
+import { createSubagentExtension } from "../src/runner/subagent.ts";
 
 test("Subagent tool announces conversationId and task for BB subthread mirror", async () => {
+	const Subagent = createSubagentExtension(() => ({
+		version: 1,
+		revision: 0,
+		policy: { mode: "inherit" },
+	}));
 	assert.equal(Subagent.name, "subagent");
 	const tool = (Subagent as any).tools?.[0];
 	assert.ok(tool, "Subagent tool must be defined");

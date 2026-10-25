@@ -27,7 +27,7 @@ export type SubagentPolicyRecord = {
 
 export interface SubagentPolicyHolder {
   getRecord(): SubagentPolicyRecord;
-  setRecord(record: SubagentPolicyRecord): void;
+  setRecord(record: SubagentPolicyRecord): Promise<void>;
 }
 
 export type ResolvedChildConfiguration = {

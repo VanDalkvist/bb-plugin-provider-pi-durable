@@ -176,6 +176,7 @@ export async function openDurable(options: OpenDurableOptions = {}): Promise<Ope
 			settings: settingsManager,
 			modelRuntime,
 			harness,
+			subagentPolicyHolder: activeEnvState.subagentPolicyHolder,
 			close() {
 				return closing ??= (async () => {
 					unsubscribeConversation(); unsubscribeCommits(); conversation.dispose(); closeTasks();

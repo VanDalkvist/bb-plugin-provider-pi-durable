@@ -7,7 +7,13 @@ import {
 	courierFor,
 	reporterFor,
 } from "../src/runner/subagent-delivery.ts";
-import { Subagent } from "../src/runner/subagent.ts";
+import { createSubagentExtension } from "../src/runner/subagent.ts";
+
+const Subagent = createSubagentExtension(() => ({
+	version: 1,
+	revision: 0,
+	policy: { mode: "inherit" },
+}));
 
 test("SubagentsDoc: defines initial state with empty agents", () => {
 	const initial = SubagentsDoc.definition.initial();
@@ -286,6 +292,8 @@ test("Subagent tool: registers record in SubagentsDoc, uses friendly name, and d
 	const mockApi: any = {
 		taskId: "task_parent_exec",
 		conversationId: "conv_parent_exec",
+		agent: async () => ({ model: { provider: "test-prov", modelId: "test-mod" }, thinkingLevel: "off" }),
+		models: { getAvailable: async () => [] },
 		commit: async (fn: any) => {
 			const mockTx: any = {
 				scanConversations: async () => ({ items: [] }),
@@ -338,6 +346,8 @@ test("Subagent tool: foreground execution directly submits and waits for child c
 	const mockApi: any = {
 		taskId: "task_parent_sync",
 		conversationId: "conv_parent_sync",
+		agent: async () => ({ model: { provider: "test-prov", modelId: "test-mod" }, thinkingLevel: "off" }),
+		models: { getAvailable: async () => [] },
 		commit: async (fn: any) => {
 			const mockTx: any = {
 				scanConversations: async () => ({ items: [] }),

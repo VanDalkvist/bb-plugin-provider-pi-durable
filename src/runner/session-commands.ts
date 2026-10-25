@@ -1,19 +1,14 @@
 import type { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { ROOT_CONVERSATION_ID } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import { estimateContextTokens } from "@earendil-works/pi-ai/utils/estimate";
-import type { OpenDurableResult } from "./runtime.ts";
+import type { OpenDurableResult } from "./runtime-types.ts";
 import type { CliArgs } from "./cli-args.ts";
 import { handleBindingCommand } from "./binding-commands.ts";
+import { handleSessionStateCommand } from "./session-state-commands.ts";
 
 export interface CommandResponder {
 	success: (id: string | undefined, command: string, data?: unknown) => void;
 	error: (id: string | undefined, command: string, message: string) => void;
-}
-
-interface SessionAgentDoc {
-	model?: { provider?: string; id?: string; modelId?: string };
-	thinkingLevel?: import("@earendil-works/pi-ai").ModelThinkingLevel;
 }
 
 export interface RunnerCommandPayload {
@@ -30,6 +25,7 @@ export interface RunnerCommandPayload {
 	bbThreadId?: string;
 	parentThreadId?: string;
 	sessionId?: string;
+	policyRecord?: unknown;
 }
 
 export function parseConversationId(id: string | number | undefined | null): import("@earendil-works/pi-durable").ConversationId {
@@ -61,6 +57,9 @@ export async function handleActiveSessionCommand(
 	respond: CommandResponder,
 ): Promise<void> {
 	if (await handleBindingCommand(cmd, durable, respond)) {
+		return;
+	}
+	if (await handleSessionStateCommand(cmd, durable, modelRuntime, args, respond)) {
 		return;
 	}
 	switch (cmd.type) {
@@ -121,22 +120,14 @@ export async function handleActiveSessionCommand(
 			respond.success(cmd.id, "compact");
 			break;
 		}
-		case "get_state": {
-			const current = durable.view.current();
-			const agentDoc = (current.conversation.docs["pi.agent"] ?? {}) as SessionAgentDoc;
-			const modelObj = agentDoc.model
-				? {
-						provider: agentDoc.model.provider,
-						id: agentDoc.model.id ?? agentDoc.model.modelId,
-						modelId: agentDoc.model.modelId ?? agentDoc.model.id,
-					}
-				: null;
-			respond.success(cmd.id, "get_state", {
-				model: modelObj,
-				thinkingLevel: agentDoc.thinkingLevel ?? "none",
-				cwd: args.cwd ?? process.cwd(),
-				sessionId: args.session ?? "default",
-			});
+		case "set_subagent_policy": {
+			try {
+				const record = cmd.policyRecord ?? (cmd as any).policy;
+				await durable.subagentPolicyHolder.setRecord(record as any);
+				respond.success(cmd.id, "set_subagent_policy");
+			} catch (err) {
+				respond.error(cmd.id, "set_subagent_policy", err instanceof Error ? err.message : String(err));
+			}
 			break;
 		}
 		case "get_available_models": {
@@ -160,35 +151,6 @@ export async function handleActiveSessionCommand(
 			}
 			await durable.controller.setThinkingLevel(cmd.level);
 			respond.success(cmd.id, "set_thinking_level");
-			break;
-		}
-		case "get_session_stats": {
-			const current = durable.view.current();
-			const agentDoc = (current.conversation.docs["pi.agent"] ?? {}) as SessionAgentDoc;
-			let contextWindow = 128000;
-			const provider = agentDoc.model?.provider ?? args.provider;
-			const modelId = agentDoc.model?.modelId ?? args.model;
-			if (provider && modelId) {
-				const m = modelRuntime.getModel(provider, modelId);
-				if (m?.contextWindow) contextWindow = m.contextWindow;
-			}
-			let tokens: number | null = null;
-			try {
-				const conv = await durable.harness.conversation(ROOT_CONVERSATION_ID, BACKGROUND_CONTEXT);
-				if (conv) {
-					const ctxView = await conv.context(BACKGROUND_CONTEXT);
-					const estimate = estimateContextTokens(ctxView.messages);
-					tokens = estimate.tokens;
-				}
-			} catch (err) {
-				console.error(`Error estimating context tokens: ${err}`);
-			}
-			respond.success(cmd.id, "get_session_stats", {
-				contextUsage: {
-					tokens,
-					contextWindow,
-				},
-			});
 			break;
 		}
 		default: {

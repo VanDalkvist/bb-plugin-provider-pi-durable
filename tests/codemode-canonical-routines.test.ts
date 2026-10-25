@@ -128,7 +128,8 @@ describe("Codemode Canonical Routines (Cycle 101)", () => {
 			getProjectSettings: () => ({}),
 		} as unknown as SettingsManager;
 
-		const registry = await createCodingRegistry(mockSettings, "/test/cwd", undefined, dynamic);
+		const defaultPolicy = () => ({ version: 1 as const, revision: 0, policy: { mode: "inherit" as const } });
+		const registry = await createCodingRegistry(mockSettings, "/test/cwd", defaultPolicy, undefined, dynamic);
 		assert.ok(registry, "registry must be created");
 
 		const snapshot = registry.snapshot();

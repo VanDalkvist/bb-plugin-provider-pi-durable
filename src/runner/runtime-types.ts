@@ -13,6 +13,7 @@ import {
 	type TaskGraph,
 } from "@earendil-works/pi-durable";
 import type { ModelRuntime, SettingsManager } from "@earendil-works/pi-coding-agent";
+import type { SubagentPolicyHolder } from "../policy/types.ts";
 import type { PromptOptions } from "./prompt.ts";
 
 export const runtimeContext = BACKGROUND_CONTEXT;
@@ -79,6 +80,7 @@ export interface OpenDurableResult {
 	readonly settings: SettingsManager;
 	readonly modelRuntime: ModelRuntime;
 	readonly harness: Harness;
+	readonly subagentPolicyHolder: SubagentPolicyHolder;
 	close(): Promise<void>;
 }
 

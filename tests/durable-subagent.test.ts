@@ -5,7 +5,8 @@ import { createCodingRegistry } from "../src/runner/harness-setup.ts";
 
 test("createCodingRegistry installs native Subagent tool", async () => {
 	const settings = SettingsManager.create(process.cwd());
-	const registry = await createCodingRegistry(settings, process.cwd());
+	const defaultPolicy = () => ({ version: 1 as const, revision: 0, policy: { mode: "inherit" as const } });
+	const registry = await createCodingRegistry(settings, process.cwd(), defaultPolicy);
 	const snapshot = registry.snapshot();
 	const subagentTool = snapshot.tools().find((t) => t.tool.name === "subagent");
 

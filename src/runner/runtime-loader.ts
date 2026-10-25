@@ -21,11 +21,14 @@ import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite
 import { type OpenDurableOptions, runtimeContext } from "./runtime-types.ts";
 import { DynamicPromptSections } from "./prompt.ts";
 import { DynamicCodemodeNamespaces } from "./codemode-namespaces.ts";
+import type { SubagentPolicyHolder } from "../policy/types.ts";
+import { loadSubagentPolicyHolder } from "./subagent-policy-ack.ts";
 
 export interface LoadedHarnessEnvironment {
 	modelRuntime: ModelRuntime;
 	settingsManager: SettingsManager;
 	harness: Harness;
+	subagentPolicyHolder: SubagentPolicyHolder;
 	initialModelRef?: ModelRef;
 	initialThinkingLevel?: ModelThinkingLevel;
 	fallbackMessage?: string;
@@ -95,9 +98,19 @@ export async function loadHarnessEnvironment(
 	const dynamicSections = new DynamicPromptSections();
 	const dynamicNamespaces = new DynamicCodemodeNamespaces();
 	const settings = createHarnessSettings(settingsManager, getActiveModel);
+
+	let subagentPolicyHolder: SubagentPolicyHolder | undefined;
+	const getSubagentPolicy = () => {
+		if (!subagentPolicyHolder) {
+			throw new Error("Subagent policy accessed before runtime initialization");
+		}
+		return subagentPolicyHolder.getRecord();
+	};
+
 	const registry = await createCodingRegistry(
 		settingsManager,
 		location.cwd,
+		getSubagentPolicy,
 		{ ...options.prompt, resourceLoader, dynamicSections },
 		dynamicNamespaces,
 	);
@@ -140,6 +153,8 @@ export async function loadHarnessEnvironment(
 		runtimeContext,
 	);
 
+	subagentPolicyHolder = await loadSubagentPolicyHolder(harness);
+
 	const initial = location.created
 		? await findInitialAgentModel(settingsManager, modelRuntime, options.cli)
 		: undefined;
@@ -149,6 +164,7 @@ export async function loadHarnessEnvironment(
 		modelRuntime,
 		settingsManager,
 		harness,
+		subagentPolicyHolder,
 		initialModelRef: initial?.model,
 		initialThinkingLevel: initial?.thinkingLevel,
 		fallbackMessage: initial?.fallbackMessage,

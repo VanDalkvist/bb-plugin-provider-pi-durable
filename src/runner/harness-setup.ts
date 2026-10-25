@@ -14,8 +14,9 @@ import { createNodePhotonImages } from "@earendil-works/pi-durable/images/node";
 import { createCodemodeExtension } from "@earendil-works/pi-durable/codemode";
 import { CodemodeSandbox } from "@earendil-works/pi-codemode";
 import { createToolSearchExtension } from "@earendil-works/pi-durable/tool-search";
-import { Subagent } from "./subagent.ts";
+import { createSubagentExtension } from "./subagent.ts";
 import { Anchor, DefaultCourier, DefaultReporter } from "./subagent-delivery.ts";
+import type { SubagentPolicyRecord } from "../policy/types.ts";
 import {
 	type ModelRuntime,
 	type SettingsManager,
@@ -72,6 +73,7 @@ export function createHarnessSettings(
 export async function createCodingRegistry(
 	settingsManager: SettingsManager,
 	cwd: string,
+	getSubagentPolicy: () => SubagentPolicyRecord,
 	promptOptions?: PromptOptions,
 	dynamicNamespaces?: DynamicCodemodeNamespaces,
 ): Promise<Registry> {
@@ -93,7 +95,7 @@ export async function createCodingRegistry(
 		}),
 	);
 	registry.install(createToolSearchExtension());
-	registry.install(Subagent);
+	registry.install(createSubagentExtension(getSubagentPolicy));
 	registry.install(Anchor);
 	registry.install(DefaultCourier);
 	registry.install(DefaultReporter);
