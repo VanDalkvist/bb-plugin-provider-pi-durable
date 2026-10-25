@@ -101,6 +101,30 @@ We maintain a strict separation between **what the user is responsible for** and
 
 ---
 
+## Updating the Plugin & Existing Threads
+
+When `bb-plugin-provider-pi-durable` is updated in Beyond Boundaries (via marketplace update, `bb plugin update`, or local install), newly created independent threads run on the updated plugin version once activation succeeds. (Note that child subagent sessions spawned by an existing resident parent continue to share that parent's runtime).
+
+However, **existing threads with an active provider session remain pinned by BB Core to their previous bridge process** to preserve session continuity ([BB issue #4942](https://github.com/get-bb/bb/issues/4942)). In BB Core, completing a turn or reaching `idle` state does not release this binding; sending a new message to an existing resident thread continues executing on the previous bridge process.
+
+### Recommended Update Procedure
+
+- **For Desktop-Managed Local Runtimes (where BB Desktop manages the local server and daemon):**
+  1. **Before updating:** Wait for in-flight turns and background/subagent operations across your threads to settle. (Installing an update immediately reclaims previous cache artifacts, which can disrupt actively executing tools).
+  2. Update or reinstall the plugin, and verify successful activation.
+  3. Completely **Quit** the Beyond Boundaries application:
+     - On macOS: Press **Cmd+Q** (or select *Beyond Boundaries → Quit* from the menu bar). *Note: Closing the window with the red close button or Cmd+W does not quit the application or release resident background runtimes.*
+     - On Windows/Linux: Use the application's Quit / Exit menu command.
+  4. Launch Beyond Boundaries again.
+  5. Continue your existing threads. Committed SQLite conversation history and checkpoints are preserved; the next message in those threads will initialize on the newly activated plugin runtime without requiring context clearing or starting over in new chats.
+
+- **For Remote, Standalone, or Attached Hosts (Headless Daemons, SSH, Remote Workspaces, or Local Standalone Servers):**
+  - Quitting the desktop client does not restart the remote runtime processes.
+  - Settle in-flight work before updating.
+  - Coordinate a graceful restart of the specific service or process tree that owns the executing host-daemon / runtime (or the full stack where managed together). Restarting only a web/API server while leaving the host-daemon active will not release the bridge process. (Consult your infrastructure operator for the exact service unit; all active agent sessions hosted on that daemon will be interrupted).
+
+---
+
 ## Configuration
 
 The plugin works out-of-the-box with default paths, but supports optional environment overrides:
@@ -114,6 +138,9 @@ The plugin works out-of-the-box with default paths, but supports optional enviro
 ---
 
 ## Troubleshooting
+
+### "Cannot find module 'quickjs-wasi/quickjs.wasm'" or ENOENT on worker assets
+If tool execution fails on an existing resident thread after a plugin update with a module resolution or `ENOENT` error whose stack trace points to an old, replaced installation path, the resident process is likely attempting to lazily load assets from an unlinked previous plugin cache directory ([BB issue #4942](https://github.com/get-bb/bb/issues/4942); see also [#5483](https://github.com/get-bb/bb/issues/5483) for a similar asset-eviction report with external tools). Follow the [Updating the Plugin & Existing Threads](#updating-the-plugin--existing-threads) procedure to restart the runtime.
 
 ### "Pi has no authenticated model provider available"
 Run `pi` in your terminal to log in to your desired provider (Google, Anthropic, OpenAI), then reload BB IDE.
