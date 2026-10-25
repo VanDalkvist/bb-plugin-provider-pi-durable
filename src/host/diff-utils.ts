@@ -133,10 +133,10 @@ export function resolveFileChangeItem(
 	const detailsObj = typeof event.details === "object" && event.details !== null
 		? (event.details as Record<string, unknown>)
 		: undefined;
-	const rawDiff = typeof detailsObj?.diff === "string"
-		? detailsObj.diff
-		: typeof detailsObj?.patch === "string"
-			? detailsObj.patch
+	const rawDiff = typeof detailsObj?.patch === "string"
+		? detailsObj.patch
+		: typeof detailsObj?.diff === "string"
+			? detailsObj.diff
 			: undefined;
 
 	const firstChange = item.changes[0];

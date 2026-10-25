@@ -1,11 +1,6 @@
 import { normalizeFilePath } from "./diff-utils.ts";
 import { isDelegationTool } from "./tool-presentations.ts";
 
-interface RawEditItem {
-	oldText?: unknown;
-	newText?: unknown;
-}
-
 /**
  * Builds the typed thread item shape for a given tool execution.
  */
@@ -58,19 +53,6 @@ export function buildToolItemShape(
 		const filePath = normalizeFilePath(args.path, fallbackCwd);
 		if (!filePath) {
 			return { type: "fileChange", changes: [] };
-		}
-		const edits = Array.isArray(args.edits) ? args.edits : [];
-		if (edits.length > 0) {
-			const changes = edits.map((edit: unknown) => {
-				const e = typeof edit === "object" && edit !== null ? (edit as RawEditItem) : undefined;
-				return {
-					path: filePath,
-					kind: "update",
-					...(typeof e?.oldText === "string" ? { oldText: e.oldText } : {}),
-					...(typeof e?.newText === "string" ? { newText: e.newText } : {}),
-				};
-			});
-			return { type: "fileChange", changes };
 		}
 		return {
 			type: "fileChange",

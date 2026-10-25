@@ -12,13 +12,7 @@ import {
 
 interface FileChangeItem {
 	type: string;
-	changes: Array<{
-		path: string;
-		kind: string;
-		diff?: string;
-		newText?: string;
-		oldText?: string;
-	}>;
+	changes: Array<{ path: string; kind: string; diff?: string; newText?: string }>;
 }
 
 test("buildToolItemShape maps 'write' tool to BB compliant fileChange with kind: 'add'", () => {
@@ -37,7 +31,7 @@ test("buildToolItemShape maps 'write' tool to BB compliant fileChange with kind:
 	assert.equal(item.changes[0].newText, "console.log('hello');");
 });
 
-test("buildToolItemShape maps 'edit' tool to BB compliant fileChange with kind: 'update' and granular edits", () => {
+test("buildToolItemShape maps 'edit' tool to BB compliant fileChange with kind: 'update' and single file entry", () => {
 	const shape = buildToolItemShape(
 		"edit",
 		{
@@ -53,15 +47,9 @@ test("buildToolItemShape maps 'edit' tool to BB compliant fileChange with kind: 
 	assert.equal(shape.type, "fileChange");
 	const item = shape as unknown as FileChangeItem;
 	assert.ok(Array.isArray(item.changes));
-	assert.equal(item.changes.length, 2);
+	assert.equal(item.changes.length, 1);
 	assert.equal(item.changes[0].path, "/Users/vanya/test.ts");
 	assert.equal(item.changes[0].kind, "update"); // MUST be "update", not "modify"
-	assert.equal(item.changes[0].oldText, "foo");
-	assert.equal(item.changes[0].newText, "bar");
-	assert.equal(item.changes[1].path, "/Users/vanya/test.ts");
-	assert.equal(item.changes[1].kind, "update");
-	assert.equal(item.changes[1].oldText, "baz");
-	assert.equal(item.changes[1].newText, "qux");
 });
 
 test("translateToolStart and translateToolEnd retain valid fileChange item", () => {
@@ -115,7 +103,6 @@ test("D-21: normalizeFilePath strips spurious b/ and a/ prefixes and relative do
 test("D-21: synthesizeAddDiff generates canonical git unified diff with exact line counts", () => {
 	const content = "line 1\nline 2\nline 3\n";
 	const diff = synthesizeAddDiff("b/tests/example.ts", content);
-
 	const expected = [
 		"diff --git a/tests/example.ts b/tests/example.ts",
 		"--- /dev/null",
@@ -126,7 +113,6 @@ test("D-21: synthesizeAddDiff generates canonical git unified diff with exact li
 		"+line 3",
 		"",
 	].join("\n");
-
 	assert.equal(diff, expected);
 
 	// Empty content case: line count 0
@@ -193,14 +179,7 @@ test("D-21: translateToolEnd synthesizes canonical unified git diff for write to
 });
 
 test("D-21: normalizeGitPatch standardizes patch headers for edit tool with clean paths", () => {
-	const patchWithoutGit = [
-		"--- a/tests/foo.ts",
-		"+++ b/tests/foo.ts",
-		"@@ -1,2 +1,2 @@",
-		"-old",
-		"+new",
-	].join("\n");
-
+	const patchWithoutGit = ["--- a/tests/foo.ts", "+++ b/tests/foo.ts", "@@ -1,2 +1,2 @@", "-old", "+new"].join("\n");
 	const normalized = normalizeGitPatch(patchWithoutGit, "b/tests/foo.ts", "update");
 	const expected = [
 		"diff --git a/tests/foo.ts b/tests/foo.ts",
@@ -211,6 +190,5 @@ test("D-21: normalizeGitPatch standardizes patch headers for edit tool with clea
 		"+new",
 		"",
 	].join("\n");
-
 	assert.equal(normalized, expected);
 });
