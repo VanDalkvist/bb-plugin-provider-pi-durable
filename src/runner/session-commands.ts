@@ -5,6 +5,7 @@ import type { OpenDurableResult } from "./runtime-types.ts";
 import type { CliArgs } from "./cli-args.ts";
 import { handleBindingCommand } from "./binding-commands.ts";
 import { handleSessionStateCommand } from "./session-state-commands.ts";
+import { subagentPolicyRecordSchema } from "../policy/schema.ts";
 
 export interface CommandResponder {
 	success: (id: string | undefined, command: string, data?: unknown) => void;
@@ -122,8 +123,8 @@ export async function handleActiveSessionCommand(
 		}
 		case "set_subagent_policy": {
 			try {
-				const record = cmd.policyRecord ?? (cmd as any).policy;
-				await durable.subagentPolicyHolder.setRecord(record as any);
+				const record = subagentPolicyRecordSchema.parse(cmd.policyRecord);
+				await durable.subagentPolicyHolder.setRecord(record);
 				respond.success(cmd.id, "set_subagent_policy");
 			} catch (err) {
 				respond.error(cmd.id, "set_subagent_policy", err instanceof Error ? err.message : String(err));

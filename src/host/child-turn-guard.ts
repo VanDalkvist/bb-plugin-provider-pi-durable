@@ -48,7 +48,7 @@ export function synthesizeCompletionDeltas(outputText?: string): import("./types
 }
 
 export function isChildTurn(
-	params: { threadId: string; providerThreadId?: string; parentThreadId?: string; options?: { parentThreadId?: string } },
+	params: { threadId: string; providerThreadId?: string; parentThreadId?: string; options?: { parentThreadId?: string; [key: string]: unknown } },
 	session?: ChildTurnSessionLike,
 ): boolean {
 	if (params.providerThreadId) {

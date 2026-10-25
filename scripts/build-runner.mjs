@@ -31,6 +31,8 @@ await build({
 		"@earendil-works/chord",
 		"@earendil-works/chord/*",
 		"proper-lockfile",
+		"zod",
+		"zod/*",
 	],
 	banner: {
 		js: `import { createRequire as __createRequire } from "node:module";\nconst require = __createRequire(import.meta.url);`,
