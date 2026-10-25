@@ -152,6 +152,9 @@ test("server.ts: registers settings and deriveProviderOptions forwards settings 
 				return schema;
 			},
 		},
+		rpc: {
+			register() {},
+		},
 		providers: {
 			register(options: any) {
 				registeredProvider = options;

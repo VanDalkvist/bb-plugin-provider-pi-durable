@@ -27,8 +27,9 @@ test("D-1, D-2, D-3, D-4: Thinking presentation, reasoning lifecycle & settings 
 	let providerDef: { deriveProviderOptions?: (c: { settings?: Record<string, unknown> }) => { hideThinking: boolean } } | undefined;
 	plugin({
 		settings: { define: (s: Record<string, unknown>) => { settingsSchema = s; } },
+		rpc: { register: () => {} },
 		providers: { register: (p: unknown) => { providerDef = p as typeof providerDef; return p; } },
-	});
+	} as any);
 	assert.ok(settingsSchema && "hideThinking" in settingsSchema, "D-4: hideThinking registered");
 	assert.equal("openThinkingByDefault" in (settingsSchema ?? {}), false, "D-4: openThinkingByDefault retired");
 	assert.equal(providerDef?.deriveProviderOptions?.({ settings: { hideThinking: true } })?.hideThinking, true, "D-2: options derived");

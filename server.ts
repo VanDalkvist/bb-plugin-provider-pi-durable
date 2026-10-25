@@ -1,10 +1,11 @@
+import type { BbPluginApi, PluginProviderOptionsContext } from "@get-bb/plugin-sdk";
 import { rpcContract } from "./src/rpc/contract.ts";
 import { inspectPiEnvironment } from "./src/runner/diagnostics.ts";
 
 export { rpcContract };
 
-export default function plugin(bb: any) {
-  bb.settings?.define?.({
+export default function plugin(bb: BbPluginApi) {
+  bb.settings.define({
     hideThinking: {
       type: "boolean",
       label: "Hide thoughts",
@@ -13,18 +14,18 @@ export default function plugin(bb: any) {
     },
   });
 
-  bb.rpc?.register?.(rpcContract, {
+  bb.rpc.register(rpcContract, {
     diagnostics_get: async () => {
       const report = await inspectPiEnvironment();
       return { report };
     },
   });
 
-  const provider = bb.providers.register({
+  bb.providers.register({
     id: "pi-durable",
     displayName: "Pi Durable",
     icon: "./icons/pi-durable.svg",
-    deriveProviderOptions(ctx: any) {
+    deriveProviderOptions(ctx: PluginProviderOptionsContext) {
       return {
         hideThinking: Boolean(ctx?.settings?.hideThinking ?? false),
       };
@@ -67,9 +68,5 @@ export default function plugin(bb: any) {
     },
     experimental_resolvesNativeRoots: true,
     composerActions: [],
-  });
-
-  bb.onDispose?.(() => {
-    provider.dispose?.();
   });
 }
