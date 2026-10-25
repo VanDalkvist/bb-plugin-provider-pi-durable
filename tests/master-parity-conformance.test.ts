@@ -22,10 +22,11 @@ import { DynamicPromptSections, createPiPrompt } from "../src/runner/prompt.ts";
 import { adaptExtensionTool } from "../src/runner/extension-bridge.ts";
 import { isProcessAlive } from "../src/runner/session-storage.ts";
 
-test("D-1, D-2, D-3, D-4: Thinking presentation, reasoning lifecycle & settings schema parity", () => {
+test("D-1, D-2, D-3, D-4: Thinking presentation, reasoning lifecycle & settings schema parity", async () => {
 	let settingsSchema: Record<string, unknown> | undefined;
 	let providerDef: { deriveProviderOptions?: (c: { settings?: Record<string, unknown> }) => { hideThinking: boolean } } | undefined;
-	plugin({
+	await plugin({
+		storage: { kv: { get: async () => undefined, set: async () => {} } },
 		settings: { define: (s: Record<string, unknown>) => { settingsSchema = s; } },
 		rpc: { register: () => {} },
 		providers: { register: (p: unknown) => { providerDef = p as typeof providerDef; return p; } },

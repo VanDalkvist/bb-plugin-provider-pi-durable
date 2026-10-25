@@ -141,11 +141,17 @@ test("DeltaTranslator: hideThinking: true injects suppress: true into item.open 
 	});
 });
 
-test("server.ts: registers settings and deriveProviderOptions forwards settings correctly", () => {
+test("server.ts: registers settings and deriveProviderOptions forwards settings correctly", async () => {
 	let registeredSettings: Record<string, unknown> | undefined;
 	let registeredProvider: any;
 
 	const mockBb = {
+		storage: {
+			kv: {
+				get: async () => undefined,
+				set: async () => {},
+			},
+		},
 		settings: {
 			define(schema: Record<string, unknown>) {
 				registeredSettings = schema;
@@ -164,7 +170,7 @@ test("server.ts: registers settings and deriveProviderOptions forwards settings 
 		onDispose() {},
 	};
 
-	plugin(mockBb);
+	await plugin(mockBb as any);
 
 	assert.ok(registeredSettings);
 	assert.equal((registeredSettings as any).openThinkingByDefault, undefined);
@@ -176,8 +182,11 @@ test("server.ts: registers settings and deriveProviderOptions forwards settings 
 
 	// Default context settings
 	const defaultDerived = registeredProvider.deriveProviderOptions({});
-	assert.deepEqual(defaultDerived, {
-		hideThinking: false,
+	assert.equal(defaultDerived.hideThinking, false);
+	assert.deepEqual(defaultDerived.subagentPolicy, {
+		version: 1,
+		revision: 0,
+		policy: { mode: "inherit" },
 	});
 
 	// Custom context settings
@@ -186,8 +195,11 @@ test("server.ts: registers settings and deriveProviderOptions forwards settings 
 			hideThinking: true,
 		},
 	});
-	assert.deepEqual(customDerived, {
-		hideThinking: true,
+	assert.equal(customDerived.hideThinking, true);
+	assert.deepEqual(customDerived.subagentPolicy, {
+		version: 1,
+		revision: 0,
+		policy: { mode: "inherit" },
 	});
 });
 

@@ -1,10 +1,22 @@
-import type { BbPluginApi, PluginProviderOptionsContext } from "@get-bb/plugin-sdk";
+import {
+  type BbPluginApi,
+  type PluginProviderOptionsContext,
+  experimental_PluginRpcRefusal,
+} from "@get-bb/plugin-sdk";
 import { rpcContract } from "./src/rpc/contract.ts";
 import { inspectPiEnvironment } from "./src/runner/diagnostics.ts";
+import { SubagentPolicyStore } from "./src/policy/store.ts";
+import {
+  SubagentPolicyInvalidError,
+  SubagentRevisionConflictError,
+} from "./src/policy/errors.ts";
 
 export { rpcContract };
 
-export default function plugin(bb: BbPluginApi) {
+export default async function plugin(bb: BbPluginApi) {
+  const store = new SubagentPolicyStore(bb.storage.kv);
+  await store.hydrate();
+
   bb.settings.define({
     hideThinking: {
       type: "boolean",
@@ -19,6 +31,29 @@ export default function plugin(bb: BbPluginApi) {
       const report = await inspectPiEnvironment();
       return { report };
     },
+    subagent_policy_get: async () => {
+      return { record: store.getRecord() };
+    },
+    subagent_policy_set: async (input) => {
+      try {
+        const record = await store.setPolicy(input.policy, input.expectedRevision);
+        return { record };
+      } catch (error) {
+        if (error instanceof SubagentRevisionConflictError) {
+          throw new experimental_PluginRpcRefusal({
+            code: "conflict",
+            message: error.message,
+          });
+        }
+        if (error instanceof SubagentPolicyInvalidError) {
+          throw new experimental_PluginRpcRefusal({
+            code: "invalid",
+            message: error.message,
+          });
+        }
+        throw error;
+      }
+    },
   });
 
   bb.providers.register({
@@ -28,6 +63,7 @@ export default function plugin(bb: BbPluginApi) {
     deriveProviderOptions(ctx: PluginProviderOptionsContext) {
       return {
         hideThinking: Boolean(ctx?.settings?.hideThinking ?? false),
+        subagentPolicy: store.getRecord(),
       };
     },
     strings: {

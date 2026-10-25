@@ -88,6 +88,12 @@ test("server.ts registers current settings, rpc, and provider without legacy dis
   let registeredProvider: any = null;
 
   const fakeHost = {
+    storage: {
+      kv: {
+        get: async () => undefined,
+        set: async () => {},
+      },
+    },
     settings: {
       define(settings: any) {
         registeredSettings = settings;
@@ -106,7 +112,7 @@ test("server.ts registers current settings, rpc, and provider without legacy dis
     },
   };
 
-  plugin(fakeHost as any);
+  await plugin(fakeHost as any);
 
   assert.ok(registeredSettings?.hideThinking, "hideThinking setting must be defined");
   assert.ok(registeredRpc?.handlers?.diagnostics_get, "diagnostics_get rpc must be registered");
