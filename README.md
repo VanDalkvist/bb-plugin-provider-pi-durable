@@ -59,7 +59,7 @@ To prevent domain pollution, all such unexported upstream prototypes are quarant
 - **Reasoning Stream Accordion:** Real-time thinking and reasoning blocks streamed directly into the collapsible Thinking accordion in BB UI.
 - **Context Window Meter:** Accurate live token usage (`usedTokens / contextWindow`) rendered on the status bar ring indicator.
 - **Full CLI & Workflow Output:** Guaranteed final output capture for `bb thread output <thread-id>` and automated workflows.
-- **Model Selector & Reasoning Control:** Seamless model switching across providers (Google Antigravity, Anthropic, OpenAI) with multi-level thinking control (`none`, `low`, `medium`, `high`, `xhigh`, `max`).
+- **Model Selector & Reasoning Control:** Seamless model switching across providers (Google Antigravity, Anthropic, OpenAI) with multi-level thinking control (`none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, subject to the selected model's native capabilities).
 - **Transparent MCP & Tool Discovery:** User-configured MCP servers (`~/.pi/agent/mcp.json`) and tools (`settings.json`) are automatically mounted without plugin-level overhead.
 
 ---
@@ -69,7 +69,7 @@ To prevent domain pollution, all such unexported upstream prototypes are quarant
 We maintain a strict separation between **what the user is responsible for** and **what the provider plugin delivers out of the box**:
 
 ### What the User Provides
-1. **BB IDE:** `>= 0.45.0`
+1. **BB IDE:** `>= 0.47.1` (BB Plugin SDK `>= 0.6.79`)
 2. **Node.js:** `>= 22.19.0` (required for built-in `node:sqlite` support in the runner)
 3. **Model Authentication via Pi CLI:** Authenticate your desired model providers (Google Antigravity, Anthropic, OpenAI) using the standard `pi` CLI:
    ```bash
