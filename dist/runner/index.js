@@ -283,6 +283,12 @@ var SubagentModelUnavailableError = class extends SubagentPolicyError {
     super(message, options);
   }
 };
+var SubagentPolicyLoadError = class extends SubagentPolicyError {
+  code = "SUBAGENT_POLICY_LOAD_ERROR";
+  constructor(message, options) {
+    super(message, options);
+  }
+};
 var SubagentRevisionConflictError = class extends SubagentPolicyError {
   code = "REVISION_CONFLICT";
   constructor(message, options) {
@@ -410,7 +416,7 @@ function createSubagentExtension(getPolicy) {
                 source: resolved.source,
                 policyRevision: resolved.policyRevision
               };
-              if (isBackground && typeof tx.createTask === "function") {
+              if (isBackground) {
                 record2.reporter = await tx.createTask(
                   DefaultReporter,
                   { key, conversationId: childId, task: args2.task, requestId },
@@ -21442,11 +21448,14 @@ async function loadSubagentPolicyHolder(harness) {
   let initialRecord;
   await harness.commit(async (tx) => {
     const doc = await tx.doc(SubagentPolicyAckDoc);
-    if (doc.record) {
+    if (doc.record !== null && doc.record !== void 0) {
       const parsed = subagentPolicyRecordSchema.safeParse(doc.record);
-      if (parsed.success) {
-        initialRecord = parsed.data;
+      if (!parsed.success) {
+        throw new SubagentPolicyLoadError("Stored subagent policy ACK is corrupted", {
+          cause: parsed.error
+        });
       }
+      initialRecord = parsed.data;
     }
   }, runtimeContext);
   return createSubagentPolicyHolder({
@@ -21564,12 +21573,21 @@ async function loadHarnessEnvironment(location, options, envs) {
     actionsDelegate
   );
   runnerRef = mounted.extensionRunner;
-  const harness = await Harness.open(
-    await openNodeSqliteStorage(location.database),
-    { models: modelRuntime, registry: registry2, settings, env: envs.env, onReport: report },
-    runtimeContext
-  );
-  subagentPolicyHolder = await loadSubagentPolicyHolder(harness);
+  let harness;
+  try {
+    harness = await Harness.open(
+      await openNodeSqliteStorage(location.database),
+      { models: modelRuntime, registry: registry2, settings, env: envs.env, onReport: report },
+      runtimeContext
+    );
+    subagentPolicyHolder = await loadSubagentPolicyHolder(harness);
+  } catch (error62) {
+    await Promise.allSettled([
+      harness?.close(runtimeContext),
+      mounted.cleanup?.()
+    ]);
+    throw error62;
+  }
   const initial = location.created ? await findInitialAgentModel(settingsManager, modelRuntime, options.cli) : void 0;
   if (initial?.model) activeModelRef = initial.model;
   return {

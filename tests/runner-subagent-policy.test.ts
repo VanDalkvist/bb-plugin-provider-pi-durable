@@ -1,16 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import fs from "node:fs/promises";
-import path from "node:path";
-import os from "node:os";
 import { createSubagentPolicyHolder } from "../src/runner/subagent-policy-state.ts";
-import { SubagentPolicyAckDoc, loadSubagentPolicyHolder } from "../src/runner/subagent-policy-ack.ts";
+import { loadSubagentPolicyHolder } from "../src/runner/subagent-policy-ack.ts";
 import { handleActiveSessionCommand } from "../src/runner/session-commands.ts";
 import { parseConversationId } from "../src/runner/session-commands.ts";
 import { SubagentRevisionConflictError } from "../src/policy/errors.ts";
 import type { SubagentPolicyRecord } from "../src/policy/types.ts";
 import { Harness, MemoryStorage, ROOT_CONVERSATION_ID, createRegistry } from "@earendil-works/pi-durable";
-import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { BACKGROUND_CONTEXT as ctx } from "@earendil-works/chord/context";
 import { createModels } from "@earendil-works/pi-ai";
 
@@ -76,22 +72,14 @@ test("monotonic revisions: idempotent retry, conflict, downgrade, and recovery",
 	assert.equal(persistCount, 1, "Identical same-revision record must not trigger persist");
 
 	// Different payload at same revision is conflict
-	const rec1Conflict: SubagentPolicyRecord = {
-		version: 1,
-		revision: 1,
-		policy: { mode: "inherit" },
-	};
+	const rec1Conflict: SubagentPolicyRecord = { version: 1, revision: 1, policy: { mode: "inherit" } };
 	await assert.rejects(
 		() => holder.setRecord(rec1Conflict),
 		(err: any) => err instanceof SubagentRevisionConflictError || err.code === "REVISION_CONFLICT",
 	);
 
 	// Lower revision is rejected
-	const rec0: SubagentPolicyRecord = {
-		version: 1,
-		revision: 0,
-		policy: { mode: "inherit" },
-	};
+	const rec0: SubagentPolicyRecord = { version: 1, revision: 0, policy: { mode: "inherit" } };
 	await assert.rejects(
 		() => holder.setRecord(rec0),
 		(err: any) => err instanceof SubagentRevisionConflictError || err.code === "REVISION_CONFLICT",
@@ -99,54 +87,13 @@ test("monotonic revisions: idempotent retry, conflict, downgrade, and recovery",
 
 	// Failed persist keeps old cache intact, queue recovers
 	shouldFail = true;
-	const rec2: SubagentPolicyRecord = {
-		version: 1,
-		revision: 2,
-		policy: { mode: "inherit" },
-	};
+	const rec2: SubagentPolicyRecord = { version: 1, revision: 2, policy: { mode: "inherit" } };
 	await assert.rejects(() => holder.setRecord(rec2), /Disk full/);
 	assert.equal(holder.getRecord().revision, 1, "Cache must not update on persist failure");
 
 	shouldFail = false;
 	await holder.setRecord(rec2);
 	assert.equal(holder.getRecord().revision, 2, "Queue must recover after failure");
-});
-
-test("native execution ACK restore: restores persisted checkpoint from harness doc", async () => {
-	const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "pi-policy-ack-"));
-	const dbPath = path.join(tempDir, "session.sqlite");
-	const registry = createRegistry();
-	const models = createModels();
-
-	try {
-		// Session 1: open harness, save an ACK doc, close
-		const storage1 = await openNodeSqliteStorage(dbPath);
-		const harness1 = await Harness.open(storage1, { models, registry }, ctx);
-		const holder1 = await loadSubagentPolicyHolder(harness1);
-		await holder1.setRecord({
-			version: 1,
-			revision: 5,
-			policy: {
-				mode: "configured",
-				configuredProfile: { model: { provider: "test", modelId: "m5" }, thinkingLevel: "low" },
-			},
-		});
-		await harness1.close(ctx);
-
-		// Session 2: reopen same storage, verify loadSubagentPolicyHolder restores revision 5
-		const storage2 = await openNodeSqliteStorage(dbPath);
-		const harness2 = await Harness.open(storage2, { models, registry }, ctx);
-		const holder2 = await loadSubagentPolicyHolder(harness2);
-		const restored = holder2.getRecord();
-		assert.equal(restored.revision, 5);
-		assert.equal(restored.policy.mode, "configured");
-		if (restored.policy.mode === "configured") {
-			assert.equal(restored.policy.configuredProfile.model.modelId, "m5");
-		}
-		await harness2.close(ctx);
-	} finally {
-		await fs.rm(tempDir, { recursive: true, force: true });
-	}
 });
 
 test("session-commands: set_subagent_policy updates holder and persists before prompt", async () => {

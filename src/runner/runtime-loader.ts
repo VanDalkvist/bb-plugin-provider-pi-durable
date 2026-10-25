@@ -147,13 +147,22 @@ export async function loadHarnessEnvironment(
 	);
 	runnerRef = mounted.extensionRunner;
 
-	const harness = await Harness.open(
-		await openNodeSqliteStorage(location.database),
-		{ models: modelRuntime, registry, settings, env: envs.env, onReport: report },
-		runtimeContext,
-	);
+	let harness: Harness | undefined;
+	try {
+		harness = await Harness.open(
+			await openNodeSqliteStorage(location.database),
+			{ models: modelRuntime, registry, settings, env: envs.env, onReport: report },
+			runtimeContext,
+		);
 
-	subagentPolicyHolder = await loadSubagentPolicyHolder(harness);
+		subagentPolicyHolder = await loadSubagentPolicyHolder(harness);
+	} catch (error) {
+		await Promise.allSettled([
+			harness?.close(runtimeContext),
+			mounted.cleanup?.(),
+		]);
+		throw error;
+	}
 
 	const initial = location.created
 		? await findInitialAgentModel(settingsManager, modelRuntime, options.cli)

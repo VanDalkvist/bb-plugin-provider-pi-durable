@@ -1,5 +1,6 @@
 import { defineDoc, type Harness, type JsonObject } from "@earendil-works/pi-durable";
 import { subagentPolicyRecordSchema } from "../policy/schema.ts";
+import { SubagentPolicyLoadError } from "../policy/errors.ts";
 import type { SubagentPolicyHolder, SubagentPolicyRecord } from "../policy/types.ts";
 import { createSubagentPolicyHolder } from "./subagent-policy-state.ts";
 import { runtimeContext } from "./runtime-types.ts";
@@ -20,11 +21,14 @@ export async function loadSubagentPolicyHolder(harness: Harness): Promise<Subage
 
 	await harness.commit(async (tx) => {
 		const doc = await tx.doc(SubagentPolicyAckDoc);
-		if (doc.record) {
+		if (doc.record !== null && doc.record !== undefined) {
 			const parsed = subagentPolicyRecordSchema.safeParse(doc.record);
-			if (parsed.success) {
-				initialRecord = parsed.data;
+			if (!parsed.success) {
+				throw new SubagentPolicyLoadError("Stored subagent policy ACK is corrupted", {
+					cause: parsed.error,
+				});
 			}
+			initialRecord = parsed.data;
 		}
 	}, runtimeContext);
 

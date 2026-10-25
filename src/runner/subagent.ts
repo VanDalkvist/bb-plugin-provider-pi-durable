@@ -99,7 +99,7 @@ export function createSubagentExtension(
 								policyRevision: resolved.policyRevision,
 							};
 
-							if (isBackground && typeof tx.createTask === "function") {
+							if (isBackground) {
 								record.reporter = await tx.createTask(
 									DefaultReporter,
 									{ key, conversationId: childId, task: args.task, requestId },
