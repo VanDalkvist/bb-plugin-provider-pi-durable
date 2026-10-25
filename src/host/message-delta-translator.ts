@@ -1,101 +1,27 @@
 import type { CumulativeUsageMetrics, RunnerEvent, ThreadDelta } from "./types.ts";
 
-export const REASONING_PRESENTATION = {
-	label: { pending: "Thinking", completed: "Thought" },
-	icon: { glyph: "Brain" },
-};
-
-export interface MessageTranslationState {
-	currentThinkingIndex: number;
-	currentAgentText: string;
-	openThinkingChannels?: Set<string>;
-}
-
-function ensureReasoningChannelOpen(
-	channel: string,
-	parentRef: string | undefined,
-	hideThinking: boolean,
-	state: MessageTranslationState,
-	deltas: ThreadDelta[],
-): void {
-	if (!state.openThinkingChannels) state.openThinkingChannels = new Set<string>();
-	if (state.openThinkingChannels.has(channel)) return;
-	state.openThinkingChannels.add(channel);
-	deltas.push({
-		kind: "item.open",
-		key: { channel, ...(parentRef ? { parentRef } : {}) },
-		item: { type: "reasoning", summary: [], content: [], ...(parentRef ? { parentToolCallId: parentRef } : {}) },
-		presentation: { ...REASONING_PRESENTATION, ...(hideThinking ? { suppress: true } : {}) },
-	});
-}
+import { translateReasoningUpdate } from "./reasoning-delta-translator.ts";
+import type { MessageTranslationState } from "./message-state.ts";
+export { REASONING_PRESENTATION } from "./reasoning-delta-translator.ts";
+export type { MessageTranslationState } from "./message-state.ts";
 
 export function translateMessageUpdate(
-	asst: Record<string, unknown> | undefined,
-	state: MessageTranslationState,
-	providerOptions?: Record<string, unknown>,
-	parentRef?: string,
+ asst: Record<string, unknown> | undefined,
+ state: MessageTranslationState,
+ providerOptions?: Record<string, unknown>,
+ parentRef?: string,
 ): ThreadDelta[] {
-	if (!asst) return [];
-	const deltas: ThreadDelta[] = [];
-	const hideThinking = Boolean(providerOptions?.hideThinking ?? false);
-
-	if (asst.type === "thinking_start") {
-		const idx = typeof asst.contentIndex === "number" ? asst.contentIndex : state.currentThinkingIndex;
-		const channel = parentRef ? `${parentRef}:thinking-${idx}` : `thinking-${idx}`;
-		ensureReasoningChannelOpen(channel, parentRef, hideThinking, state, deltas);
-	} else if (asst.type === "thinking_delta" && typeof asst.delta === "string") {
-		const idx = typeof asst.contentIndex === "number" ? asst.contentIndex : state.currentThinkingIndex;
-		const channel = parentRef ? `${parentRef}:thinking-${idx}` : `thinking-${idx}`;
-		ensureReasoningChannelOpen(channel, parentRef, hideThinking, state, deltas);
-		deltas.push({
-			kind: "item.textDelta",
-			key: { channel, ...(parentRef ? { parentRef } : {}) },
-			channel: "reasoningText",
-			text: asst.delta,
-		});
-	} else if (asst.type === "thinking_end") {
-		const idx = typeof asst.contentIndex === "number" ? asst.contentIndex : state.currentThinkingIndex;
-		const channel = parentRef ? `${parentRef}:thinking-${idx}` : `thinking-${idx}`;
-		deltas.push({
-			kind: "item.textClose",
-			key: { channel, ...(parentRef ? { parentRef } : {}) },
-			channel: "reasoningText",
-			text: (asst.content as string) ?? "",
-		});
-		state.openThinkingChannels?.delete(channel);
-		state.currentThinkingIndex++;
-	} else if (asst.type === "text_delta" && typeof asst.delta === "string") {
-		if (state.openThinkingChannels && state.openThinkingChannels.size > 0) {
-			for (const channel of state.openThinkingChannels) {
-				deltas.push({
-					kind: "item.textClose",
-					key: { channel, ...(parentRef ? { parentRef } : {}) },
-					channel: "reasoningText",
-					text: "",
-				});
-			}
-			state.openThinkingChannels.clear();
-		}
-		if (parentRef) {
-			const channel = `${parentRef}:agentMessage`;
-			deltas.push({
-				kind: "item.textDelta",
-				key: { channel, parentRef },
-				channel: "agentMessage",
-				text: asst.delta,
-			});
-		} else {
-			state.currentAgentText += asst.delta;
-			deltas.push({
-				kind: "item.textDelta",
-				key: { channel: "agentMessage" },
-				channel: "agentMessage",
-				text: asst.delta,
-			});
-		}
-	}
-
-	return deltas;
+ if (!asst) return [];
+ const deltas = translateReasoningUpdate(asst, state, Boolean(providerOptions?.hideThinking ?? false), parentRef);
+ if (asst.type === "text_delta" && typeof asst.delta === "string") {
+  if (parentRef) {
+   deltas.push({ kind: "item.textDelta", key: { channel: `${parentRef}:agentMessage`, parentRef }, channel: "agentMessage", text: asst.delta });
+  } else {
+   state.currentAgentText += asst.delta;
+   deltas.push({ kind: "item.textDelta", key: { channel: "agentMessage" }, channel: "agentMessage", text: asst.delta });
+  }
+ }
+ return deltas;
 }
 
 export function translateMessageEnd(

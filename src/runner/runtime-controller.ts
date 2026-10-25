@@ -1,4 +1,4 @@
-import type { AttachedReplicatedState } from "@earendil-works/chord";
+import { runCompactionSideEffect } from "./compaction-hooks.ts";
 import { clampThinkingLevel, getSupportedThinkingLevels, type ModelThinkingLevel } from "@earendil-works/pi-ai";
 import type {
 	Conversation,
@@ -13,26 +13,16 @@ import type { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { agentOf, type DurableController, type DurableView, type Notice, runtimeContext } from "./runtime-types.ts";
 
 export interface ControllerContext {
-	getCurrent: () => Conversation;
-	setCurrent: (c: Conversation) => void;
-	getConversationState: () => AttachedReplicatedState<ConversationView>;
-	setConversationState: (cs: AttachedReplicatedState<ConversationView>) => void;
-	getUnsubscribeConversation: () => () => void;
-	setUnsubscribeConversation: (fn: () => void) => void;
-	opened: Harness;
-	modelRuntime: ModelRuntime;
-	getState: () => DurableView;
-	update: (patch: Partial<DurableView>) => void;
-	notice: (level: Notice["level"], message: string) => void;
-	fail: (error: unknown) => void;
-	getTasks: () => AttachedReplicatedState<TaskGraph> | undefined;
-	setTasks: (t: AttachedReplicatedState<TaskGraph> | undefined) => void;
-	setUnsubscribeTasks: (fn: () => void) => void;
-	closeTasks: () => void;
-	setActiveModelRef: (ref: ModelRef) => void;
-	extensionRunner?: import("@earendil-works/pi-coding-agent").ExtensionRunner;
-	dynamicSections?: import("./prompt.ts").DynamicPromptSections;
-	cwd?: string;
+ bindings: import("./runtime-types.ts").RuntimeBindingPort;
+ opened: Harness;
+ modelRuntime: ModelRuntime;
+ getState: () => DurableView;
+ notice: (level: Notice["level"], message: string) => void;
+ fail: (error: unknown) => void;
+ setActiveModelRef: (ref: ModelRef) => void;
+ extensionRunner?: import("@earendil-works/pi-coding-agent").ExtensionRunner;
+ dynamicSections?: import("./prompt.ts").DynamicPromptSections;
+ cwd?: string;
 }
 
 export function createDurableController(ctx: ControllerContext): DurableController {
@@ -95,37 +85,36 @@ export function createDurableController(ctx: ControllerContext): DurableControll
 						);
 					}
 				}
-				return watchAnswer(await ctx.getCurrent().submit({ type: "input", content: input, whenBusy }, runtimeContext));
+				return watchAnswer(await ctx.bindings.current.submit({ type: "input", content: input, whenBusy }, runtimeContext));
 			}),
 
 		compact: (instructions) =>
 			command(async () => {
-				if (ctx.extensionRunner) {
-					try {
-						const ctxView = await ctx.getCurrent().context(runtimeContext).catch(() => undefined);
-						const msgs = ctxView?.messages ? [...ctxView.messages] : [];
-						const entries = ctxView?.entries ? [...ctxView.entries] : [];
-						await ctx.extensionRunner.emit({
+				const extensionRunner = ctx.extensionRunner;
+				if (extensionRunner) {
+					const context = await runCompactionSideEffect("compact_context", () => ctx.bindings.current.context(runtimeContext), ctx.notice);
+					if (context.status === "succeeded") {
+						const ctxView = context.value;
+						const msgs = [...ctxView.messages], entries = [...ctxView.entries];
+						await runCompactionSideEffect("session_before_compact", () => extensionRunner.emit({
 							type: "session_before_compact",
-							preparation: { firstKeptEntryId: ctxView?.head?.id !== undefined ? String(ctxView.head.id) : "", messagesToSummarize: msgs as any, turnPrefixMessages: [], isSplitTurn: false, tokensBefore: 0, fileOps: { read: new Set(), written: new Set(), edited: new Set() }, settings: {} as any },
+							preparation: { firstKeptEntryId: ctxView.head?.id !== undefined ? String(ctxView.head.id) : "", messagesToSummarize: msgs, turnPrefixMessages: [], isSplitTurn: false, tokensBefore: 0, fileOps: { read: new Set(), written: new Set(), edited: new Set() }, settings: {} as any },
 							branchEntries: entries as any, customInstructions: instructions, reason: "manual", willRetry: false, signal: new AbortController().signal,
-						});
-					} catch (err) {
-						ctx.notice("warning", `session_before_compact error: ${err instanceof Error ? err.message : String(err)}`);
+						}), ctx.notice);
 					}
 				}
-				const id = await ctx.getCurrent().compact(instructions, runtimeContext);
+				const id = await ctx.bindings.current.compact(instructions, runtimeContext);
 				void ctx.opened.waitForTask(id, runtimeContext).then(async (receipt) => {
 					const outcome = receipt.state.outcome;
 					if (outcome.status === "completed") {
-						if (ctx.extensionRunner) {
-							void ctx.extensionRunner.emit({
+						if (extensionRunner) {
+							void runCompactionSideEffect("session_compact", () => extensionRunner.emit({
 								type: "session_compact",
 								compactionEntry: { id: outcome.result?.entryId ?? "", type: "compaction", summary: "", tokensBefore: 0, tokensAfter: 0 } as any,
 								fromExtension: false,
 								reason: "manual",
 								willRetry: false,
-							}).catch(() => {});
+							}), ctx.notice).catch(ctx.fail);
 						}
 						const { entryId, submissionId } = outcome.result;
 						const status = submissionId === undefined ? undefined : (await (await ctx.opened.submission(submissionId, runtimeContext))?.status(runtimeContext))?.status;
@@ -139,17 +128,17 @@ export function createDurableController(ctx: ControllerContext): DurableControll
 					} else {
 						ctx.notice("error", `Compaction ${outcome.status}: ${outcome.error?.message ?? outcome.reason ?? ""}`);
 					}
-				}, ctx.fail);
+				}).catch(ctx.fail);
 			}),
 
-		abort: () => ctx.getCurrent().abort(runtimeContext).catch(ctx.fail),
+		abort: () => ctx.bindings.current.abort(runtimeContext).catch(ctx.fail),
 
 		cycleThinking: () =>
 			command(async () => {
 				const model = agentModel();
 				if (!model.reasoning) throw new Error("Current model does not support thinking");
 				const levels = getSupportedThinkingLevels(model), level = agentOf(ctx.getState().conversation).thinkingLevel ?? "off";
-				await ctx.getCurrent().configure({ thinkingLevel: levels[(levels.indexOf(level) + 1) % levels.length] ?? "off" }, runtimeContext);
+				await ctx.bindings.current.configure({ thinkingLevel: levels[(levels.indexOf(level) + 1) % levels.length] ?? "off" }, runtimeContext);
 			}),
 
 		setThinkingLevel: (targetLevel: ModelThinkingLevel) =>
@@ -157,11 +146,11 @@ export function createDurableController(ctx: ControllerContext): DurableControll
 				const model = agentModel();
 				if (!model.reasoning) {
 					if (targetLevel === "off" || (targetLevel as string) === "none") {
-						return void (await ctx.getCurrent().configure({ thinkingLevel: "off" }, runtimeContext));
+						return void (await ctx.bindings.current.configure({ thinkingLevel: "off" }, runtimeContext));
 					}
 					throw new Error("Current model does not support thinking");
 				}
-				await ctx.getCurrent().configure({ thinkingLevel: clampThinkingLevel(model, targetLevel) }, runtimeContext);
+				await ctx.bindings.current.configure({ thinkingLevel: clampThinkingLevel(model, targetLevel) }, runtimeContext);
 			}),
 
 		setModel: (ref) =>
@@ -170,29 +159,20 @@ export function createDurableController(ctx: ControllerContext): DurableControll
 				if (model === undefined) throw new Error(`Unknown model: ${ref.provider}/${ref.modelId}`);
 				ctx.setActiveModelRef(ref);
 				const thinking: ModelThinkingLevel = agentOf(ctx.getState().conversation).thinkingLevel ?? "off";
-				await ctx.getCurrent().configure({ model: ref, thinkingLevel: clampThinkingLevel(model, thinking) }, runtimeContext);
+				await ctx.bindings.current.configure({ model: ref, thinkingLevel: clampThinkingLevel(model, thinking) }, runtimeContext);
 			}),
 
 		toggleTasks: () =>
 			command(async () => {
-				if (ctx.getTasks() !== undefined) {
-					ctx.closeTasks();
-					ctx.update({ tasks: undefined });
-					return;
-				}
-				const graph = await ctx.opened.taskGraph(runtimeContext);
-				ctx.setTasks(graph);
-				ctx.setUnsubscribeTasks(graph.subscribe((value) => ctx.update({ tasks: value })));
+				if (ctx.bindings.tasksOpen) return ctx.bindings.closeTasks();
+				ctx.bindings.attachTasks(await ctx.opened.taskGraph(runtimeContext));
 			}),
 
 		switchConversation: (id: ConversationId) =>
 			command(async () => {
 				const next = await ctx.opened.conversation(id, runtimeContext);
 				if (next === undefined) throw new Error(`Conversation ${id} does not exist`);
-				const nextState = await next.viewState(runtimeContext);
-				ctx.getUnsubscribeConversation()(); ctx.getConversationState().dispose();
-				ctx.setCurrent(next); ctx.setConversationState(nextState);
-				ctx.setUnsubscribeConversation(nextState.subscribe((value) => ctx.update({ conversation: value })));
+				ctx.bindings.bindConversation(next, await next.viewState(runtimeContext));
 			}),
 	};
 }

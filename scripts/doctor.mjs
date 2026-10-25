@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { inspectPiEnvironment } from "../src/runner/diagnostics.ts";
+import { inspectPiEnvironment } from "../src/host/diagnostics.ts";
 
 async function main() {
 	console.log("\n========================================================");

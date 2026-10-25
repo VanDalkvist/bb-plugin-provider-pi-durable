@@ -5,7 +5,7 @@ import { buildFinalAssistantMessage } from "../src/runner/bridge/assistant-messa
 import { resolveTurnSummary } from "../src/runner/bridge/turn-summary.ts";
 import { translateAgentEnd } from "../src/host/message-delta-translator.ts";
 import type { BBWireEvent } from "../src/runner/bridge/contracts.ts";
-import type { DurableView } from "../src/runner/runtime.ts";
+import type { DurableView } from "../src/runner/runtime-types.ts";
 import type { AgentEvent } from "@earendil-works/pi-durable";
 
 test("BBEventAdapter: message_end with error stopReason and empty content populates user-visible error text", () => {

@@ -1,3 +1,4 @@
+import type { PromptRequest } from "../src/host/prompt-request.ts";
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { handleTurnStart, handleTurnSteer, type BridgeRouterContext } from "../src/host/bridge-router.ts";
@@ -31,9 +32,8 @@ describe("Subagent Mirror Guard & Root Isolation (Task 6)", () => {
 				thinkingLevel: "high",
 				initialTurnConsumed: true,
 			}),
-			prompt: async (text: string, imagesOrConvId?: any, convId?: string) => {
-				const cid = typeof imagesOrConvId === "string" ? imagesOrConvId : convId;
-				promptCalledWith = { text, conversationId: cid };
+			prompt: async ({ text, conversationId }: PromptRequest) => {
+				promptCalledWith = { text, conversationId };
 			},
 		};
 

@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { SUPPORTED_EXTENSION_HOOKS } from "../src/runner/diagnostics-types.ts";
+import { SUPPORTED_EXTENSION_HOOKS } from "../src/host/diagnostics-hooks.ts";
 import { setupExtensionRunner } from "../src/runner/extension-bridge.ts";
 import {
 	DefaultResourceLoader,

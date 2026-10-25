@@ -1,6 +1,6 @@
 import { defineRpcContract } from "@get-bb/plugin-sdk";
 import { z } from "zod";
-import type { PiDiagnosticsReport } from "../runner/diagnostics-types.ts";
+import { piDiagnosticsReportSchema } from "../contracts/diagnostics.ts";
 import {
   subagentPolicyRecordSchema,
   subagentPolicySetInputSchema,
@@ -10,7 +10,7 @@ export const rpcContract = defineRpcContract({
   diagnostics_get: {
     input: z.object({}).optional(),
     output: z.object({
-      report: z.custom<PiDiagnosticsReport>(),
+      report: piDiagnosticsReportSchema,
     }),
   },
   subagent_policy_get: {

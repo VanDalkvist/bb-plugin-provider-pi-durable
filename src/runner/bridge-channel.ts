@@ -1,6 +1,7 @@
 import { Socket } from "node:net";
 import { writeSync } from "node:fs";
 import { attachJsonlLineReader } from "./jsonl.ts";
+import { runnerBridgeRequestSchema } from "../contracts/runner-channel.ts";
 
 const CHILD_TO_BRIDGE_FD = 3;
 const BRIDGE_TO_CHILD_FD = 4;
@@ -37,7 +38,10 @@ export function initBridgeInboundChannel(
 			const trimmed = line.trim();
 			if (!trimmed) return;
 			try {
-				const req = JSON.parse(trimmed);
+				const value: unknown = JSON.parse(trimmed);
+				const result = runnerBridgeRequestSchema.safeParse(value);
+				if (!result.success) throw new Error("INVALID_BRIDGE_REQUEST");
+				const req = result.data;
 				if (req.kind === "request") {
 					if (req.method === "model-scope") {
 						sendToBridge({ kind: "reply", id: req.id, result: modelScope });
@@ -50,7 +54,8 @@ export function initBridgeInboundChannel(
 					}
 				}
 			} catch (err) {
-				console.error("[Runner] Failed to parse or process bridge channel message:", err);
+				console.error(JSON.stringify({ component: "RunnerBridgeChannel", operation: "inbound_request", code: "INVALID_MESSAGE", severity: "error", outcome: "failed" }));
+				bridgeIn.destroy();
 			}
 		});
 	} catch (err) {

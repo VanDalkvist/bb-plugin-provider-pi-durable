@@ -54,6 +54,7 @@ describe("Subagent Lifecycle Fixes & Late Binding (Task 7)", () => {
 				result: "done",
 				initialTurnConsumed: false,
 			}),
+			markInitialMirrorTurnConsumed: () => {},
 			registerThread: () => {
 				registered = true;
 				// registerThread flushes the buffered deltas including turn.boundary via ctx.sendNotification
@@ -65,6 +66,7 @@ describe("Subagent Lifecycle Fixes & Late Binding (Task 7)", () => {
 						{ kind: "turn.boundary", status: "completed" },
 					],
 				});
+				return true;
 			},
 			getMirrorOutputText: () => "done",
 			consumeCompletedMirror: () => {},

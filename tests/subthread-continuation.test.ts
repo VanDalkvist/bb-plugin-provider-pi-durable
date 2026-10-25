@@ -1,3 +1,4 @@
+import type { PromptRequest } from "../src/host/prompt-request.ts";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { SessionRegistry } from "../src/host/session-registry.ts";
@@ -18,13 +19,15 @@ test("User can continue conversation in subthread after subagent initial run com
 	const mockSession = {
 		runner: { exited: false },
 		options: { threadId: "thr_parent", providerThreadId: "pi_durable_root" },
-		prompt: async (text: string) => {
+		prompt: async ({ text }: PromptRequest) => {
 			promptCalls++;
 			lastPromptText = text;
 		},
 		getSubagentState: (convId: string) => mirrors.getState(convId),
 		consumeCompletedMirror: (convId: string) => mirrors.consumeCompleted(convId),
-		registerThread: () => {},
+		markInitialMirrorTurnConsumed: (id: string) => mirrors.markInitialTurnConsumed(id),
+		getMirrorOutputText: (id: string) => mirrors.getOutputText(id),
+		registerThread: () => false,
 	} as unknown as PiThreadSession;
 
 	const registry = new SessionRegistry(() => {});

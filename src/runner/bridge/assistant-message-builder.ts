@@ -1,5 +1,5 @@
 import type { AssistantMessage } from "@earendil-works/pi-ai";
-import type { DurableView } from "../runtime.ts";
+import type { DurableView } from "../runtime-types.ts";
 import {
 	isUsageDocument,
 	isConversationEntryRecord,

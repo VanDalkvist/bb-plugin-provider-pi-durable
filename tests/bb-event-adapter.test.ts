@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { BBEventAdapter } from "../src/runner/bridge/bb-event-adapter.ts";
 import { DeltaTranslator } from "../src/host/delta-translator.ts";
-import type { DurableView } from "../src/runner/runtime.ts";
+import type { DurableView } from "../src/runner/runtime-types.ts";
 import type { BBWireEvent } from "../src/runner/bridge/contracts.ts";
 
 test("BBEventAdapter handles native AgentEvent stream correctly", () => {

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { nativeChildTitle } from "../src/runner/child-title.ts";
+import { nativeChildTitle } from "../src/shared/child-title.ts";
 import { BBChildEventAdapter } from "../src/runner/bridge/bb-child-event-adapter.ts";
 import { buildSpawnArgs } from "../src/host/subthread-spawner.ts";
 import type { BBWireEvent } from "../src/runner/bridge/contracts.ts";

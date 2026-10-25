@@ -4,7 +4,7 @@ import { RunnerProcess } from "../src/host/runner-process.ts";
 import { PiThreadSession } from "../src/host/session.ts";
 import { DeltaTranslator } from "../src/host/delta-translator.ts";
 import { BBEventAdapter } from "../src/runner/bridge/bb-event-adapter.ts";
-import type { DurableView } from "../src/runner/runtime.ts";
+import type { DurableView } from "../src/runner/runtime-types.ts";
 import type { BBWireEvent } from "../src/runner/bridge/contracts.ts";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -31,6 +31,7 @@ describe("Context Window Telemetry & Usage Synchronization (Cycle 57)", () => {
 			// If request resolves via handleIncoming
 			const mockPending = (runner as any).pendingRequests;
 			mockPending.set("req_100", {
+				command: "get_session_stats",
 				resolve: (val: any) => val,
 				reject: (err: any) => { throw err; },
 			});

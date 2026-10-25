@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { threadDeltaSchema } from "@get-bb/plugin-sdk/provider-bridge";
 import { translateAgentEnd } from "../src/host/message-delta-translator.ts";
 import { BBEventAdapter } from "../src/runner/bridge/bb-event-adapter.ts";
-import type { DurableView } from "../src/runner/runtime.ts";
+import type { DurableView } from "../src/runner/runtime-types.ts";
 import type {
 	BBWireEvent,
 	BBTurnEndEvent,

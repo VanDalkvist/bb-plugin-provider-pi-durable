@@ -55,23 +55,8 @@ export interface SessionOptions {
 	providerOptions?: Record<string, unknown>;
 }
 
-export interface CumulativeUsageMetrics {
-	totalTokens: number;
-	inputTokens: number;
-	outputTokens: number;
-	cachedInputTokens?: number;
-	cacheWriteInputTokens?: number;
-}
-
-export interface RunnerEvent {
-	type: string;
-	providerCheckpointId?: string;
-	cumulativeUsage?: CumulativeUsageMetrics;
-	aborted?: boolean;
-	stopReason?: string;
-	errorMessage?: string;
-	[key: string]: unknown;
-}
+export type { CumulativeUsageMetrics } from "../contracts/wire-context.ts";
+export type { RunnerEvent } from "../contracts/runner-event.ts";
 
 export interface ThreadDelta {
 	kind: string;

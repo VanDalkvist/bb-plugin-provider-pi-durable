@@ -2,7 +2,8 @@ import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
 import { requireExtensionPath } from "./paths.ts";
 import { RunnerProcess } from "./runner-process.ts";
 import type { AvailableModelDescriptor, ModelScope } from "./types.ts";
-import { inspectPiEnvironment, type PiDiagnosticsReport } from "../runner/diagnostics.ts";
+import { inspectPiEnvironment } from "./diagnostics.ts";
+import type { PiDiagnosticsReport } from "../contracts/diagnostics.ts";
 
 export class ModelCatalog {
 	private cwd: string;

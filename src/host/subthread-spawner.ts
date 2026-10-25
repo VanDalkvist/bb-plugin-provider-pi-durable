@@ -4,7 +4,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { getBbDataDir } from "./paths.ts";
-import { nativeChildTitle } from "../runner/child-title.ts";
+import { nativeChildTitle } from "../shared/child-title.ts";
 
 const execFileAsync = promisify(execFile);
 

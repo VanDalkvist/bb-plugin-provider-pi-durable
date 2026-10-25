@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { inspectPiEnvironment, SUPPORTED_EXTENSION_HOOKS } from "../src/runner/diagnostics.ts";
+import { inspectPiEnvironment } from "../src/host/diagnostics.ts";
+import { SUPPORTED_EXTENSION_HOOKS } from "../src/host/diagnostics-hooks.ts";
 
 test("Pi Diagnostics: inspectPiEnvironment returns well-formed report", async () => {
   const report = await inspectPiEnvironment({ cwd: process.cwd() });

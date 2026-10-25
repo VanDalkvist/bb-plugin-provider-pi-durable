@@ -1,4 +1,5 @@
 import type { SessionRegistry } from "./session-registry.ts";
+import { adoptInitialMirror } from "./mirror-adoption.ts";
 import { extractPiPromptInput, isCompactCommand, extractCompactInstructions } from "./prompt-input.ts";
 import { reconcileSessionOptions } from "./session-reconcile.ts";
 import { isChildTurn, validateChildTurn, sendInputAccepted, resolveTargetConversationId, synthesizeCompletionDeltas } from "./child-turn-guard.ts";
@@ -66,47 +67,30 @@ export async function handleTurnStart(id: string | number, params: TurnStartPara
 		}
 
 		const mirror = targetConversationId && typeof session.getSubagentState === "function" ? session.getSubagentState(targetConversationId) : undefined;
-		const isInitial = mirror !== undefined && !mirror.initialTurnConsumed && mirror.task.trim() !== "" &&
-			(mirror.task.trim() === text.trim() || mirror.task.trim().startsWith(text.trim()) || text.trim().startsWith(mirror.task.trim()));
-
-		if (isInitial && mirror?.status === "running") {
-			mirror.initialTurnConsumed = true;
-			session.registerThread?.(params.threadId, targetConversationId);
-			sendInputAccepted(ctx.sendNotification, params.threadId, params.clientRequestId);
-			ctx.sendNotification("thread/delta", { threadId: params.threadId, deltas: [{ kind: "turn.open" }] });
-			ctx.sendResult(id, { threadId: params.threadId });
-			return;
-		}
-		if (isInitial && mirror?.status === "completed") {
-			mirror.initialTurnConsumed = true;
-			let boundaryEmitted = false;
-			const originalSend = ctx.sendNotification;
-			ctx.sendNotification = (method, p) => {
-				if (method === "thread/delta" && p?.threadId === params.threadId && Array.isArray(p.deltas)) {
-					if (p.deltas.some((d: any) => d.kind === "turn.boundary")) {
-						boundaryEmitted = true;
-					}
+		if (targetConversationId && mirror) {
+			const adoption = adoptInitialMirror(mirror, text, {
+				markConsumed: () => session.markInitialMirrorTurnConsumed(targetConversationId),
+				register: () => session.registerThread(params.threadId, targetConversationId),
+				output: () => session.getMirrorOutputText(targetConversationId),
+				consumeCompleted: () => session.consumeCompletedMirror(targetConversationId),
+			});
+			if (adoption.kind === "running") {
+				sendInputAccepted(ctx.sendNotification, params.threadId, params.clientRequestId);
+				ctx.sendNotification("thread/delta", { threadId: params.threadId, deltas: [{ kind: "turn.open" }] });
+				ctx.sendResult(id, { threadId: params.threadId });
+				return;
+			}
+			if (adoption.kind === "completed") {
+				sendInputAccepted(ctx.sendNotification, params.threadId, params.clientRequestId);
+				ctx.sendResult(id, { threadId: params.threadId });
+				if (!adoption.terminalEmitted) {
+					ctx.sendNotification("thread/delta", { threadId: params.threadId, deltas: synthesizeCompletionDeltas(adoption.outputText) });
 				}
-				originalSend(method, p);
-			};
-			try {
-				session.registerThread?.(params.threadId, targetConversationId);
-			} finally {
-				ctx.sendNotification = originalSend;
+				return;
 			}
-
-			const outputText = typeof session.getMirrorOutputText === "function" && targetConversationId ? session.getMirrorOutputText(targetConversationId) : (mirror.result || "");
-			if (typeof session.consumeCompletedMirror === "function" && targetConversationId) session.consumeCompletedMirror(targetConversationId);
-			sendInputAccepted(ctx.sendNotification, params.threadId, params.clientRequestId);
-			ctx.sendResult(id, { threadId: params.threadId });
-
-			if (!boundaryEmitted) {
-				ctx.sendNotification("thread/delta", { threadId: params.threadId, deltas: synthesizeCompletionDeltas(outputText) });
-			}
-			return;
 		}
 
-		await session.prompt(text, images.length > 0 ? images : targetConversationId, images.length > 0 ? targetConversationId : undefined);
+		await session.prompt({ text, images, conversationId: targetConversationId });
 		sendInputAccepted(ctx.sendNotification, params.threadId, params.clientRequestId);
 		ctx.sendResult(id, { threadId: params.threadId });
 		return;
@@ -137,7 +121,7 @@ export async function handleTurnStart(id: string | number, params: TurnStartPara
 	const { text, images } = promptInput;
 
 	await reconcileSessionOptions(session, params.options, params.providerOptions);
-	await session.prompt(text, images.length > 0 ? images : undefined, undefined);
+	await session.prompt({ text, images });
 	sendInputAccepted(ctx.sendNotification, params.threadId, params.clientRequestId);
 	ctx.sendResult(id, { threadId: params.threadId });
 }
@@ -164,7 +148,7 @@ export async function handleTurnSteer(id: string | number, params: TurnSteerPara
 			ctx.sendError(id, validation.code, validation.message);
 			return;
 		}
-		await session.steer(text, images.length > 0 ? images : targetConversationId, images.length > 0 ? targetConversationId : undefined);
+		await session.steer({ text, images, conversationId: targetConversationId });
 		sendInputAccepted(ctx.sendNotification, params.threadId, params.clientRequestId);
 		ctx.sendResult(id, { threadId: params.threadId });
 		return;
@@ -176,7 +160,7 @@ export async function handleTurnSteer(id: string | number, params: TurnSteerPara
 	}
 
 	await reconcileSessionOptions(session, params.options, params.providerOptions);
-	await session.steer(text, images.length > 0 ? images : undefined, undefined);
+	await session.steer({ text, images });
 	sendInputAccepted(ctx.sendNotification, params.threadId, params.clientRequestId);
 	ctx.sendResult(id, { threadId: params.threadId });
 }

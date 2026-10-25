@@ -4,7 +4,7 @@ import { threadDeltaSchema } from "@get-bb/plugin-sdk/provider-bridge";
 import { BBEventAdapter } from "../src/runner/bridge/bb-event-adapter.ts";
 import { translateAgentEnd } from "../src/host/message-delta-translator.ts";
 import { DeltaTranslator } from "../src/host/delta-translator.ts";
-import type { DurableView } from "../src/runner/runtime.ts";
+import type { DurableView } from "../src/runner/runtime-types.ts";
 import type {
 	BBWireEvent,
 	BBTurnEndEvent,

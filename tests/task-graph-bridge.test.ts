@@ -4,7 +4,7 @@ import type { TaskGraph, TaskGraphNode, TaskGraphState } from "@earendil-works/p
 import { threadDeltaSchema } from "@get-bb/plugin-sdk/provider-bridge";
 import { taskSteps, startTaskGraphBridge } from "../src/runner/task-graph-bridge.ts";
 import { TaskNames } from "../src/runner/task-labels.ts";
-import type { DurableView } from "../src/runner/runtime.ts";
+import type { DurableView } from "../src/runner/runtime-types.ts";
 import { DeltaTranslator } from "../src/host/delta-translator.ts";
 import type { BBPlanStep } from "../src/runner/bridge/contracts.ts";
 import type { DurableViewSource } from "../src/runner/runtime-types.ts";

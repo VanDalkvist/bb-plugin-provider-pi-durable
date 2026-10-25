@@ -160,8 +160,10 @@ test("handleTurnStart intercepts running subagent turn on child thread and suppr
 		},
 		findSubagentConversationForTask: (task: string) => (task === "Run background test" ? "conv_sub_bg" : undefined),
 		getSubagentState: (convId: string) => (convId === "conv_sub_bg" ? { status: "running", task: "Run background test" } : undefined),
+		markInitialMirrorTurnConsumed: () => {},
 		registerThread: (threadId: string, conversationId?: string) => {
 			registeredThreads.push({ threadId, conversationId });
+			return false;
 		},
 	} as unknown as PiThreadSession;
 

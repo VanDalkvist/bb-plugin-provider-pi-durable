@@ -4,7 +4,7 @@ import {
 	type Extension, type Task,
 } from "@earendil-works/pi-durable";
 import { SubagentsDoc, extractAssistantText } from "./subagent-docs.ts";
-import { nativeChildTitle } from "./child-title.ts";
+import { nativeChildTitle } from "../shared/child-title.ts";
 export { answerText } from "./subagent-docs.ts";
 
 export const BACKGROUND = { ownership: { kind: "conversation" }, background: true } as const;

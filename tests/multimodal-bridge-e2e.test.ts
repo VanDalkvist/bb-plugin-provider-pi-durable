@@ -1,3 +1,4 @@
+import type { PromptRequest } from "../src/host/prompt-request.ts";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
@@ -20,7 +21,7 @@ test("Multimodal Bridge E2E: turn/start accepts image-only input without -32602 
 
 	const fakeSession: any = {
 		options: { threadId: "thr_test_1" },
-		prompt: async (text: string, images?: any[], conversationId?: string) => {
+		prompt: async ({ text, images, conversationId }: PromptRequest) => {
 			promptedText = text;
 			promptedImages = images;
 			promptedConvId = conversationId;

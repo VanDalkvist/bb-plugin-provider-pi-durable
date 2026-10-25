@@ -1,4 +1,4 @@
-import type { DurableView } from "../runtime.ts";
+import type { DurableView } from "../runtime-types.ts";
 import type { LiveState } from "@earendil-works/pi-durable";
 import {
 	isToolCallBlock,

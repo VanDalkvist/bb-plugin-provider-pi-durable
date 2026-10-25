@@ -4,7 +4,7 @@ import { DeltaTranslator } from "../src/host/delta-translator.ts";
 import { BBEventAdapter } from "../src/runner/bridge/bb-event-adapter.ts";
 import { BBChildEventAdapter } from "../src/runner/bridge/bb-child-event-adapter.ts";
 import type { AgentEvent } from "@earendil-works/pi-durable";
-import type { DurableView } from "../src/runner/runtime.ts";
+import type { DurableView } from "../src/runner/runtime-types.ts";
 import type { BBWireEvent } from "../src/runner/bridge/contracts.ts";
 
 describe("Codemode Hierarchy and Delegation Parity (Cycle 103)", () => {

@@ -66,13 +66,16 @@ export class SubagentMirrorManager {
 		translator: import("./delta-translator.ts").DeltaTranslator,
 		options: { threadId: string; cwd?: string; providerOptions?: Record<string, unknown> },
 		emit: (threadId: string, deltas: import("./types.ts").ThreadDelta[]) => void,
-	): void {
+	): boolean {
+		let terminalEmitted = false;
 		const buffered = this.drainBufferedEvents(conversationId);
 		for (const event of buffered) {
 			const childEvent = { ...event, parentRef: undefined };
 			const deltas = translator.translate(childEvent, options);
+			if (deltas.some((delta) => delta.kind === "turn.boundary")) terminalEmitted = true;
 			if (deltas.length > 0) emit(options.threadId, deltas);
 		}
+		return terminalEmitted;
 	}
 
 	public appendOutputText(conversationId: string | number, delta: string): void {

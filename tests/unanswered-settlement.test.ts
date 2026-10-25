@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { BBEventAdapter } from "../src/runner/bridge/bb-event-adapter.ts";
 import { translateAgentEnd } from "../src/host/message-delta-translator.ts";
-import type { DurableView } from "../src/runner/runtime.ts";
+import type { DurableView } from "../src/runner/runtime-types.ts";
 
 test("Issue #23 reproduction: unanswered input submission with toolUse progress must produce failed turn boundary", () => {
 	const outputEvents: any[] = [];

@@ -6,7 +6,7 @@ import {
 	translateToolStart,
 	translateToolEnd,
 } from "../src/host/tool-delta-translator.ts";
-import type { DurableView } from "../src/runner/runtime.ts";
+import type { DurableView } from "../src/runner/runtime-types.ts";
 import type { BBWireEvent, BBToolExecutionEndEvent, BBToolExecutionUpdateEvent } from "../src/runner/bridge/contracts.ts";
 
 test("BBEventAdapter: tool_execution_end with missing entry and result emits isError: true with fault result (D-5)", () => {

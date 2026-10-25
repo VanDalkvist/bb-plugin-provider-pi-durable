@@ -1,5 +1,5 @@
 import type { AgentEvent, SnapshotEvent } from "@earendil-works/pi-durable";
-import type { DurableView } from "../runtime.ts";
+import type { DurableView } from "../runtime-types.ts";
 import type { BBWireEvent, BBAssistantMessage, BBAssistantMessageUsage } from "./contracts.ts";
 import { resolveTurnSummary, findSubmissionFault } from "./turn-summary.ts";
 import { ToolEventProjector } from "./tool-result-extractor.ts";

@@ -1,5 +1,5 @@
 import type { AgentEvent } from "@earendil-works/pi-durable";
-import type { DurableView } from "../runtime.ts";
+import type { DurableView } from "../runtime-types.ts";
 import type { BBWireEvent } from "./contracts.ts";
 import { ToolEventProjector } from "./tool-result-extractor.ts";
 import { resolveChildRunOutcome } from "./child-run-outcome.ts";

@@ -79,7 +79,8 @@ test("handleTurnStart: running mirror emits turn.open to prevent 120s timeout", 
 		options: { threadId: "thr_parent" },
 		findSubagentConversationForTask: () => "conv_running_1",
 		getSubagentState: (id: string) => (id === "conv_running_1" ? { status: "running", task: "Audit" } : undefined),
-		registerThread: () => {},
+		markInitialMirrorTurnConsumed: () => {},
+		registerThread: () => false,
 	} as unknown as PiThreadSession;
 
 	const registry = new SessionRegistry(() => {});
@@ -127,7 +128,8 @@ test("handleTurnStart: completed mirror emits turn.open, accumulated text, and t
 		getSubagentState: (id: string) => (id === "conv_done_1" ? { status: "completed", task: "Quick Task", result: "Task complete result!" } : undefined),
 		getMirrorOutputText: () => "Task complete result!",
 		consumeCompletedMirror: () => {},
-		registerThread: () => {},
+		markInitialMirrorTurnConsumed: () => {},
+		registerThread: () => false,
 	} as unknown as PiThreadSession;
 
 	const registry = new SessionRegistry(() => {});

@@ -8,7 +8,7 @@ import {
 } from "@earendil-works/pi-durable";
 import { SubagentsDoc, type SubagentRecord } from "./subagent-docs.ts";
 import { BACKGROUND, DefaultReporter, answerText } from "./subagent-delivery.ts";
-import { nativeChildTitle } from "./child-title.ts";
+import { nativeChildTitle } from "../shared/child-title.ts";
 import { buildTechnicalWorkerRole } from "./subagent-role.ts";
 import { resolveSubagentModelConfiguration } from "../policy/resolver.ts";
 import type { SubagentPolicyRecord } from "../policy/types.ts";

@@ -1,3 +1,4 @@
+import type { PromptRequest } from "../src/host/prompt-request.ts";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -32,7 +33,7 @@ test("End-to-End Mirror Sync: Subagent execution events stream into child BB thr
 	);
 
 	// Intercept prompt calls to ensure no duplicate LLM prompt is executed
-	session.prompt = async (text: string, convId?: string) => {
+	session.prompt = async ({ text, conversationId: convId }: PromptRequest) => {
 		promptCallCount++;
 		promptedText = text;
 		promptedConvId = convId;

@@ -1,3 +1,4 @@
+import type { PromptRequest } from "../src/host/prompt-request.ts";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { parseProviderThreadId, formatProviderThreadId } from "../src/host/composite-id.ts";
@@ -91,10 +92,10 @@ test("bridge-router propagates conversationId to session prompt, steer, and abor
 			threadId: "thr_child",
 			providerThreadId: "pi_durable_root:conv_child99",
 		},
-		prompt: async (text: string, conversationId?: string) => {
+		prompt: async ({ text, conversationId }: PromptRequest) => {
 			promptArgs = { text, conversationId };
 		},
-		steer: async (text: string, conversationId?: string) => {
+		steer: async ({ text, conversationId }: PromptRequest) => {
 			steerArgs = { text, conversationId };
 		},
 		abort: async (conversationId?: string) => {

@@ -1,3 +1,4 @@
+import type { PromptRequest } from "../src/host/prompt-request.ts";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { SessionRegistry } from "../src/host/session-registry.ts";
@@ -14,7 +15,7 @@ test("VERIFICATION 1: Without mirror guard, spawning a subthread triggers a dupl
 			threadId: "thr_parent",
 			providerThreadId: "pi_durable_root",
 		},
-		prompt: async (text: string, conversationId?: string) => {
+		prompt: async ({ text, conversationId }: PromptRequest) => {
 			promptCallCount++;
 			promptArgs = { text, conversationId };
 		},
@@ -77,7 +78,7 @@ test("VERIFICATION 2: With Active Subagent Deduplication Pattern, prompt is NOT 
 
 		// Otherwise, normal prompt execution
 		promptCallCount++;
-		await session.prompt(params.input[0].text, conversationId);
+		await session.prompt({ text: params.input[0].text, conversationId });
 		return { duplicateRunPrevented: false };
 	}
 

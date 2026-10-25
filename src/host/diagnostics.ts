@@ -5,18 +5,12 @@ import {
 	ModelRuntime,
 	SettingsManager,
 } from "@earendil-works/pi-coding-agent";
-import { createStandardExtensionFactories, setupExtensionRunner } from "./extension-bridge.ts";
-import { getAgentDir } from "./session-storage.ts";
-import { resolvePluginVersion } from "../host/installation-manager.ts";
-import { getPiDurableVersion } from "./version.ts";
-import {
-	SUPPORTED_EXTENSION_HOOKS,
-	type ExtensionDiagnostic,
-	type PiDiagnosticsReport,
-	type PiPathStatus,
-} from "./diagnostics-types.ts";
-
-export * from "./diagnostics-types.ts";
+import { createStandardExtensionFactories, setupExtensionRunner } from "../runner/extension-bridge.ts";
+import { getAgentDir } from "../runner/session-storage.ts";
+import { resolvePluginVersion } from "./installation-manager.ts";
+import { getPiDurableVersion } from "../runner/version.ts";
+import { SUPPORTED_EXTENSION_HOOKS } from "./diagnostics-hooks.ts";
+import type { ExtensionDiagnostic, PiDiagnosticsReport, PiPathStatus } from "../contracts/diagnostics.ts";
 
 function checkPath(fullPath: string, type: "file" | "directory", required: boolean): PiPathStatus {
 	const exists = existsSync(fullPath);

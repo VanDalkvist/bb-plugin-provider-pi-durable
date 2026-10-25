@@ -1,3 +1,4 @@
+import type { PromptRequest } from "../src/host/prompt-request.ts";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { threadDeltaSchema } from "@get-bb/plugin-sdk/provider-bridge";
@@ -82,7 +83,7 @@ test("Slice 6.1: handleTurnSteer on child thread resolves child conversation wit
 	let steerArgs: { text: string; conversationId?: string } | undefined;
 	const mockSession = {
 		options: { threadId: "thr_parent", providerThreadId: "pi_durable_root:1" },
-		steer: async (text: string, conversationId?: string) => {
+		steer: async ({ text, conversationId }: PromptRequest) => {
 			steerArgs = { text, conversationId };
 		},
 		getConversationIdForThread: (threadId: string) => {

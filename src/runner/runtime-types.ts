@@ -4,6 +4,7 @@ import type { ModelThinkingLevel } from "@earendil-works/pi-ai";
 import {
 	type AgentState,
 	type ConversationId,
+	type Conversation,
 	type ConversationView,
 	type Cursor,
 	type EntryRecord,
@@ -47,6 +48,20 @@ export interface DurableView {
 export interface DurableViewSource {
 	current(): DurableView;
 	subscribe(listener: () => void): () => void;
+}
+
+export interface RuntimeReadBinding<T> {
+	readonly value: T;
+	subscribe(listener: (value: T) => void): () => void;
+	dispose(): void;
+}
+
+export interface RuntimeBindingPort {
+	readonly current: Conversation;
+	readonly tasksOpen: boolean;
+	bindConversation(conversation: Conversation, view: RuntimeReadBinding<ConversationView>): void;
+	attachTasks(view: RuntimeReadBinding<TaskGraph>): void;
+	closeTasks(): void;
 }
 
 export interface DurableController {

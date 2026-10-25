@@ -6,7 +6,7 @@ import {
 	translateToolStart,
 	translateToolEnd,
 } from "../src/host/tool-delta-translator.ts";
-import type { DurableView } from "../src/runner/runtime.ts";
+import type { DurableView } from "../src/runner/runtime-types.ts";
 import type { BBWireEvent, BBToolExecutionEndEvent } from "../src/runner/bridge/contracts.ts";
 
 test("BBEventAdapter: tool_execution_end forwards canonical details from model[0].details (D-6)", () => {

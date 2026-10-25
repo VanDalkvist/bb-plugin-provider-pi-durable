@@ -1,6 +1,8 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { resolveRunnerPath } from "./paths.ts";
 import { RunnerRpcChannel } from "./runner-rpc-channel.ts";
+import { RunnerProtocolError } from "./runner-protocol-error.ts";
+import type { RunnerChannelFrame } from "../contracts/runner-channel.ts";
 import type { RunnerEvent } from "./types.ts";
 import { writeRunnerPrompts, type SessionPrompts } from "./runner-prompts.ts";
 
@@ -9,8 +11,9 @@ export interface RunnerProcessOptions {
 	args: string[];
 	prompts?: SessionPrompts & { scratchDir: string };
 	env?: Record<string, string>;
-	onEvent?: (event: RunnerEvent) => void;
-	onChannelMessage?: (msg: unknown) => void;
+	onEvent?: (event: RunnerEvent) => void | Promise<void>;
+	onChannelMessage?: (msg: RunnerChannelFrame) => void;
+	onProtocolError?: (error: RunnerProtocolError) => void;
 	onError?: (err: Error) => void;
 	onExit?: (code: number | null, signal: NodeJS.Signals | null) => void;
 }
@@ -18,7 +21,10 @@ export interface RunnerProcessOptions {
 export class RunnerProcess {
 	private options: RunnerProcessOptions;
 	private child: ChildProcess;
-	private channel = new RunnerRpcChannel();
+	private channel = new RunnerRpcChannel((error) => {
+		this.options.onProtocolError?.(error);
+		this.options.onError?.(error);
+	});
 	public exited = false;
 	private cleanupPrompts: () => void;
 
@@ -87,9 +93,11 @@ export class RunnerProcess {
 		const handled = this.channel.handleIncoming(msg);
 		if (!handled) {
 			try {
-				this.options.onEvent?.(msg);
-			} catch (err) {
-				console.error("[RunnerProcess] onEvent subscriber threw an error:", err);
+				void Promise.resolve(this.options.onEvent?.(msg)).catch((cause: unknown) => {
+					this.channel.failProtocol(new RunnerProtocolError("CONSUMER_FAILURE", cause));
+				});
+			} catch (cause) {
+				this.channel.failProtocol(new RunnerProtocolError("CONSUMER_FAILURE", cause));
 			}
 		}
 	}

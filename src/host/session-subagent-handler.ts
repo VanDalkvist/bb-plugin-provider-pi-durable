@@ -30,6 +30,8 @@ export class SessionSubagentHandler {
 		this.mirrors.markActive(id, meta);
 	}
 
+	public markInitialConsumed(id: string | number): void { this.mirrors.markInitialTurnConsumed(id); }
+
 	public markCompleted(id: string | number, result?: string): void {
 		this.mirrors.markCompleted(id, result);
 	}
@@ -55,9 +57,9 @@ export class SessionSubagentHandler {
 		threadId: string,
 		options: { cwd?: string; providerOptions?: Record<string, unknown> },
 		sendNotification: (method: string, params: Record<string, unknown>) => void,
-	): void {
+	): boolean {
 		const translator = this.getChildTranslator(threadId);
-		this.mirrors.flushBufferedDeltas(
+		return this.mirrors.flushBufferedDeltas(
 			conversationId,
 			translator,
 			{ threadId, cwd: options.cwd, providerOptions: options.providerOptions },

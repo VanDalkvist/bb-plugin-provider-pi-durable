@@ -1,3 +1,4 @@
+import type { PromptRequest } from "../src/host/prompt-request.ts";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { ProviderBridge } from "../src/host/bridge.ts";
@@ -110,7 +111,7 @@ test("ProviderBridge turn/steer emits input.accepted without providerTurnId", as
 	const mockSession = {
 		runner: { exited: false },
 		options: { cwd: "/mock/cwd", providerThreadId: "pi_mock" },
-		steer: async (text: string) => {
+		steer: async ({ text }: PromptRequest) => {
 			steeredMessage = text;
 		},
 	} as any;

@@ -9,7 +9,7 @@ import {
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { BBEventAdapter } from "./bridge/bb-event-adapter.ts";
 import type { BBChildEventAdapter } from "./bridge/bb-child-event-adapter.ts";
-import type { DurableView } from "./runtime.ts";
+import type { DurableView } from "./runtime-types.ts";
 import { extractCanonicalToolDetails } from "./bridge/native-tool-result.ts";
 
 export interface SubagentWatcherController {

@@ -1,4 +1,6 @@
 import { RunnerProcess } from "./runner-process.ts";
+import { runnerProtocolWarning } from "./runner-protocol-error.ts";
+import type { PromptRequest } from "./prompt-request.ts";
 import { DeltaTranslator } from "./delta-translator.ts";
 import { buildRunnerArgs, createReadyDeferred, waitForReady, extractSessionStats, createContextWindowDelta, type SessionStats } from "./session-telemetry.ts";
 import { SessionSubagentHandler } from "./session-subagent-handler.ts";
@@ -36,21 +38,25 @@ export class PiThreadSession {
 			prompts: { scratchDir: options.scratchDir, systemPrompt: options.systemPrompt, appendSystemPrompt: options.appendSystemPrompt },
 			env: options.shellEnvOverrides,
 			onEvent: (event) => this.handleRunnerEvent(event),
-			onChannelMessage: (msg: any) => { if (msg?.kind === "ready") this.readyResolve(); },
+			onChannelMessage: (msg) => { if (msg.kind === "ready") this.readyResolve(); },
+			onProtocolError: (error) => this.sendNotification("thread/delta", {
+				threadId: this.options.threadId, deltas: [runnerProtocolWarning(error)],
+			}),
 			onError: (err) => this.readyReject(new Error(`Runner failed to launch: ${err.message}`)),
 			onExit: (code, sig) => this.readyReject(new Error(`Runner exited before becoming ready (code ${code}, signal ${sig})`)),
 		});
 		this.bindings.setRpc((cmd) => this.runner.requestOk(cmd));
 	}
 
-	public registerThread(threadId: string, conversationId?: string): void {
+	public registerThread(threadId: string, conversationId?: string): boolean {
 		this.bindings.register(threadId, conversationId, this.options.threadId);
 		if (conversationId) {
-			this.subagents.flushBufferedDeltas(conversationId, threadId, {
+			return this.subagents.flushBufferedDeltas(conversationId, threadId, {
 				cwd: this.options.cwd,
 				providerOptions: this.options.providerOptions,
 			}, this.sendNotification);
 		}
+		return false;
 	}
 
 	public unregisterThread(threadId: string): void {
@@ -69,6 +75,7 @@ export class PiThreadSession {
 		this.subagents.markActive(id, meta);
 	}
 	public markSubagentCompleted(id: string | number, result?: string): void { this.subagents.markCompleted(id, result); }
+	public markInitialMirrorTurnConsumed(id: string | number): void { this.subagents.markInitialConsumed(id); }
 	public consumeCompletedMirror(id: string | number): void { this.subagents.consumeCompleted(id); }
 	public findSubagentConversationForTask(task: string): string | undefined { return this.subagents.findConversationForTask(task); }
 	public getSubagentState(id: string | number): SubagentMirrorRecord | undefined { return this.subagents.getState(id); }
@@ -132,18 +139,14 @@ export class PiThreadSession {
 		}
 	}
 
-	public async prompt(text: string, imagesOrConversationId?: import("./prompt-input.ts").PiPromptImage[] | string, conversationId?: string): Promise<void> {
+	public async prompt(request: PromptRequest): Promise<void> {
 		this.isProcessing = true;
 		try {
-			const images = Array.isArray(imagesOrConversationId) ? imagesOrConversationId : undefined;
-			const targetConvId = typeof imagesOrConversationId === "string" ? imagesOrConversationId : conversationId;
-			await this.runner.requestOk({ type: "prompt", message: text, ...(images?.length ? { images } : {}), streamingBehavior: "followUp", conversationId: targetConvId });
+			await this.runner.requestOk({ type: "prompt", message: request.text, ...(request.images?.length ? { images: request.images } : {}), streamingBehavior: "followUp", conversationId: request.conversationId });
 		} finally { this.isProcessing = false; }
 	}
-	public async steer(text: string, imagesOrConversationId?: import("./prompt-input.ts").PiPromptImage[] | string, conversationId?: string): Promise<void> {
-		const images = Array.isArray(imagesOrConversationId) ? imagesOrConversationId : undefined;
-		const targetConvId = typeof imagesOrConversationId === "string" ? imagesOrConversationId : conversationId;
-		await this.runner.requestOk({ type: "steer", message: text, ...(images?.length ? { images } : {}), conversationId: targetConvId });
+	public async steer(request: PromptRequest): Promise<void> {
+		await this.runner.requestOk({ type: "steer", message: request.text, ...(request.images?.length ? { images: request.images } : {}), conversationId: request.conversationId });
 	}
 	public async abort(conversationId?: string): Promise<void> {
 		try { await this.runner.requestOk({ type: "abort", conversationId }); } catch (err) { console.warn(`[PiThreadSession] Abort request failed: ${err}`); }

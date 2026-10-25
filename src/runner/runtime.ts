@@ -8,10 +8,9 @@ import {
 	type ModelSummary, type Notice, type OpenDurableOptions, type OpenDurableResult, runtimeContext,
 } from "./runtime-types.ts";
 import { createDurableController } from "./runtime-controller.ts";
+import { RuntimeBindings } from "./runtime-bindings.ts";
+import { closeRuntimeResources } from "./runtime-cleanup.ts";
 import { loadHarnessEnvironment, type LoadedHarnessEnvironment } from "./runtime-loader.ts";
-
-export * from "./runtime-types.ts";
-export * from "./runtime-controller.ts";
 
 async function loadSummaries(harness: Harness, rootId: ConversationId): Promise<ConversationSummary[]> {
 	const summaries: ConversationSummary[] = [];
@@ -59,8 +58,7 @@ export async function openDurable(options: OpenDurableOptions = {}): Promise<Ope
 		}
 
 		const summaries = await loadSummaries(harness, root.id);
-		let current: Conversation = root;
-		let conversation: AttachedReplicatedState<ConversationView> = await root.viewState(runtimeContext);
+		const conversation = await root.viewState(runtimeContext);
 
 		const enabled = settingsManager.getEnabledModels();
 		const scoped = enabled?.length ? await resolveModelScopeWithDiagnostics(enabled, modelRuntime) : undefined;
@@ -103,7 +101,7 @@ export async function openDurable(options: OpenDurableOptions = {}): Promise<Ope
 		}
 		activeEnvState.setNoticeForwarder?.((level, message) => notice(level, message));
 
-		let unsubscribeConversation = conversation.subscribe((val) => update({ conversation: val }));
+		const bindings = new RuntimeBindings(root, conversation, update);
 		const unsubscribeCommits = harness.subscribeCommits((pub) => {
 			let convs = state.conversations;
 			for (const ch of pub.changes) {
@@ -117,28 +115,15 @@ export async function openDurable(options: OpenDurableOptions = {}): Promise<Ope
 			if (convs !== state.conversations) update({ conversations: convs });
 		});
 
-		let tasks: AttachedReplicatedState<TaskGraph> | undefined;
-		let unsubscribeTasks = (): void => {};
-		const closeTasks = (): void => { unsubscribeTasks(); tasks?.dispose(); tasks = undefined; };
 
 		const opened = harness;
 		const controller = createDurableController({
-			getCurrent: () => current,
-			setCurrent: (c) => { current = c; },
-			getConversationState: () => conversation,
-			setConversationState: (cs) => { conversation = cs; },
-			getUnsubscribeConversation: () => unsubscribeConversation,
-			setUnsubscribeConversation: (fn) => { unsubscribeConversation = fn; },
+			bindings,
 			opened,
 			modelRuntime,
 			getState: () => state,
-			update,
 			notice,
 			fail,
-			getTasks: () => tasks,
-			setTasks: (t) => { tasks = t; },
-			setUnsubscribeTasks: (fn) => { unsubscribeTasks = fn; },
-			closeTasks,
 			setActiveModelRef: (ref) => activeEnvState.setActiveModelRef(ref),
 			extensionRunner: activeEnvState.extensionRunner,
 			dynamicSections: activeEnvState.dynamicSections,
@@ -178,14 +163,14 @@ export async function openDurable(options: OpenDurableOptions = {}): Promise<Ope
 			harness,
 			subagentPolicyHolder: activeEnvState.subagentPolicyHolder,
 			close() {
-				return closing ??= (async () => {
-					unsubscribeConversation(); unsubscribeCommits(); conversation.dispose(); closeTasks();
-					try {
-						await opened.close(runtimeContext); await envs.cleanup(runtimeContext); await activeEnvState.cleanup?.();
-					} finally {
-						await location.release();
-					}
-				})();
+				return closing ??= closeRuntimeResources([
+					() => { listeners.clear(); bindings.close(); },
+					unsubscribeCommits,
+					() => opened.close(runtimeContext),
+					() => envs.cleanup(runtimeContext),
+					async () => { await activeEnvState.cleanup?.(); },
+					() => location.release(),
+				]);
 			},
 		};
 	} catch (error: unknown) {

@@ -1,11 +1,12 @@
 import { setupRunnerModels } from "./model-setup.ts";
 import { attachJsonlLineReader, serializeJsonLine } from "./jsonl.ts";
-import { openDurable, type OpenDurableOptions, type OpenDurableResult } from "./runtime.ts";
+import { openDurable } from "./runtime.ts";
+import type { OpenDurableOptions, OpenDurableResult } from "./runtime-types.ts";
 import { BBEventAdapter } from "./bridge/bb-event-adapter.ts";
 import type { BBWireEvent } from "./bridge/contracts.ts";
 import { parseCliArgs } from "./cli-args.ts";
 import { handleActiveSessionCommand } from "./session-commands.ts";
-import type { RunnerCommandPayload } from "../contracts/runner-command.ts";
+import { parseRunnerCommand, type RunnerCommandPayload } from "../contracts/runner-command.ts";
 import { getPiDurableVersion } from "./version.ts";
 import { createBridgeSender, initBridgeInboundChannel } from "./bridge-channel.ts";
 import { startSubagentWatcher, type SubagentWatcherController } from "./subagent-watcher.ts";
@@ -91,7 +92,7 @@ async function main() {
 		attachJsonlLineReader(process.stdin, (line) => {
 			if (!line.trim()) return;
 			try {
-				const cmd = JSON.parse(line);
+				const cmd = parseRunnerCommand(line);
 				if (cmd.type === "get_available_models") {
 					success(cmd.id, "get_available_models", { models: scopedModelList });
 				} else if (cmd.type === "get_state") {
@@ -111,7 +112,7 @@ async function main() {
 					success(cmd.id, cmd.type, {});
 				}
 			} catch (err) {
-				error(undefined, "unknown", err instanceof Error ? err.message : String(err));
+				error(undefined, "unknown", "INVALID_COMMAND");
 			}
 		});
 		return;
@@ -155,9 +156,9 @@ async function main() {
 	attachJsonlLineReader(process.stdin, async (line) => {
 		let cmd: RunnerCommandPayload;
 		try {
-			cmd = JSON.parse(line) as RunnerCommandPayload;
+			cmd = parseRunnerCommand(line);
 		} catch (e) {
-			error(undefined, "parse", `Invalid JSON: ${e}`);
+			error(undefined, "parse", "INVALID_COMMAND");
 			return;
 		}
 

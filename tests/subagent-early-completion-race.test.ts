@@ -35,8 +35,10 @@ test("Slice 6.2: Early completion race emits turn.open, accumulated text, turn.b
 		getSubagentState: (id: string | number) => mirrors.getState(id),
 		getMirrorOutputText: (id: string | number) => mirrors.getOutputText(id),
 		consumeCompletedMirror: (id: string | number) => mirrors.consumeCompleted(id),
+		markInitialMirrorTurnConsumed: (id: string | number) => mirrors.markInitialTurnConsumed(id),
 		registerThread: (threadId: string, conversationId?: string) => {
 			registeredBinding = { threadId, conversationId };
+			return false;
 		},
 		getConversationIdForThread: (_threadId: string) => undefined,
 	} as unknown as PiThreadSession;
