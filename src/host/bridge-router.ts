@@ -1,11 +1,7 @@
 import type { SessionRegistry } from "./session-registry.ts";
-import {
-	extractPiPromptInput,
-	isCompactCommand,
-	extractCompactInstructions,
-} from "./prompt-input.ts";
-import { parseProviderThreadId } from "./composite-id.ts";
+import { extractPiPromptInput, isCompactCommand, extractCompactInstructions } from "./prompt-input.ts";
 import { reconcileSessionOptions } from "./session-reconcile.ts";
+import { isChildTurn, validateChildTurn, sendInputAccepted, resolveTargetConversationId, synthesizeCompletionDeltas } from "./child-turn-guard.ts";
 
 export interface BridgeRouterContext {
 	registry: SessionRegistry;
@@ -18,7 +14,8 @@ export interface TurnStartParams {
 	threadId: string;
 	providerThreadId?: string;
 	cwd?: string;
-	options?: { cwd?: string; model?: unknown; reasoningLevel?: unknown; thinkingLevel?: unknown; [key: string]: unknown };
+	options?: { cwd?: string; model?: unknown; reasoningLevel?: unknown; thinkingLevel?: unknown; providerOptions?: Record<string, unknown>; [key: string]: unknown };
+	providerOptions?: Record<string, unknown>;
 	clientRequestId?: string;
 	input?: unknown;
 	[key: string]: unknown;
@@ -43,42 +40,85 @@ export interface ThreadStopParams {
 	[key: string]: unknown;
 }
 
-const CREQ_REGEX = /^creq_[23456789abcdefghijkmnpqrstuvwxyz]{10}$/u;
+export async function handleTurnStart(id: string | number, params: TurnStartParams, ctx: BridgeRouterContext): Promise<void> {
+	const existing = ctx.registry.get(params.threadId);
+	const isChild = isChildTurn(params, existing);
 
-function resolveTargetConversationId(
-	params: { threadId: string; providerThreadId?: string },
-	session: { options?: { threadId?: string; providerThreadId?: string }; getConversationIdForThread?: (t: string) => string | undefined },
-): string | undefined {
-	if (params.providerThreadId) {
-		const parsed = parseProviderThreadId(params.providerThreadId).conversationId;
-		if (parsed) return parsed;
-	}
-	const bound = session.getConversationIdForThread?.(params.threadId);
-	if (bound) return bound;
-	if (!session.options?.threadId || params.threadId === session.options.threadId) {
-		return parseProviderThreadId(session.options?.providerThreadId ?? params.threadId).conversationId;
-	}
-	return undefined;
-}
+	if (isChild) {
+		if (isCompactCommand(params.input)) {
+			ctx.sendError(id, -32602, "Context compaction is not supported on child subagent thread");
+			return;
+		}
+		const providerThreadId = params.providerThreadId || `pi_durable_${Date.now()}`;
+		const session = await ctx.registry.createOrGet(params.threadId, providerThreadId, params);
+		const promptInput = extractPiPromptInput(params.input);
+		if (!promptInput) {
+			ctx.sendError(id, -32602, "Missing input text");
+			return;
+		}
+		const { text, images } = promptInput;
+		const targetConversationId = resolveTargetConversationId(params, session)
+			?? (typeof session.findSubagentConversationForTask === "function" ? session.findSubagentConversationForTask(text) : undefined);
 
-function sendInputAccepted(ctx: BridgeRouterContext, threadId: string, clientRequestId?: string): void {
-	if (clientRequestId && CREQ_REGEX.test(clientRequestId)) {
-		ctx.sendNotification("thread/delta", { threadId, deltas: [{ kind: "input.accepted", clientRequestId }] });
-	}
-}
+		const validation = await validateChildTurn(params, session, targetConversationId);
+		if (!validation.valid) {
+			ctx.sendError(id, validation.code, validation.message);
+			return;
+		}
 
-export async function handleTurnStart(
-	id: string | number,
-	params: TurnStartParams,
-	ctx: BridgeRouterContext,
-): Promise<void> {
+		const mirror = targetConversationId && typeof session.getSubagentState === "function" ? session.getSubagentState(targetConversationId) : undefined;
+		const isInitial = mirror !== undefined && !mirror.initialTurnConsumed && mirror.task.trim() !== "" &&
+			(mirror.task.trim() === text.trim() || mirror.task.trim().startsWith(text.trim()) || text.trim().startsWith(mirror.task.trim()));
+
+		if (isInitial && mirror?.status === "running") {
+			mirror.initialTurnConsumed = true;
+			session.registerThread?.(params.threadId, targetConversationId);
+			sendInputAccepted(ctx.sendNotification, params.threadId, params.clientRequestId);
+			ctx.sendNotification("thread/delta", { threadId: params.threadId, deltas: [{ kind: "turn.open" }] });
+			ctx.sendResult(id, { threadId: params.threadId });
+			return;
+		}
+		if (isInitial && mirror?.status === "completed") {
+			mirror.initialTurnConsumed = true;
+			let boundaryEmitted = false;
+			const originalSend = ctx.sendNotification;
+			ctx.sendNotification = (method, p) => {
+				if (method === "thread/delta" && p?.threadId === params.threadId && Array.isArray(p.deltas)) {
+					if (p.deltas.some((d: any) => d.kind === "turn.boundary")) {
+						boundaryEmitted = true;
+					}
+				}
+				originalSend(method, p);
+			};
+			try {
+				session.registerThread?.(params.threadId, targetConversationId);
+			} finally {
+				ctx.sendNotification = originalSend;
+			}
+
+			const outputText = typeof session.getMirrorOutputText === "function" && targetConversationId ? session.getMirrorOutputText(targetConversationId) : (mirror.result || "");
+			if (typeof session.consumeCompletedMirror === "function" && targetConversationId) session.consumeCompletedMirror(targetConversationId);
+			sendInputAccepted(ctx.sendNotification, params.threadId, params.clientRequestId);
+			ctx.sendResult(id, { threadId: params.threadId });
+
+			if (!boundaryEmitted) {
+				ctx.sendNotification("thread/delta", { threadId: params.threadId, deltas: synthesizeCompletionDeltas(outputText) });
+			}
+			return;
+		}
+
+		await session.prompt(text, images.length > 0 ? images : targetConversationId, images.length > 0 ? targetConversationId : undefined);
+		sendInputAccepted(ctx.sendNotification, params.threadId, params.clientRequestId);
+		ctx.sendResult(id, { threadId: params.threadId });
+		return;
+	}
+
 	const targetCwd = params.cwd || params.options?.cwd;
 	const providerThreadId = params.providerThreadId || `pi_durable_${Date.now()}`;
-	const session = await ctx.registry.reconcileCwd(params.threadId, targetCwd)
-		?? await ctx.registry.createOrGet(params.threadId, providerThreadId, params);
+	const session = await ctx.registry.reconcileCwd(params.threadId, targetCwd) ?? await ctx.registry.createOrGet(params.threadId, providerThreadId, params);
 
 	if (isCompactCommand(params.input)) {
-		sendInputAccepted(ctx, params.threadId, params.clientRequestId);
+		sendInputAccepted(ctx.sendNotification, params.threadId, params.clientRequestId);
 		ctx.sendResult(id, { threadId: params.threadId });
 		try {
 			await session.compact(extractCompactInstructions(params.input));
@@ -96,71 +136,20 @@ export async function handleTurnStart(
 	}
 	const { text, images } = promptInput;
 
-	let targetConversationId = resolveTargetConversationId(params, session);
-	if (!targetConversationId && params.threadId !== session.options?.threadId && typeof session.findSubagentConversationForTask === "function") {
-		targetConversationId = session.findSubagentConversationForTask(text);
-	}
-	const mirrorState = targetConversationId && typeof session.getSubagentState === "function"
-		? session.getSubagentState(targetConversationId)
-		: undefined;
-
-	const isInitialMirrorTurn = mirrorState !== undefined && (
-		mirrorState.task.trim() === text.trim() ||
-		mirrorState.task.trim().startsWith(text.trim()) ||
-		text.trim().startsWith(mirrorState.task.trim())
-	);
-
-	if (isInitialMirrorTurn && mirrorState?.status === "running") {
-		session.registerThread?.(params.threadId, targetConversationId);
-		sendInputAccepted(ctx, params.threadId, params.clientRequestId);
-		ctx.sendNotification("thread/delta", { threadId: params.threadId, deltas: [{ kind: "turn.open" }] });
-		ctx.sendResult(id, { threadId: params.threadId });
-		return;
-	}
-
-	if (isInitialMirrorTurn && mirrorState?.status === "completed") {
-		session.registerThread?.(params.threadId, targetConversationId);
-		const outputText = typeof session.getMirrorOutputText === "function" && targetConversationId ? session.getMirrorOutputText(targetConversationId) : (mirrorState.result || "");
-		if (typeof session.consumeCompletedMirror === "function" && targetConversationId) session.consumeCompletedMirror(targetConversationId);
-		sendInputAccepted(ctx, params.threadId, params.clientRequestId);
-		ctx.sendResult(id, { threadId: params.threadId });
-		const completionDeltas: Array<import("./types.ts").ThreadDelta> = [{ kind: "turn.open" }];
-		if (outputText) {
-			completionDeltas.push(
-				{ kind: "item.textDelta", key: { channel: "agentMessage" }, channel: "agentMessage", text: outputText },
-				{ kind: "item.textClose", key: { channel: "agentMessage" }, channel: "agentMessage", text: outputText },
-			);
-		}
-		completionDeltas.push({ kind: "turn.boundary", status: "completed" });
-		ctx.sendNotification("thread/delta", { threadId: params.threadId, deltas: completionDeltas });
-		return;
-	}
-
-	await reconcileSessionOptions(session, params.options);
-	await session.prompt(text, images.length > 0 ? images : targetConversationId, images.length > 0 ? targetConversationId : undefined);
-	sendInputAccepted(ctx, params.threadId, params.clientRequestId);
+	await reconcileSessionOptions(session, params.options, params.providerOptions);
+	await session.prompt(text, images.length > 0 ? images : undefined, undefined);
+	sendInputAccepted(ctx.sendNotification, params.threadId, params.clientRequestId);
 	ctx.sendResult(id, { threadId: params.threadId });
 }
 
-export async function handleTurnSteer(
-	id: string | number,
-	params: TurnSteerParams,
-	ctx: BridgeRouterContext,
-): Promise<void> {
+export async function handleTurnSteer(id: string | number, params: TurnSteerParams, ctx: BridgeRouterContext): Promise<void> {
 	const session = ctx.registry.get(params.threadId);
 	if (!session) {
 		ctx.sendError(id, -32000, "No active session for thread");
 		return;
 	}
 
-	const providerOptions = params.options?.providerOptions ?? params.providerOptions;
-	if (providerOptions && typeof providerOptions === "object") {
-		session.options.providerOptions = {
-			...session.options.providerOptions,
-			...providerOptions,
-		};
-	}
-
+	const isChild = isChildTurn(params, session);
 	const promptInput = extractPiPromptInput(params.input);
 	if (!promptInput) {
 		ctx.sendError(id, -32602, "Missing steer text");
@@ -168,18 +157,31 @@ export async function handleTurnSteer(
 	}
 	const { text, images } = promptInput;
 
-	await reconcileSessionOptions(session, params.options);
-	const targetConversationId = resolveTargetConversationId(params, session);
-	await session.steer(text, images.length > 0 ? images : targetConversationId, images.length > 0 ? targetConversationId : undefined);
-	sendInputAccepted(ctx, params.threadId, params.clientRequestId);
+	if (isChild) {
+		const targetConversationId = resolveTargetConversationId(params, session);
+		const validation = await validateChildTurn(params, session, targetConversationId);
+		if (!validation.valid) {
+			ctx.sendError(id, validation.code, validation.message);
+			return;
+		}
+		await session.steer(text, images.length > 0 ? images : targetConversationId, images.length > 0 ? targetConversationId : undefined);
+		sendInputAccepted(ctx.sendNotification, params.threadId, params.clientRequestId);
+		ctx.sendResult(id, { threadId: params.threadId });
+		return;
+	}
+
+	const providerOptions = params.options?.providerOptions ?? params.providerOptions;
+	if (providerOptions && typeof providerOptions === "object") {
+		session.options.providerOptions = { ...session.options.providerOptions, ...providerOptions };
+	}
+
+	await reconcileSessionOptions(session, params.options, params.providerOptions);
+	await session.steer(text, images.length > 0 ? images : undefined, undefined);
+	sendInputAccepted(ctx.sendNotification, params.threadId, params.clientRequestId);
 	ctx.sendResult(id, { threadId: params.threadId });
 }
 
-export async function handleThreadStop(
-	id: string | number,
-	params: ThreadStopParams,
-	ctx: BridgeRouterContext,
-): Promise<void> {
+export async function handleThreadStop(id: string | number, params: ThreadStopParams, ctx: BridgeRouterContext): Promise<void> {
 	if (params.intent === "interrupt") {
 		const session = ctx.registry.get(params.threadId);
 		if (session) {

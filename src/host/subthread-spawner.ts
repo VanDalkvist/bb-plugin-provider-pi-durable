@@ -15,6 +15,8 @@ export interface SubthreadSpawnArgs {
 	title: string;
 	task: string;
 	conversationId?: string;
+	actualModel?: { provider: string; modelId: string };
+	thinkingLevel?: string;
 }
 
 export interface ThreadRegistrationTarget {
@@ -90,6 +92,14 @@ export function buildSpawnArgs(args: SubthreadSpawnArgs): string[] {
 
 	if (environmentId) {
 		cliArgs.push("--environment", environmentId);
+	}
+
+	if (args.actualModel?.provider && args.actualModel?.modelId) {
+		cliArgs.push("--model", `${args.actualModel.provider}/${args.actualModel.modelId}`);
+	}
+	if (args.thinkingLevel) {
+		const level = args.thinkingLevel === "off" ? "none" : args.thinkingLevel;
+		cliArgs.push("--reasoning-level", level);
 	}
 
 	return cliArgs;

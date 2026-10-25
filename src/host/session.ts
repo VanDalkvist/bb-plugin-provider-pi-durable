@@ -1,9 +1,10 @@
 import { RunnerProcess } from "./runner-process.ts";
 import { DeltaTranslator } from "./delta-translator.ts";
 import { buildRunnerArgs, createReadyDeferred, waitForReady, extractSessionStats, createContextWindowDelta, type SessionStats } from "./session-telemetry.ts";
-import { SubagentMirrorManager, type SubagentMirrorRecord } from "./subagent-mirror.ts";
-import { spawnSubthreadInBb } from "./subthread-spawner.ts";
+import { SessionSubagentHandler } from "./session-subagent-handler.ts";
 import { DurableBindingManager } from "./durable-binding-store.ts";
+import type { SubagentMirrorRecord } from "./subagent-mirror.ts";
+import type { SubagentPolicyRecord } from "../policy/types.ts";
 import type { RunnerEvent, SessionOptions } from "./types.ts";
 
 export type { SubagentMirrorRecord };
@@ -19,8 +20,8 @@ export class PiThreadSession {
 	public isProcessing = false;
 	private lastCheckpointId: string | null = null;
 	public bindings = new DurableBindingManager();
-	private mirrors = new SubagentMirrorManager();
-	private childTranslators = new Map<string, DeltaTranslator>();
+	private subagents = new SessionSubagentHandler();
+	private acknowledgedSubagentPolicyRevision?: number = undefined;
 
 	constructor(options: SessionOptions, sendNotification: (method: string, params: Record<string, unknown>) => void) {
 		this.options = options;
@@ -45,21 +46,16 @@ export class PiThreadSession {
 	public registerThread(threadId: string, conversationId?: string): void {
 		this.bindings.register(threadId, conversationId, this.options.threadId);
 		if (conversationId) {
-			this.mirrors.flushBufferedDeltas(conversationId, this.getChildTranslator(threadId), {
-				threadId, cwd: this.options.cwd, providerOptions: this.options.providerOptions,
-			}, (tid, deltas) => this.sendNotification("thread/delta", { threadId: tid, deltas }));
+			this.subagents.flushBufferedDeltas(conversationId, threadId, {
+				cwd: this.options.cwd,
+				providerOptions: this.options.providerOptions,
+			}, this.sendNotification);
 		}
 	}
 
 	public unregisterThread(threadId: string): void {
 		this.bindings.unregister(threadId);
-		this.childTranslators.delete(threadId);
-	}
-
-	private getChildTranslator(threadId: string): DeltaTranslator {
-		let t = this.childTranslators.get(threadId);
-		if (!t) { t = new DeltaTranslator(); this.childTranslators.set(threadId, t); }
-		return t;
+		this.subagents.unregisterChild(threadId);
 	}
 
 	public getThreadIdForConversation(conversationId: string | number): string | undefined {
@@ -69,14 +65,27 @@ export class PiThreadSession {
 		return this.bindings.getConversationId(threadId);
 	}
 
-	public markSubagentActive(id: string | number, meta: { task: string; parentToolCallId?: string }): void {
-		this.mirrors.markActive(id, meta);
+	public markSubagentActive(id: string | number, meta: { task: string; parentToolCallId?: string; actualModel?: { provider: string; modelId: string }; thinkingLevel?: string; source?: "inherit" | "configured"; policyRevision?: number }): void {
+		this.subagents.markActive(id, meta);
 	}
-	public markSubagentCompleted(id: string | number, result?: string): void { this.mirrors.markCompleted(id, result); }
-	public consumeCompletedMirror(id: string | number): void { this.mirrors.consumeCompleted(id); }
-	public findSubagentConversationForTask(task: string): string | undefined { return this.mirrors.findConversationForTask(task); }
-	public getSubagentState(id: string | number): SubagentMirrorRecord | undefined { return this.mirrors.getState(id); }
-	public getMirrorOutputText(id: string | number): string { return this.mirrors.getOutputText(id); }
+	public markSubagentCompleted(id: string | number, result?: string): void { this.subagents.markCompleted(id, result); }
+	public consumeCompletedMirror(id: string | number): void { this.subagents.consumeCompleted(id); }
+	public findSubagentConversationForTask(task: string): string | undefined { return this.subagents.findConversationForTask(task); }
+	public getSubagentState(id: string | number): SubagentMirrorRecord | undefined { return this.subagents.getState(id); }
+	public getMirrorOutputText(id: string | number): string { return this.subagents.getOutputText(id); }
+
+	public getAcknowledgedSubagentPolicyRevision(): number | undefined {
+		return this.acknowledgedSubagentPolicyRevision;
+	}
+
+	public async setSubagentPolicy(record: SubagentPolicyRecord): Promise<void> {
+		await this.runner.requestOk({ type: "set_subagent_policy", policyRecord: record });
+		this.acknowledgedSubagentPolicyRevision = record.revision;
+		if (!this.options.providerOptions) {
+			this.options.providerOptions = {};
+		}
+		this.options.providerOptions.subagentPolicy = record;
+	}
 
 	public async start(): Promise<void> {
 		try {
@@ -102,77 +111,8 @@ export class PiThreadSession {
 			}
 		}
 
-		if (event.type === "tool_execution_update" && event.details && typeof event.details === "object") {
-			const details = event.details as Record<string, unknown>;
-			if (details.conversationId !== undefined) {
-				const task = typeof details.task === "string" ? details.task : "";
-				const parentToolCallId = typeof event.toolCallId === "string" ? event.toolCallId : undefined;
-				const convId = String(details.conversationId);
-				const isNew = !this.getSubagentState(convId);
-				this.markSubagentActive(convId, { task, parentToolCallId });
-				if (isNew && task) {
-					void spawnSubthreadInBb({
-						parentThreadId: this.options.threadId,
-						environmentId: this.options.environmentId || process.env.BB_ENVIRONMENT_ID,
-						title: task.trim().slice(0, 80) || "Subagent",
-						task,
-						conversationId: convId,
-					}, this);
-				}
-			}
-		}
-
-		if (event.type === "tool_execution_end" && event.details && typeof event.details === "object") {
-			const details = event.details as Record<string, unknown>;
-			if (details.conversationId !== undefined) {
-				const result = typeof event.result === "string" ? event.result : undefined;
-				this.markSubagentCompleted(details.conversationId as string | number, result);
-			}
-		}
-
-		const isChildEvent = event.conversationId !== undefined && event.conversationId !== null;
-		const childThreadId = isChildEvent
-			? this.getThreadIdForConversation(event.conversationId as string | number)
-			: undefined;
-
-		if (isChildEvent && event.type === "message_update") {
-			const asst = event.assistantMessageEvent as Record<string, unknown> | undefined;
-			const textDelta = asst?.type === "text_delta" && typeof asst.delta === "string"
-				? asst.delta
-				: "";
-			if (textDelta) {
-				this.mirrors.appendOutputText(event.conversationId as string | number, textDelta);
-			}
-		}
-
-		if (childThreadId) {
-			const childEvent = { ...event, parentRef: undefined };
-			const childTranslator = this.getChildTranslator(childThreadId);
-			const childDeltas = childTranslator.translate(childEvent, {
-				threadId: childThreadId,
-				cwd: this.options.cwd,
-				providerOptions: this.options.providerOptions,
-			});
-			if (childDeltas.length > 0) {
-				this.sendNotification("thread/delta", { threadId: childThreadId, deltas: childDeltas });
-			}
-			if (event.type === "agent_end") {
-				this.sendNotification("thread/delta", {
-					threadId: childThreadId,
-					deltas: [{ kind: "turn.boundary", status: "completed" }],
-				});
-				this.markSubagentCompleted(event.conversationId as string | number);
-			}
-		} else if (isChildEvent) {
-			this.mirrors.bufferEvent(event.conversationId as string | number, event);
-			if (event.type === "agent_end") {
-				this.markSubagentCompleted(event.conversationId as string | number);
-			}
-		}
-
-		if (isChildEvent && (!event.parentRef || event.type === "agent_end")) {
-			return;
-		}
+		const shouldDropFromParent = this.subagents.handleEvent(event, this, this.sendNotification);
+		if (shouldDropFromParent) return;
 
 		const parentDeltas = this.translator.translate(event, {
 			threadId: this.options.threadId,

@@ -2,17 +2,15 @@ import type { AgentEvent } from "@earendil-works/pi-durable";
 import type { DurableView } from "../runtime.ts";
 import type { BBWireEvent } from "./contracts.ts";
 import { ToolEventProjector } from "./tool-result-extractor.ts";
+import { resolveChildRunOutcome } from "./child-run-outcome.ts";
 
-/**
- * Handles agent events originating from a subagent conversation.
- * Automatically prefixes tool call IDs and decorates wire events with parentRef.
- * Suppresses root-level turn/lifecycle events so the parent turn boundaries remain intact.
- */
 export class BBChildEventAdapter {
 	private readonly output: (event: BBWireEvent) => void;
 	private readonly parentRef: string;
 	private readonly conversationId?: string | number;
 	private readonly toolProjector = new ToolEventProjector();
+	private readonly submissions = new Map<string | number, { status: string; reason?: string; detail?: string }>();
+	private lastTaskError?: string;
 	private currentText = "";
 	private currentThinking = "";
 	private isInThinking = false;
@@ -32,6 +30,23 @@ export class BBChildEventAdapter {
 			parentRef: this.parentRef,
 			...(this.conversationId !== undefined ? { conversationId: this.conversationId } : {}),
 		});
+	}
+
+	public handleBatch(batch: readonly AgentEvent[], current?: DurableView): void {
+		if (batch.some((ev) => ev.type === "run_start")) {
+			this.lastTaskError = undefined;
+			this.submissions.clear();
+		}
+		for (const ev of batch) {
+			if (ev.type === "task_failed") {
+				this.lastTaskError = (ev as any).message;
+			} else if (ev.type === "submission" && (ev as any).record?.id !== undefined) {
+				this.submissions.set((ev as any).record.id, (ev as any).record);
+			}
+		}
+		for (const ev of batch) {
+			this.handleEvent(ev, current);
+		}
 	}
 
 	public handleEvent(event: AgentEvent, _current?: DurableView): void {
@@ -62,7 +77,6 @@ export class BBChildEventAdapter {
 				}
 				break;
 			}
-
 			case "tool_execution_start": {
 				this.closeThinkingIfNeeded();
 				this.output({
@@ -75,7 +89,6 @@ export class BBChildEventAdapter {
 				});
 				break;
 			}
-
 			case "tool_execution_update": {
 				const update = this.toolProjector.projectToolUpdate(
 					{ ...event, toolCallId: `${this.parentRef}:${event.toolCallId}` },
@@ -89,7 +102,6 @@ export class BBChildEventAdapter {
 				}
 				break;
 			}
-
 			case "tool_execution_end": {
 				const end = this.toolProjector.projectToolEnd(
 					{ ...event, toolCallId: `${this.parentRef}:${event.toolCallId}` },
@@ -101,7 +113,6 @@ export class BBChildEventAdapter {
 				});
 				break;
 			}
-
 			case "message_end": {
 				this.closeThinkingIfNeeded();
 				const message = event.entry?.model?.[0];
@@ -123,19 +134,20 @@ export class BBChildEventAdapter {
 				}
 				break;
 			}
-
 			case "run_end": {
 				this.closeThinkingIfNeeded();
 				this.toolProjector.clear();
+				const outcome = resolveChildRunOutcome(event.inputs, this.submissions, this.lastTaskError);
 				this.output({
 					type: "agent_end",
 					messages: [],
 					parentRef: this.parentRef,
 					...(this.conversationId !== undefined ? { conversationId: this.conversationId } : {}),
+					...(outcome.isAborted ? { aborted: true, stopReason: "aborted" } : {}),
+					...(outcome.isError && !outcome.isAborted ? { stopReason: "error", ...(outcome.errorMessage ? { errorMessage: outcome.errorMessage } : {}) } : {}),
 				});
 				break;
 			}
-
 			case "turn_start": {
 				this.output({
 					type: "turn_start",
@@ -144,7 +156,6 @@ export class BBChildEventAdapter {
 				});
 				break;
 			}
-
 			case "snapshot": {
 				const snap = event as Extract<AgentEvent, { type: "snapshot" }>;
 				const prefix = (slots?: readonly { callId: string | number; output?: unknown; details?: unknown }[]) =>
@@ -152,19 +163,10 @@ export class BBChildEventAdapter {
 				this.toolProjector.seedFromSnapshot(prefix(snap.tools), prefix(snap.nestedTools));
 				break;
 			}
-
 			case "run_start": {
 				this.toolProjector.clear();
 				break;
 			}
-
-			// Subagent lifecycle events are scoped to the child task and must not break parent turn
-			case "message_start":
-			case "turn_end":
-			case "compaction_start":
-			case "compaction_end":
-			case "auto_retry_start":
-			case "auto_retry_end":
 			default:
 				break;
 		}

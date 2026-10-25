@@ -5,6 +5,11 @@ export interface SubagentMirrorRecord {
 	task: string;
 	parentToolCallId?: string;
 	result?: string;
+	actualModel?: { provider: string; modelId: string };
+	thinkingLevel?: string;
+	source?: "inherit" | "configured";
+	policyRevision?: number;
+	initialTurnConsumed?: boolean;
 }
 
 export class SubagentMirrorManager {
@@ -15,14 +20,28 @@ export class SubagentMirrorManager {
 
 	public markActive(
 		conversationId: string | number,
-		meta: { task: string; parentToolCallId?: string },
+		meta: {
+			task: string;
+			parentToolCallId?: string;
+			actualModel?: { provider: string; modelId: string };
+			thinkingLevel?: string;
+			source?: "inherit" | "configured";
+			policyRevision?: number;
+		},
 	): void {
 		const key = String(conversationId);
-		this.mirrors.set(key, {
+		const existing = this.mirrors.get(key);
+		const record: SubagentMirrorRecord = {
 			status: "running",
 			task: meta.task,
-			parentToolCallId: meta.parentToolCallId,
-		});
+			...(meta.parentToolCallId !== undefined || existing?.parentToolCallId !== undefined ? { parentToolCallId: meta.parentToolCallId ?? existing?.parentToolCallId } : {}),
+			...(meta.actualModel !== undefined || existing?.actualModel !== undefined ? { actualModel: meta.actualModel ?? existing?.actualModel } : {}),
+			...(meta.thinkingLevel !== undefined || existing?.thinkingLevel !== undefined ? { thinkingLevel: meta.thinkingLevel ?? existing?.thinkingLevel } : {}),
+			...(meta.source !== undefined || existing?.source !== undefined ? { source: meta.source ?? existing?.source } : {}),
+			...(meta.policyRevision !== undefined || existing?.policyRevision !== undefined ? { policyRevision: meta.policyRevision ?? existing?.policyRevision } : {}),
+			...(existing?.initialTurnConsumed ? { initialTurnConsumed: true } : {}),
+		};
+		this.mirrors.set(key, record);
 		if (meta.task.trim()) {
 			this.pendingByTask.set(meta.task.trim(), key);
 		}
@@ -67,17 +86,25 @@ export class SubagentMirrorManager {
 		return this.outputTexts.get(key) ?? this.mirrors.get(key)?.result ?? "";
 	}
 
+	public markInitialTurnConsumed(conversationId: string | number): void {
+		const key = String(conversationId);
+		const existing = this.mirrors.get(key);
+		if (existing) {
+			existing.initialTurnConsumed = true;
+		}
+	}
+
 	public markCompleted(conversationId: string | number, result?: string): void {
 		const key = String(conversationId);
 		const existing = this.mirrors.get(key);
 		if (existing) {
 			existing.status = "completed";
-			existing.result = result;
+			if (result !== undefined) existing.result = result;
 		} else {
 			this.mirrors.set(key, {
 				status: "completed",
 				task: "",
-				result,
+				...(result !== undefined ? { result } : {}),
 			});
 		}
 	}

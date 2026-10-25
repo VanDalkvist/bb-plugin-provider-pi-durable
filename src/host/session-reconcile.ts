@@ -1,17 +1,46 @@
+import type { SubagentPolicyRecord } from "../policy/types.ts";
+import { subagentPolicyRecordSchema } from "../policy/schema.ts";
+
 export interface ReconcilableSession {
 	options: {
 		model?: { provider: string; id: string };
 		thinkingLevel?: string;
+		providerOptions?: Record<string, unknown>;
 	};
 	setModel?(provider: string, modelId: string): Promise<void>;
 	setThinkingLevel?(level: string): Promise<void>;
+	setSubagentPolicy?(record: SubagentPolicyRecord): Promise<void>;
+	getAcknowledgedSubagentPolicyRevision?(): number | undefined;
 }
 
 export async function reconcileSessionOptions(
 	session: ReconcilableSession,
-	options?: { model?: unknown; reasoningLevel?: unknown; thinkingLevel?: unknown; [key: string]: unknown },
+	options?: {
+		model?: unknown;
+		reasoningLevel?: unknown;
+		thinkingLevel?: unknown;
+		providerOptions?: Record<string, unknown>;
+		[key: string]: unknown;
+	},
+	fallbackProviderOptions?: Record<string, unknown>,
 ): Promise<void> {
+	const rawPolicy =
+		(options?.providerOptions as Record<string, unknown> | undefined)?.subagentPolicy ??
+		(fallbackProviderOptions as Record<string, unknown> | undefined)?.subagentPolicy ??
+		(session.options?.providerOptions as Record<string, unknown> | undefined)?.subagentPolicy;
+
+	if (rawPolicy && session.setSubagentPolicy) {
+		const parsed = subagentPolicyRecordSchema.safeParse(rawPolicy);
+		if (parsed.success) {
+			const ackRev = session.getAcknowledgedSubagentPolicyRevision?.();
+			if (ackRev === undefined || ackRev !== parsed.data.revision) {
+				await session.setSubagentPolicy(parsed.data);
+			}
+		}
+	}
+
 	if (!options) return;
+
 	const optModel = options.model;
 	if (typeof optModel === "string" && optModel.trim()) {
 		const slash = optModel.indexOf("/");

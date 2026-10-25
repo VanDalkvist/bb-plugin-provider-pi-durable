@@ -53,14 +53,12 @@ export async function startSubagentWatcher(
 			stream.start(async (batch: readonly AgentEvent[]) => {
 				try {
 					const view = getCurrentView();
-					if (!childAdapter) {
+					if (childAdapter) {
+						childAdapter.handleBatch(batch, view);
+					} else {
 						adapter.handleBatch(batch, view);
 					}
 					for (const event of batch) {
-						if (childAdapter) {
-							childAdapter.handleEvent(event, view);
-						}
-
 						const childId = extractChildConversationId(event);
 						if (childId !== undefined && !attached.has(childId)) {
 							const callId = "toolCallId" in event

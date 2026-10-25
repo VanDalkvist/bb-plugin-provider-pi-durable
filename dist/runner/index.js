@@ -22276,12 +22276,48 @@ var ToolEventProjector = class {
   }
 };
 
+// src/runner/bridge/child-run-outcome.ts
+function resolveChildRunOutcome(inputs, submissions, lastTaskError) {
+  if (inputs && submissions) {
+    let hasDoneInput = false;
+    for (const id of inputs) {
+      const sub = submissions.get(id);
+      if (sub) {
+        if (sub.status === "done") {
+          hasDoneInput = true;
+        } else if (sub.status === "unanswered") {
+          const isAborted = sub.reason === "aborted" || sub.reason === "cancelled";
+          return {
+            status: isAborted ? "interrupted" : "failed",
+            isAborted,
+            isError: !isAborted,
+            errorMessage: sub.detail || sub.reason || lastTaskError || "Task failed"
+          };
+        }
+      }
+    }
+    if (hasDoneInput) {
+      return { status: "completed" };
+    }
+  }
+  if (lastTaskError) {
+    return {
+      status: "failed",
+      isError: true,
+      errorMessage: lastTaskError
+    };
+  }
+  return { status: "completed" };
+}
+
 // src/runner/bridge/bb-child-event-adapter.ts
 var BBChildEventAdapter = class {
   output;
   parentRef;
   conversationId;
   toolProjector = new ToolEventProjector();
+  submissions = /* @__PURE__ */ new Map();
+  lastTaskError;
   currentText = "";
   currentThinking = "";
   isInThinking = false;
@@ -22299,6 +22335,22 @@ var BBChildEventAdapter = class {
       parentRef: this.parentRef,
       ...this.conversationId !== void 0 ? { conversationId: this.conversationId } : {}
     });
+  }
+  handleBatch(batch, current) {
+    if (batch.some((ev) => ev.type === "run_start")) {
+      this.lastTaskError = void 0;
+      this.submissions.clear();
+    }
+    for (const ev of batch) {
+      if (ev.type === "task_failed") {
+        this.lastTaskError = ev.message;
+      } else if (ev.type === "submission" && ev.record?.id !== void 0) {
+        this.submissions.set(ev.record.id, ev.record);
+      }
+    }
+    for (const ev of batch) {
+      this.handleEvent(ev, current);
+    }
   }
   handleEvent(event, _current) {
     switch (event.type) {
@@ -22386,11 +22438,14 @@ var BBChildEventAdapter = class {
       case "run_end": {
         this.closeThinkingIfNeeded();
         this.toolProjector.clear();
+        const outcome = resolveChildRunOutcome(event.inputs, this.submissions, this.lastTaskError);
         this.output({
           type: "agent_end",
           messages: [],
           parentRef: this.parentRef,
-          ...this.conversationId !== void 0 ? { conversationId: this.conversationId } : {}
+          ...this.conversationId !== void 0 ? { conversationId: this.conversationId } : {},
+          ...outcome.isAborted ? { aborted: true, stopReason: "aborted" } : {},
+          ...outcome.isError && !outcome.isAborted ? { stopReason: "error", ...outcome.errorMessage ? { errorMessage: outcome.errorMessage } : {} } : {}
         });
         break;
       }
@@ -22412,13 +22467,6 @@ var BBChildEventAdapter = class {
         this.toolProjector.clear();
         break;
       }
-      // Subagent lifecycle events are scoped to the child task and must not break parent turn
-      case "message_start":
-      case "turn_end":
-      case "compaction_start":
-      case "compaction_end":
-      case "auto_retry_start":
-      case "auto_retry_end":
       default:
         break;
     }
@@ -23080,13 +23128,12 @@ async function startSubagentWatcher(harness, adapter, getCurrentView) {
       stream.start(async (batch) => {
         try {
           const view = getCurrentView();
-          if (!childAdapter) {
+          if (childAdapter) {
+            childAdapter.handleBatch(batch, view);
+          } else {
             adapter.handleBatch(batch, view);
           }
           for (const event of batch) {
-            if (childAdapter) {
-              childAdapter.handleEvent(event, view);
-            }
             const childId = extractChildConversationId(event);
             if (childId !== void 0 && !attached.has(childId)) {
               const callId = "toolCallId" in event ? isChild ? `${parentCallId}:${String(event.toolCallId)}` : String(event.toolCallId) : parentCallId ?? "subagent";

@@ -4,6 +4,7 @@ import { PiThreadSession } from "./session.ts";
 import { resolveSessionPrompts } from "./runner-prompts.ts";
 import { resolveThreadContextFromDb } from "./subthread-spawner.ts";
 import { extractInputText } from "./prompt-input.ts";
+import { detectNativeChild } from "./session-owner.ts";
 
 export interface SessionCreationParams {
 	cwd?: string;
@@ -39,13 +40,8 @@ export class SessionRegistry {
 	private sessions = new Map<string, PiThreadSession>();
 	private sharedSkillRoots: string[] = [];
 
-	public getSharedSkillRoots(): readonly string[] {
-		return this.sharedSkillRoots;
-	}
-
-	public setSharedSkillRoots(roots: readonly string[]): void {
-		this.sharedSkillRoots = [...roots];
-	}
+	public getSharedSkillRoots(): readonly string[] { return this.sharedSkillRoots; }
+	public setSharedSkillRoots(roots: readonly string[]): void { this.sharedSkillRoots = [...roots]; }
 
 	constructor(sendNotification: (method: string, params: Record<string, unknown>) => void) {
 		this.sendNotification = sendNotification;
@@ -66,50 +62,81 @@ export class SessionRegistry {
 		params: SessionCreationParams = {},
 	): Promise<PiThreadSession> {
 		const existing = this.sessions.get(threadId);
-		if (existing && !existing.runner.exited) {
-			return existing;
-		}
-		if (existing && existing.runner.exited) {
-			this.sessions.delete(threadId);
-		}
+		if (existing && !existing.runner.exited) return existing;
+		if (existing && existing.runner.exited) this.sessions.delete(threadId);
 
 		const { sessionKey, conversationId } = parseProviderThreadId(providerThreadId);
-
-		// Shared Owner routing: check if thread belongs to an active parent session
 		const rawParent = params.parentThreadId ?? params.options?.parentThreadId;
 		const parentThreadId = typeof rawParent === "string" && rawParent.trim() !== ""
 			? rawParent.trim()
 			: resolveThreadContextFromDb(threadId)?.parentThreadId;
 
+		const paramConvId = typeof params.conversationId === "string" && params.conversationId.trim() !== "" ? params.conversationId.trim() : undefined;
+		const parentSessionFilePath = parentThreadId ? resolveSessionFilePath(sessionKey) : undefined;
+		const nativeChild = detectNativeChild(threadId, conversationId, paramConvId, parentSessionFilePath);
+
 		let sharedSession: PiThreadSession | undefined;
 		if (parentThreadId && this.sessions.has(parentThreadId)) {
 			const candidate = this.sessions.get(parentThreadId);
 			if (candidate && !candidate.runner?.exited) {
-				sharedSession = candidate;
+				const text = extractInputText(params.input) || (typeof params.prompt === "string" ? params.prompt.trim() : "") || (typeof params.task === "string" ? params.task.trim() : "");
+				const taskConvId = text && typeof candidate.findSubagentConversationForTask === "function" ? candidate.findSubagentConversationForTask(text) : undefined;
+				const boundConvId = candidate.getConversationIdForThread?.(threadId);
+				if (nativeChild.isNative || taskConvId !== undefined || boundConvId !== undefined) {
+					sharedSession = candidate;
+				}
 			}
 		}
 
-		// Shared Owner routing: check if an active session already exists for this sessionKey
 		if (!sharedSession) {
 			for (const active of this.sessions.values()) {
 				if (!active.runner?.exited && parseProviderThreadId(active.options.providerThreadId).sessionKey === sessionKey) {
-					sharedSession = active;
-					break;
+					if (nativeChild.isNative || active.options.threadId === threadId) {
+						sharedSession = active;
+						break;
+					}
 				}
 			}
 		}
 
 		if (sharedSession) {
 			const text = extractInputText(params.input) || (typeof params.prompt === "string" ? params.prompt.trim() : "") || (typeof params.task === "string" ? params.task.trim() : "");
-			const paramConvId = typeof params.conversationId === "string" && params.conversationId.trim() !== "" ? params.conversationId.trim() : undefined;
-			const existingBoundConvId = typeof (sharedSession as any).getConversationIdForThread === "function" ? (sharedSession as any).getConversationIdForThread(threadId) : undefined;
-			const targetConvId = conversationId ?? paramConvId ?? existingBoundConvId ?? (text && typeof sharedSession.findSubagentConversationForTask === "function" ? sharedSession.findSubagentConversationForTask(text) : undefined);
-
+			const targetConvId = nativeChild.conversationId ?? (text && typeof sharedSession.findSubagentConversationForTask === "function" ? sharedSession.findSubagentConversationForTask(text) : undefined) ?? sharedSession.getConversationIdForThread?.(threadId);
 			this.sessions.set(threadId, sharedSession);
 			sharedSession.registerThread?.(threadId, targetConvId);
 			this.sendNotification("thread/identity", { threadId, providerThreadId, sessionRestorable: true });
 			this.sendNotification("thread/delta", { threadId, deltas: [{ kind: "session.reset" }] });
 			return sharedSession;
+		}
+
+		const sessionDir = resolveSessionDir(), sessionFilePath = resolveSessionFilePath(sessionKey), extensionPath = requireExtensionPath(), scratchDir = requireScratchDir();
+		const rawSkills = (params.additionalSkillPaths as string[]) ?? ((params.options as any)?.additionalSkillPaths as string[]);
+		const skillRoots = Array.from(new Set([...(rawSkills ?? []), ...this.sharedSkillRoots]));
+		const rawEnv = params.shellEnvOverrides ?? params.options?.envVars;
+		const resolvedEnv = typeof rawEnv === "object" && rawEnv !== null
+			? Object.fromEntries(Object.entries(rawEnv as Record<string, unknown>).filter(([, v]) => typeof v === "string")) as Record<string, string>
+			: undefined;
+		const rawProviderOptions = params.options?.providerOptions ?? params.providerOptions;
+		const providerOptions = typeof rawProviderOptions === "object" && rawProviderOptions !== null && !Array.isArray(rawProviderOptions) ? (rawProviderOptions as Record<string, unknown>) : undefined;
+
+		if (nativeChild.isNative) {
+			if (!parentThreadId) {
+				throw new Error(`Unresolved parent owner thread for subagent conversation ${nativeChild.conversationId}`);
+			}
+			const session = new PiThreadSession({
+				threadId: parentThreadId, providerThreadId: sessionKey, cwd: params.cwd, sessionFilePath, sessionDir, extensionPath, scratchDir,
+				model: undefined, thinkingLevel: undefined, shellEnvOverrides: resolvedEnv,
+				...resolveSessionPrompts(params), providerOptions, ...(skillRoots.length > 0 ? { additionalSkillPaths: skillRoots } : {}),
+			}, this.sendNotification);
+
+			await session.start();
+			this.sessions.set(parentThreadId, session);
+			this.sessions.set(threadId, session);
+			session.registerThread?.(parentThreadId);
+			session.registerThread?.(threadId, nativeChild.conversationId);
+			this.sendNotification("thread/identity", { threadId, providerThreadId, sessionRestorable: true });
+			this.sendNotification("thread/delta", { threadId, deltas: [{ kind: "session.reset" }] });
+			return session;
 		}
 
 		const rawModel = params.model ?? params.options?.model;
@@ -124,17 +151,6 @@ export class SessionRegistry {
 
 		const rawThinking = params.thinkingLevel ?? params.options?.reasoningLevel ?? params.options?.thinkingLevel;
 		const resolvedThinking = typeof rawThinking === "string" ? rawThinking : undefined;
-		const rawEnv = params.shellEnvOverrides ?? params.options?.envVars;
-		let resolvedEnv: Record<string, string> | undefined;
-		if (typeof rawEnv === "object" && rawEnv !== null) {
-			resolvedEnv = Object.fromEntries(Object.entries(rawEnv as Record<string, unknown>).filter(([, v]) => typeof v === "string")) as Record<string, string>;
-		}
-
-		const rawProviderOptions = params.options?.providerOptions ?? params.providerOptions;
-		const providerOptions = typeof rawProviderOptions === "object" && rawProviderOptions !== null && !Array.isArray(rawProviderOptions) ? (rawProviderOptions as Record<string, unknown>) : undefined;
-		const sessionDir = resolveSessionDir(), sessionFilePath = resolveSessionFilePath(sessionKey), extensionPath = requireExtensionPath(), scratchDir = requireScratchDir();
-		const rawSkills = (params.additionalSkillPaths as string[]) ?? ((params.options as any)?.additionalSkillPaths as string[]);
-		const skillRoots = Array.from(new Set([...(rawSkills ?? []), ...this.sharedSkillRoots]));
 
 		const session = new PiThreadSession({
 			threadId, providerThreadId, cwd: params.cwd, sessionFilePath, sessionDir, extensionPath, scratchDir,
