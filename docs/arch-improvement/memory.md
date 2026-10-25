@@ -117,4 +117,10 @@
 - Use next time: Ensure session command handlers dynamically synchronize updated model IDs and thinking levels to runner process state. Write explicit tests asserting that option changes mid-turn alter subsequent prompt parameters without crashing or dropping session state.
 - Evidence: `src/runner/session-commands.ts`, `tests/stubs-remediation.test.ts`.
 
+## 2026-10-25 - Native Tool Event Families Alter Payload Channels: Nested Results vs Model Entries (Cycle tool-result-parity)
+- Context: Decoding tool execution outcomes and canonical details in Pi Durable.
+- Symptom: All successful nested tool executions inside `codemode` or script engines were falsely marked as faulted, patch/diff details were lost in fileChange items, and bash outputs were overwritten.
+- Cause: 1) In `@earendil-works/pi-durable`, model-issued calls settle via conversation entries (`event.entry`), while nested tool calls settle directly via task documents (`event.result: NestedToolExecutionResult`), leaving `event.entry === undefined`. The adapter was checking only `event.entry`, treating all nested successes as faults. 2) Details live in `entry.model[0].details` or `result.details`, whereas `entry.data` is merely `{ diagnostics }`. 3) Synthetic fixtures copied `entry` into nested events and put diffs in `entry.data`, concealing the bug. 4) Child adapters that prefix live call IDs (`${parentRef}:${callId}`) must also prefix snapshot-seeded slot IDs upon attachment.
+- Use next time: Never assume all tool calls produce conversation entries. Discriminate `entry` vs `result` explicitly. Canonical details live in `model[0].details` or `result.details`, never in `entry.data`. Always test against real SDK producer fixtures (`Harness.open` with `MemoryStorage` and `watchEvents`), and ensure adapter seed keys match live execution prefixing.
+- Evidence: `tests/native-tool-projection.test.ts`, `tests/native-tool-result.test.ts`, `src/runner/bridge/native-tool-result.ts`, `src/runner/bridge/tool-progress-state.ts`, PRD `[[prd/2026-10-25-pi-durable-tool-result-parity]]`.
 

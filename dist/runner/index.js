@@ -2028,78 +2028,302 @@ function resolveTurnSummary(current, currentText, currentThinking, lastAssistant
   return { finalMsg, cw, cumulativeUsage, isAborted, isError, errorMessage, lastCheckpointId };
 }
 
-// src/runner/bridge/tool-result-extractor.ts
-var activeToolDetails = /* @__PURE__ */ new Map();
-function extractToolResult(modelItem) {
-  const msg = typeof modelItem === "object" && modelItem !== null ? modelItem : void 0;
-  const isError = msg?.isError ?? false;
-  let result = "";
-  const raw = msg?.content ?? msg?.output;
-  if (Array.isArray(raw)) {
-    result = raw.map((b) => typeof b === "object" && b !== null && typeof b.text === "string" ? b.text : "").filter(Boolean).join("\n");
-  } else if (typeof raw === "string") {
-    result = raw;
+// src/runner/bridge/native-tool-result.ts
+function extractCanonicalToolDetails(event) {
+  if (typeof event !== "object" || event === null) return void 0;
+  const rec = event;
+  if (rec.result && typeof rec.result === "object" && "details" in rec.result) {
+    return rec.result.details;
   }
-  return { result, isError };
-}
-function buildToolExecutionUpdate(event, parentRef) {
-  let partialResult = "";
-  if (event.output) {
-    if ("set" in event.output) partialResult = event.output.set;
-    else if ("append" in event.output) partialResult = event.output.append ?? "";
+  if (rec.entry && typeof rec.entry === "object" && Array.isArray(rec.entry.model)) {
+    const msg = rec.entry.model[0];
+    if (msg && typeof msg === "object" && "details" in msg) {
+      return msg.details;
+    }
   }
-  let trimStart;
-  if (event.output && "trimStart" in event.output && typeof event.output.trimStart === "number") {
-    trimStart = event.output.trimStart;
-  }
-  if (event.details !== void 0) {
-    activeToolDetails.set(event.toolCallId, event.details);
-  }
-  if (partialResult || trimStart !== void 0 || event.details !== void 0) {
-    return {
-      type: "tool_execution_update",
-      toolCallId: event.toolCallId,
-      toolName: event.toolName,
-      partialResult,
-      ...trimStart !== void 0 ? { trimStart } : {},
-      ...event.details !== void 0 ? { details: event.details } : {},
-      ...parentRef !== void 0 ? { parentRef } : {}
-    };
+  if ("details" in rec) {
+    return rec.details;
   }
   return void 0;
 }
-function buildToolExecutionEnd(event, parentRef) {
-  if (event.entry === void 0) {
+function decodeEntry(entry) {
+  const msg = entry.model?.[0];
+  if (!msg || typeof msg !== "object" || msg.role !== "toolResult") {
     return {
-      type: "tool_execution_end",
-      toolCallId: event.toolCallId,
-      toolName: event.toolName,
-      result: "Tool execution faulted or was orphaned without generating an entry record.",
+      status: "invalid",
       isError: true,
-      ...parentRef !== void 0 ? { parentRef } : {}
+      errorMessage: "Tool execution entry is missing a valid toolResult message"
     };
   }
-  const { result, isError } = extractToolResult(event.entry?.model?.[0]);
-  const entryData = typeof event.entry === "object" && event.entry !== null && "data" in event.entry ? event.entry.data : void 0;
-  const bufferedDetails = activeToolDetails.get(event.toolCallId);
-  activeToolDetails.delete(event.toolCallId);
-  const details = entryData ?? event.details ?? bufferedDetails;
+  return {
+    status: "entry",
+    isError: Boolean(msg.isError),
+    rawOutput: msg.content ?? msg.output,
+    details: "details" in msg ? msg.details : void 0
+  };
+}
+function decodeResult(result) {
+  return {
+    status: "result",
+    isError: Boolean(result.isError),
+    rawOutput: result.structuredOutput,
+    details: "details" in result ? result.details : void 0,
+    diagnostics: result.diagnostics ?? []
+  };
+}
+function decodeNativeToolEnd(event) {
+  const hasEntry = event.entry !== void 0;
+  const hasResult = event.result !== void 0;
+  if (hasEntry && hasResult) {
+    return {
+      status: "invalid",
+      isError: true,
+      errorMessage: "Tool protocol invariant violation: both entry and result present in tool_execution_end"
+    };
+  }
+  if (!hasEntry && !hasResult) {
+    return {
+      status: "missing",
+      isError: true,
+      errorMessage: "Tool execution completed without generating an entry record or nested result"
+    };
+  }
+  if (hasResult && event.result) {
+    return decodeResult(event.result);
+  }
+  if (event.entry) {
+    return decodeEntry(event.entry);
+  }
+  return {
+    status: "invalid",
+    isError: true,
+    errorMessage: "Tool execution entry is missing"
+  };
+}
+
+// src/runner/bridge/tool-result-presentation.ts
+import {
+  DEFAULT_MAX_BYTES,
+  DEFAULT_MAX_LINES,
+  truncateTail
+} from "@earendil-works/pi-coding-agent";
+function isImageContent(value) {
+  if (typeof value !== "object" || value === null) return false;
+  const rec = value;
+  return rec.type === "image" && (typeof rec.data === "string" || typeof rec.mimeType === "string");
+}
+function redactImageStructures(value) {
+  if (typeof value !== "object" || value === null) return value;
+  if (isImageContent(value)) {
+    const rec = value;
+    return { ...rec, data: "[image data omitted]" };
+  }
+  if (Array.isArray(value)) {
+    return value.map(redactImageStructures);
+  }
+  const result = {};
+  for (const [k, v] of Object.entries(value)) {
+    result[k] = redactImageStructures(v);
+  }
+  return result;
+}
+function formatContentBlock(block) {
+  if (typeof block === "string") return block;
+  if (typeof block !== "object" || block === null) return String(block);
+  const rec = block;
+  if (typeof rec.text === "string") return rec.text;
+  if (isImageContent(rec)) {
+    return `[image: ${String(rec.mimeType ?? "image")}]`;
+  }
+  return JSON.stringify(redactImageStructures(rec));
+}
+function formatRawOutput(toolName, raw) {
+  if (typeof raw === "string") return raw;
+  if (typeof raw === "number" || typeof raw === "boolean" || raw === null) {
+    return String(raw);
+  }
+  if (Array.isArray(raw)) {
+    return raw.map(formatContentBlock).filter(Boolean).join("\n");
+  }
+  if (typeof raw === "object" && raw !== null) {
+    const rec = raw;
+    if (toolName === "bash" && typeof rec.output === "string") {
+      return rec.output;
+    }
+    if (isImageContent(rec)) {
+      return `[image: ${String(rec.mimeType ?? "image")}]`;
+    }
+    return JSON.stringify(redactImageStructures(raw), null, 2);
+  }
+  return "";
+}
+function renderDiagnostics(diagnostics) {
+  return diagnostics.filter((d) => d && typeof d.message === "string" && d.message.length > 0).map((d) => d.severity && d.severity !== "info" ? `[${d.severity}] ${d.message}` : d.message).join("\n");
+}
+function presentToolResult(params) {
+  const { toolName, rawOutput, isError, diagnostics, retainedOutput } = params;
+  let text = "";
+  if (rawOutput !== void 0) {
+    text = formatRawOutput(toolName, rawOutput);
+  } else if (retainedOutput) {
+    text = retainedOutput;
+  }
+  if (diagnostics && diagnostics.length > 0) {
+    const diagText = renderDiagnostics(diagnostics);
+    if (diagText) {
+      text = text ? `${text}
+${diagText}` : diagText;
+    }
+  }
+  if (!text && isError) {
+    text = `Tool ${toolName} failed`;
+  }
+  return truncateTail(text, {
+    maxBytes: DEFAULT_MAX_BYTES,
+    maxLines: DEFAULT_MAX_LINES
+  }).content;
+}
+
+// src/runner/bridge/tool-progress-state.ts
+var ToolProgressState = class {
+  active = /* @__PURE__ */ new Map();
+  applyOutputUpdate(callId, output2) {
+    if (!output2) {
+      return this.active.get(callId)?.output;
+    }
+    let current = this.active.get(callId)?.output ?? "";
+    if ("set" in output2) {
+      current = output2.set;
+    } else {
+      const trim = typeof output2.trimStart === "number" ? Math.max(0, output2.trimStart) : 0;
+      const append = typeof output2.append === "string" ? output2.append : "";
+      current = current.slice(trim) + append;
+    }
+    const existing = this.active.get(callId);
+    if (existing) {
+      existing.output = current;
+    } else {
+      this.active.set(callId, { output: current });
+    }
+    return current;
+  }
+  setDetails(callId, details) {
+    const existing = this.active.get(callId);
+    if (existing) {
+      existing.details = details;
+    } else {
+      this.active.set(callId, { output: "", details });
+    }
+  }
+  getDetails(callId) {
+    return this.active.get(callId)?.details;
+  }
+  getRetainedOutput(callId) {
+    return this.active.get(callId)?.output;
+  }
+  take(callId) {
+    const slot = this.active.get(callId);
+    this.active.delete(callId);
+    return slot ? { output: slot.output, details: slot.details } : {};
+  }
+  clear() {
+    this.active.clear();
+  }
+  seedFromSnapshot(tools, nestedTools) {
+    const all = [...tools ?? [], ...nestedTools ?? []];
+    for (const t of all) {
+      if (t && t.callId !== void 0) {
+        const outputStr = typeof t.output === "string" ? t.output : "";
+        this.active.set(t.callId, { output: outputStr, details: t.details });
+      }
+    }
+  }
+};
+
+// src/runner/bridge/tool-result-extractor.ts
+function buildTerminalError(event, decoded, canonicalDetails, parentRef) {
+  return {
+    type: "tool_execution_end",
+    toolCallId: event.toolCallId,
+    toolName: event.toolName,
+    result: decoded.errorMessage,
+    isError: true,
+    ...canonicalDetails !== void 0 ? { details: canonicalDetails } : {},
+    ...parentRef !== void 0 ? { parentRef } : {}
+  };
+}
+function buildTerminalSuccess(event, decoded, scoped, canonicalDetails, parentRef) {
+  const details = canonicalDetails !== void 0 ? canonicalDetails : scoped.details;
+  const result = presentToolResult({
+    toolName: event.toolName,
+    rawOutput: decoded.rawOutput,
+    isError: decoded.isError,
+    diagnostics: decoded.status === "result" ? decoded.diagnostics : void 0,
+    retainedOutput: scoped.output
+  });
   return {
     type: "tool_execution_end",
     toolCallId: event.toolCallId,
     toolName: event.toolName,
     result,
-    isError,
+    isError: decoded.isError,
     ...details !== void 0 ? { details } : {},
     ...parentRef !== void 0 ? { parentRef } : {}
   };
 }
+var ToolEventProjector = class {
+  progressState = new ToolProgressState();
+  projectToolUpdate(event, parentRef) {
+    let partialResult;
+    if (event.output) {
+      partialResult = this.progressState.applyOutputUpdate(event.toolCallId, event.output);
+    } else if (event.details !== void 0) {
+      partialResult = this.progressState.getRetainedOutput(event.toolCallId) ?? "";
+    }
+    if (event.details !== void 0) {
+      this.progressState.setDetails(event.toolCallId, event.details);
+    }
+    let trimStart;
+    if (event.output && "trimStart" in event.output && typeof event.output.trimStart === "number") {
+      trimStart = event.output.trimStart;
+    }
+    if (partialResult !== void 0 || trimStart !== void 0 || event.details !== void 0) {
+      return {
+        type: "tool_execution_update",
+        toolCallId: event.toolCallId,
+        toolName: event.toolName,
+        partialResult: partialResult ?? "",
+        ...trimStart !== void 0 ? { trimStart } : {},
+        ...event.details !== void 0 ? { details: event.details } : {},
+        ...parentRef !== void 0 ? { parentRef } : {}
+      };
+    }
+    return void 0;
+  }
+  projectToolEnd(event, parentRef) {
+    const decoded = decodeNativeToolEnd(event);
+    const scoped = this.progressState.take(event.toolCallId);
+    const canonicalDetails = extractCanonicalToolDetails(event);
+    if (decoded.status === "missing" || decoded.status === "invalid") {
+      const fallback = canonicalDetails !== void 0 ? canonicalDetails : scoped.details;
+      return buildTerminalError(event, decoded, fallback, parentRef);
+    }
+    return buildTerminalSuccess(event, decoded, scoped, canonicalDetails, parentRef);
+  }
+  clear() {
+    this.progressState.clear();
+  }
+  seedFromSnapshot(tools, nestedTools) {
+    this.progressState.seedFromSnapshot(tools, nestedTools);
+  }
+};
 
 // src/runner/bridge/bb-child-event-adapter.ts
 var BBChildEventAdapter = class {
   output;
   parentRef;
   conversationId;
+  toolProjector = new ToolEventProjector();
   currentText = "";
   currentThinking = "";
   isInThinking = false;
@@ -2159,7 +2383,7 @@ var BBChildEventAdapter = class {
         break;
       }
       case "tool_execution_update": {
-        const update = buildToolExecutionUpdate(
+        const update = this.toolProjector.projectToolUpdate(
           { ...event, toolCallId: `${this.parentRef}:${event.toolCallId}` },
           this.parentRef
         );
@@ -2172,7 +2396,7 @@ var BBChildEventAdapter = class {
         break;
       }
       case "tool_execution_end": {
-        const end = buildToolExecutionEnd(
+        const end = this.toolProjector.projectToolEnd(
           { ...event, toolCallId: `${this.parentRef}:${event.toolCallId}` },
           this.parentRef
         );
@@ -2203,6 +2427,7 @@ var BBChildEventAdapter = class {
       }
       case "run_end": {
         this.closeThinkingIfNeeded();
+        this.toolProjector.clear();
         this.output({
           type: "agent_end",
           messages: [],
@@ -2219,11 +2444,19 @@ var BBChildEventAdapter = class {
         });
         break;
       }
+      case "snapshot": {
+        const snap = event;
+        const prefix = (slots) => slots?.map((s) => ({ ...s, callId: `${this.parentRef}:${s.callId}` }));
+        this.toolProjector.seedFromSnapshot(prefix(snap.tools), prefix(snap.nestedTools));
+        break;
+      }
+      case "run_start": {
+        this.toolProjector.clear();
+        break;
+      }
       // Subagent lifecycle events are scoped to the child task and must not break parent turn
       case "message_start":
-      case "run_start":
       case "turn_end":
-      case "snapshot":
       case "compaction_start":
       case "compaction_end":
       case "auto_retry_start":
@@ -2282,6 +2515,7 @@ var BBEventAdapter = class {
   resolveContextWindow;
   submissions = /* @__PURE__ */ new Map();
   activeToolNames = /* @__PURE__ */ new Map();
+  toolProjector = new ToolEventProjector();
   lastTaskError;
   lastAssistantMessage;
   lastCheckpointId;
@@ -2315,10 +2549,10 @@ var BBEventAdapter = class {
     const isError = summary.isError && !isAborted;
     const base = {
       contextWindow: summary.cw,
-      ...this.lastCheckpointId ? { providerCheckpointId: this.lastCheckpointId } : {},
-      ...summary.cumulativeUsage ? { cumulativeUsage: summary.cumulativeUsage } : {},
-      ...isAborted ? { aborted: true, stopReason: "aborted" } : {},
-      ...isError ? { stopReason: "error", ...summary.errorMessage ? { errorMessage: summary.errorMessage } : {} } : {}
+      ...this.lastCheckpointId && { providerCheckpointId: this.lastCheckpointId },
+      ...summary.cumulativeUsage && { cumulativeUsage: summary.cumulativeUsage },
+      ...isAborted && { aborted: true, stopReason: "aborted" },
+      ...isError && { stopReason: "error", ...summary.errorMessage && { errorMessage: summary.errorMessage } }
     };
     if (type === "turn_end") this.output({ type: "turn_end", message: summary.finalMsg, ...base });
     else this.output({ type: "agent_end", messages: [summary.finalMsg], ...base });
@@ -2334,9 +2568,10 @@ var BBEventAdapter = class {
     switch (event.type) {
       case "snapshot": {
         const snap = event;
-        const entries = snap.view?.conversation?.entries ?? event.entries ?? current?.conversation?.entries;
+        const entries = snap.view?.conversation?.entries ?? snap.entries ?? current?.conversation?.entries;
         const tail = entries?.at(-1);
         if (tail?.id !== void 0) this.lastCheckpointId = String(tail.id);
+        this.toolProjector.seedFromSnapshot(snap.tools, snap.nestedTools);
         break;
       }
       case "run_start": {
@@ -2346,6 +2581,7 @@ var BBEventAdapter = class {
         this.isInThinking = false;
         this.lastAssistantMessage = void 0;
         this.activeToolNames.clear();
+        this.toolProjector.clear();
         this.output({ type: "agent_start" });
         break;
       }
@@ -2377,12 +2613,12 @@ var BBEventAdapter = class {
         break;
       }
       case "tool_execution_update": {
-        const update = buildToolExecutionUpdate(event, this.resolveParentRef(event.parentToolCallId));
+        const update = this.toolProjector.projectToolUpdate(event, this.resolveParentRef(event.parentToolCallId));
         if (update) this.output(update);
         break;
       }
       case "tool_execution_end": {
-        this.output(buildToolExecutionEnd(event, this.resolveParentRef(event.parentToolCallId)));
+        this.output(this.toolProjector.projectToolEnd(event, this.resolveParentRef(event.parentToolCallId)));
         break;
       }
       case "message_end": {
@@ -2425,6 +2661,7 @@ var BBEventAdapter = class {
         this.emitTerminal("turn_end", current);
         break;
       case "run_end":
+        this.toolProjector.clear();
         this.emitTerminal("agent_end", current, event.inputs);
         break;
       case "auto_retry_start":
@@ -2826,13 +3063,9 @@ import {
 } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT as BACKGROUND_CONTEXT3 } from "@earendil-works/chord/context";
 function extractChildConversationId(event) {
-  if (event.type === "tool_execution_update") {
-    const details = event.details;
+  if (event.type === "tool_execution_update" || event.type === "tool_execution_end") {
+    const details = extractCanonicalToolDetails(event);
     return details?.conversationId;
-  }
-  if (event.type === "tool_execution_end") {
-    const entryData = typeof event.entry === "object" && event.entry !== null && "data" in event.entry ? event.entry.data : void 0;
-    return entryData?.conversationId;
   }
   return void 0;
 }

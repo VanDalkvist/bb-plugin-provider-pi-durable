@@ -1,10 +1,7 @@
 import type { AgentEvent } from "@earendil-works/pi-durable";
 import type { DurableView } from "../runtime.ts";
 import type { BBWireEvent } from "./contracts.ts";
-import {
-	buildToolExecutionUpdate,
-	buildToolExecutionEnd,
-} from "./tool-result-extractor.ts";
+import { ToolEventProjector } from "./tool-result-extractor.ts";
 
 /**
  * Handles agent events originating from a subagent conversation.
@@ -15,6 +12,7 @@ export class BBChildEventAdapter {
 	private readonly output: (event: BBWireEvent) => void;
 	private readonly parentRef: string;
 	private readonly conversationId?: string | number;
+	private readonly toolProjector = new ToolEventProjector();
 	private currentText = "";
 	private currentThinking = "";
 	private isInThinking = false;
@@ -79,7 +77,7 @@ export class BBChildEventAdapter {
 			}
 
 			case "tool_execution_update": {
-				const update = buildToolExecutionUpdate(
+				const update = this.toolProjector.projectToolUpdate(
 					{ ...event, toolCallId: `${this.parentRef}:${event.toolCallId}` },
 					this.parentRef,
 				);
@@ -93,7 +91,7 @@ export class BBChildEventAdapter {
 			}
 
 			case "tool_execution_end": {
-				const end = buildToolExecutionEnd(
+				const end = this.toolProjector.projectToolEnd(
 					{ ...event, toolCallId: `${this.parentRef}:${event.toolCallId}` },
 					this.parentRef,
 				);
@@ -128,6 +126,7 @@ export class BBChildEventAdapter {
 
 			case "run_end": {
 				this.closeThinkingIfNeeded();
+				this.toolProjector.clear();
 				this.output({
 					type: "agent_end",
 					messages: [],
@@ -146,11 +145,22 @@ export class BBChildEventAdapter {
 				break;
 			}
 
+			case "snapshot": {
+				const snap = event as Extract<AgentEvent, { type: "snapshot" }>;
+				const prefix = (slots?: readonly { callId: string | number; output?: unknown; details?: unknown }[]) =>
+					slots?.map((s) => ({ ...s, callId: `${this.parentRef}:${s.callId}` }));
+				this.toolProjector.seedFromSnapshot(prefix(snap.tools), prefix(snap.nestedTools));
+				break;
+			}
+
+			case "run_start": {
+				this.toolProjector.clear();
+				break;
+			}
+
 			// Subagent lifecycle events are scoped to the child task and must not break parent turn
 			case "message_start":
-			case "run_start":
 			case "turn_end":
-			case "snapshot":
 			case "compaction_start":
 			case "compaction_end":
 			case "auto_retry_start":

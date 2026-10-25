@@ -9,7 +9,7 @@ import {
 import type { DurableView } from "../src/runner/runtime.ts";
 import type { BBWireEvent, BBToolExecutionEndEvent, BBToolExecutionUpdateEvent } from "../src/runner/bridge/contracts.ts";
 
-test("BBEventAdapter: tool_execution_end with event.entry === undefined emits isError: true with fault result (D-5)", () => {
+test("BBEventAdapter: tool_execution_end with missing entry and result emits isError: true with fault result (D-5)", () => {
 	const emitted: BBWireEvent[] = [];
 	const adapter = new BBEventAdapter((evt) => emitted.push(evt));
 	const dummyView = {} as DurableView;
@@ -19,8 +19,7 @@ test("BBEventAdapter: tool_execution_end with event.entry === undefined emits is
 			type: "tool_execution_end",
 			toolCallId: "call_fault_1",
 			toolName: "bash",
-			entry: undefined,
-		},
+		} as any,
 		dummyView,
 	);
 
@@ -30,9 +29,9 @@ test("BBEventAdapter: tool_execution_end with event.entry === undefined emits is
 	assert.equal(endEvt.toolCallId, "call_fault_1");
 	assert.equal(endEvt.toolName, "bash");
 	assert.equal(endEvt.isError, true);
-	assert.equal(
+	assert.match(
 		endEvt.result,
-		"Tool execution faulted or was orphaned without generating an entry record.",
+		/without generating an entry record or nested result/i,
 	);
 });
 
@@ -47,6 +46,7 @@ test("BBEventAdapter: tool_execution_end with valid entry and isError: false emi
 			toolCallId: "call_read_1",
 			toolName: "read",
 			entry: {
+				kind: "toolResult",
 				model: [
 					{
 						role: "toolResult",
@@ -80,12 +80,13 @@ test("BBEventAdapter: tool_execution_end with explicit error preserves isError: 
 			toolCallId: "call_err_1",
 			toolName: "bash",
 			entry: {
+				kind: "toolResult",
 				model: [
 					{
 						role: "toolResult",
 						toolCallId: "call_err_1",
 						toolName: "bash",
-						content: "command failed with code 1",
+						content: [{ type: "text", text: "command failed with code 1" }],
 						isError: true,
 					},
 				],
@@ -128,37 +129,6 @@ test("BBEventAdapter: tool_execution_update forwards trimStart when present (D-9
 	assert.equal(updateEvt.trimStart, 256);
 });
 
-test("BBEventAdapter: tool_execution_end forwards details metadata from event or entry (D-6)", () => {
-	const emitted: BBWireEvent[] = [];
-	const adapter = new BBEventAdapter((evt) => emitted.push(evt));
-	const dummyView = {} as DurableView;
-
-	const diffDetails = { diff: "@@ -1 +1 @@\n-a\n+b\n", patch: "patch string" };
-
-	adapter.handleEvent(
-		{
-			type: "tool_execution_end",
-			toolCallId: "call_edit_1",
-			toolName: "edit",
-			entry: {
-				model: [
-					{
-						role: "toolResult",
-						content: "applied patch",
-						isError: false,
-					},
-				],
-				data: diffDetails,
-			} as any,
-		},
-		dummyView,
-	);
-
-	assert.equal(emitted.length, 1);
-	const endEvt = emitted[0] as BBToolExecutionEndEvent;
-	assert.deepEqual(endEvt.details, diffDetails);
-});
-
 test("tool-delta-translator: maps faulted tool end to failed item status with error message (D-5)", () => {
 	const start = translateToolStart(
 		{
@@ -193,49 +163,6 @@ test("tool-delta-translator: maps faulted tool end to failed item status with er
 		message: "Tool execution faulted or was orphaned without generating an entry record.",
 	});
 
-	// Conforms to @bb/provider-bridge-protocol threadDeltaSchema
-	const parsed = threadDeltaSchema.safeParse(endDelta);
-	assert.equal(parsed.success, true);
-});
-
-test("tool-delta-translator: enriches fileChange item with diff metadata and validates with threadDeltaSchema (D-6)", () => {
-	const start = translateToolStart(
-		{
-			type: "tool_execution_start",
-			toolCallId: "call_edit_diff",
-			toolName: "edit",
-			args: {
-				path: "/workspace/src/app.ts",
-				edits: [{ oldText: "const a = 1;", newText: "const a = 2;" }],
-			},
-		},
-		"/workspace",
-	);
-
-	const diffText = "@@ -1 +1 @@\n-const a = 1;\n+const a = 2;\n";
-	const endDelta = translateToolEnd(
-		{
-			type: "tool_execution_end",
-			toolCallId: "call_edit_diff",
-			toolName: "edit",
-			result: "Successfully modified /workspace/src/app.ts",
-			isError: false,
-			details: { diff: diffText },
-		},
-		start.shape,
-		"/workspace",
-	);
-
-	assert.equal(endDelta.kind, "item.close");
-	assert.equal(endDelta.status, "completed");
-	assert.equal(endDelta.exitCode, 0);
-
-	const item = endDelta.item as { type: string; changes: Array<{ path: string; kind: string; diff?: string }> };
-	assert.equal(item.type, "fileChange");
-	assert.equal(item.changes.length, 1);
-	assert.equal(item.changes[0].diff, diffText);
-
-	// Conforms to @bb/provider-bridge-protocol threadDeltaSchema
 	const parsed = threadDeltaSchema.safeParse(endDelta);
 	assert.equal(parsed.success, true);
 });

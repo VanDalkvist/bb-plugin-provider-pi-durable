@@ -2,6 +2,66 @@
 
 ---
 
+## Cycle tool-result-parity: Tool Result Parity (AP-011, AP-012, AP-013, AP-019, AP-020, AP-022, AP-026, AP-028, AP-029, AP-048, AP-050)
+
+### Slices Summary (v0.2.52)
+- **Baseline:** `83ee4a3e1f7547afee8b688281164897c4910d7e`, `main`, 0.2.51 → 0.2.52.
+- **Canonical Knowledge:**
+  - Research: `[[docs/research/2026-10-25-pi-durable-tool-result-parity]]`
+  - PRD: `[[prd/2026-10-25-pi-durable-tool-result-parity]]`
+  - Plan: `[[plans/2026-10-25-arch-loop-pi-durable-tool-result-parity]]`
+- **Slice TRP.1 (P1):** Native Terminal Result Decoder & Canonical Details (`src/runner/bridge/native-tool-result.ts`, `src/runner/bridge/tool-result-presentation.ts`).
+  - Разработан чистый типизированный декодер `decodeNativeToolEnd` для событий `NativeToolEndEvent`: различает model-issued вызовы (`event.entry`), вложенные вызовы (`event.result`), отсутствие обоих (ошибка) и протокольное нарушение одновременного присутствия.
+  - Реализован канонический селектор деталей `extractCanonicalToolDetails`, читающий `entry.model[0].details` или `result.details`, сохраняющий явный сброс `details: null`, и категорически игнорирующий диагностический конверт `entry.data`.
+  - В `tool-result-presentation.ts` внедрена безопасная проекция текста: ограничено распознавание изображений (`isImageContent` строго `type: "image"`), рекурсивно маскируются base64-данные во вложенных структурах без искажения обычных JSON-полей (`{ data: "customer-record" }`), поддержаны falsey-скаляры (`0`, `false`, `null`, `""`), bash stdout и публичный API усечения `truncateTail`. Устранен silent catch по AP-012/AP-022.
+- **Slice TRP.2 (P2):** Scoped Progress State & Cumulative Retained Snapshots (`src/runner/bridge/tool-progress-state.ts`, `src/runner/bridge/tool-result-extractor.ts`, `src/host/tool-delta-translator.ts`).
+  - Создан scoped класс `ToolProgressState` (без module-global singleton Map), рассчитывающий кумулятивные снимки вывода на операциях `set`, `append`, `trimStart`.
+  - При метаданных-only обновлениях (`details` без `output`) возвращается текущий накопленный снимок вместо пустой строки, предотвращая затирание bash stdout.
+  - В `tool-delta-translator.ts` поддержан пустой снимок bash (`typeof event.partialResult === "string"`), корректно очищающий терминал при `set: ""`.
+- **Slice TRP.3 (P2):** Adapter Scoped Lifecycles & Canonical Terminal Discovery (`src/runner/bridge/bb-event-adapter.ts`, `src/runner/bridge/bb-child-event-adapter.ts`, `src/runner/subagent-watcher.ts`).
+  - Root `BBEventAdapter` и `BBChildEventAdapter` владеют выделенными экземплярами `ToolEventProjector`.
+  - В `BBChildEventAdapter` внедрено префиксирование ключей при сидировании из `snapshot` (`${parentRef}:${slot.callId}`), гарантирующее совпадение с ключами последующих обновлений, и сброс состояния на `run_start`.
+  - В `BBEventAdapter` внедрен сброс проектора на `run_end` для изоляции межходовых буферов. Устранено приведение к `any[]` в `SnapshotEvent`.
+  - В `subagent-watcher.ts` поиск terminal conversationId переведен на `extractCanonicalToolDetails`.
+- **Slice TRP.4 (P2):** Contract Conformance & Real Harness Codemode Sandbox Verification (`tests/native-tool-projection.test.ts`, `tests/native-tool-events.fixture.ts`, `tests/tool-diff-metadata.test.ts`, `tests/codemode-hierarchy-parity.test.ts`).
+  - Создан фикстурный генератор на базе реальных `Harness`, `MemoryStorage`, `fauxProvider`, `watchEvents`.
+  - Добавлен сквозной сценарий с реальными `CodemodeSandbox` + `CodingTools`: `write`, `edit` с нативными patch/diff деталями, успешный `bash`, упавший `bash` (`exit 42`), пойманная ошибка `read` несуществующего файла и успешное завершение родительского `codemode`, с валидацией каждого дельты через `threadDeltaSchema.safeParse`.
+  - Тесты с ложными фикстурами разделены и исправлены.
+
+#### Architectural Findings & Discovered Bugs
+| ID | Issue / Component | Severity | Rule | Disposition | Root Cause & Resolution |
+|---|---|---|---|---|---|
+| **F-TRP-1** | Ложный fault при успехе вложенных инструментов | **P1** | AP-012, AP-026, AP-050 | `fix-now` | `tool-result-extractor.ts` проверял только `event.entry`, игнорируя `event.result`. Внедрен `decodeNativeToolEnd`. |
+| **F-TRP-2** | Подмена `details` диагностическим конвертом `entry.data` | **P2** | AP-013, AP-026, AP-048 | `fix-now` | `details` читались из `entry.data` (`{ diagnostics }`). Заменено на канонический `extractCanonicalToolDetails`. |
+| **F-TRP-3** | Затирание bash stdout при потоковом выводе и метаданных | **P2** | AP-013, AP-026, AP-050 | `fix-now` | Чанки не аккумулировались в кумулятивные снимки, а мета-апдейты сбрасывали `partialResult` в `""`. Создан `ToolProgressState`. |
+| **F-TRP-4** | Утечка буферов через модуль-глобальный Map | **P2** | AP-011, AP-013, AP-048 | `fix-now` | `activeToolDetails` был глобальным синглтоном. Заменен на per-adapter `ToolEventProjector` со сбросом на `run_end` и `run_start`. |
+| **F-TRP-5** | Несоответствие синтетических фикстур поведению SDK | **P2** | AP-028, AP-029, AP-056 | `fix-now` | Тесты использовали `entry` для вложенных инструментов. Заменены на контракты реального `Harness`. |
+
+#### Verification Evidence
+- `npx tsc --noEmit`: **0 errors (exit code 0)**.
+- `npm test`: **330 / 330 passing assertions across 19 test suites (0 failures, 0 skips, ~19s execution time)**.
+- `git diff --check`: **Clean (exit code 0)**.
+- AP-019: все затронутые TS-файлы < 200 строк; новые функции <= 40 строк. Крупные legacy switch-dispatchers существовали до этого среза и не объявляются соответствующими лимиту:
+  - `src/runner/bridge/tool-progress-state.ts`: **76 строк**.
+  - `src/runner/subagent-watcher.ts`: **96 строк**.
+  - `src/runner/bridge/tool-result-presentation.ts`: **100 строк**.
+  - `src/runner/bridge/native-tool-result.ts`: **107 строк**.
+  - `src/runner/bridge/tool-result-extractor.ts`: **136 строк**.
+  - `src/runner/bridge/bb-child-event-adapter.ts`: **172 строки**.
+  - `src/host/tool-delta-translator.ts`: **179 строк**.
+  - `src/runner/bridge/bb-event-adapter.ts`: **195 строк**.
+  - Все 10 тестовых файлов: **от 96 до 190 строк**.
+  - **100% затронутых файлов строго < 200 строк**.
+- Архитектурный гейт S9:
+  - **Architecture Review (@thread:thr_6b7wn4nzq8):** **VERDICT: PASS** (все замечания P1-P3 устранены и проверены).
+- Статус продукта:
+  - Тест таймлайна на старом git-кеше: **FAIL** (несоответствие развернутой версии старому артефакту, не этот чекаут).
+  - **Product Review Stage 2 (@thread:thr_qjevvu38fz): PASS** для нового собранного runner через публичный JSONL CLI: happy/empty/error/recovery, реальные read/write/edit/bash, причины ошибок и diff сохранены; report `PRODUCT_REVIEW_STAGE2_BUILT_RUNNER.md`, 44 wire events.
+  - **S9 code/artifact gates: Architecture PASS + Product PASS.** Не подменяют проверку установленной версии.
+  - Роллаут **authorized / pending**: пользователь 2026-10-25 явно разрешил push после арх-лупа, тег 0.2.x и обновление плагина. После публикации v0.2.52 обязательна повторная проверка живого BB timeline. Исторические failed rows не переписываются.
+
+---
+
 ## Cycle 103: Codemode Subagent Presentation & Hierarchy Parity (AP-010, AP-013, AP-019, AP-026, AP-028, AP-029)
 
 ### Slices Summary (v0.2.51)

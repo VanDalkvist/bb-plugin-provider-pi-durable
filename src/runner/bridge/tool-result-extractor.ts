@@ -1,119 +1,136 @@
-import type { EntryRecord } from "@earendil-works/pi-durable";
 import type {
 	BBToolExecutionEndEvent,
 	BBToolExecutionUpdateEvent,
 } from "./contracts.ts";
+import {
+	decodeNativeToolEnd,
+	extractCanonicalToolDetails,
+	type NativeToolEndEvent,
+	type NativeToolUpdateEvent,
+	type NativeDecodedOutcome,
+	type RawToolResultMessage,
+} from "./native-tool-result.ts";
+import { presentToolResult } from "./tool-result-presentation.ts";
+import { ToolProgressState, type ActiveToolSlot } from "./tool-progress-state.ts";
 
-interface RawToolResultMessage {
-	isError?: boolean;
-	output?: string | Array<{ text?: string; [key: string]: unknown }>;
-	content?: string | Array<{ text?: string; [key: string]: unknown }>;
-	[key: string]: unknown;
-}
+export { extractCanonicalToolDetails };
+export type { NativeToolEndEvent, NativeToolUpdateEvent };
 
-export interface ToolExecutionUpdateEventLike {
-	toolCallId: string | number;
-	toolName: string;
-	output?: { trimStart?: number; append?: string } | { set: string };
-	details?: unknown;
-}
-
-export interface ToolExecutionEndEventLike {
-	toolCallId: string | number;
-	toolName: string;
-	entry?: EntryRecord;
-	details?: unknown;
-}
-
-const activeToolDetails = new Map<string | number, unknown>();
-
-export function clearActiveToolDetails(): void {
-	activeToolDetails.clear();
-}
-
-/**
- * Extracts human-readable tool result and error status from a model item.
- */
-export function extractToolResult(modelItem: unknown): { result: string; isError: boolean } {
-	const msg = typeof modelItem === "object" && modelItem !== null ? (modelItem as RawToolResultMessage) : undefined;
-	const isError = msg?.isError ?? false;
-	let result = "";
-	const raw = msg?.content ?? msg?.output;
-	if (Array.isArray(raw)) {
-		result = raw
-			.map((b) => (typeof b === "object" && b !== null && typeof b.text === "string" ? b.text : ""))
-			.filter(Boolean)
-			.join("\n");
-	} else if (typeof raw === "string") {
-		result = raw;
-	}
-	return { result, isError };
-}
-
-/**
- * Builds a validated BBToolExecutionUpdateEvent from a native tool execution update event.
- */
-export function buildToolExecutionUpdate(
-	event: ToolExecutionUpdateEventLike,
-	parentRef?: string,
-): BBToolExecutionUpdateEvent | undefined {
-	let partialResult = "";
-	if (event.output) {
-		if ("set" in event.output) partialResult = event.output.set;
-		else if ("append" in event.output) partialResult = event.output.append ?? "";
-	}
-	let trimStart: number | undefined;
-	if (event.output && "trimStart" in event.output && typeof event.output.trimStart === "number") {
-		trimStart = event.output.trimStart;
-	}
-	if (event.details !== undefined) {
-		activeToolDetails.set(event.toolCallId, event.details);
-	}
-	if (partialResult || trimStart !== undefined || event.details !== undefined) {
-		return {
-			type: "tool_execution_update",
-			toolCallId: event.toolCallId,
-			toolName: event.toolName,
-			partialResult,
-			...(trimStart !== undefined ? { trimStart } : {}),
-			...(event.details !== undefined ? { details: event.details } : {}),
-			...(parentRef !== undefined ? { parentRef } : {}),
-		};
-	}
-	return undefined;
-}
-
-/**
- * Builds a validated BBToolExecutionEndEvent from a native tool execution end event.
- */
-export function buildToolExecutionEnd(
-	event: ToolExecutionEndEventLike,
+function buildTerminalError(
+	event: NativeToolEndEvent,
+	decoded: Extract<NativeDecodedOutcome, { isError: true }>,
+	canonicalDetails: unknown,
 	parentRef?: string,
 ): BBToolExecutionEndEvent {
-	if (event.entry === undefined) {
-		return {
-			type: "tool_execution_end",
-			toolCallId: event.toolCallId,
-			toolName: event.toolName,
-			result: "Tool execution faulted or was orphaned without generating an entry record.",
-			isError: true,
-			...(parentRef !== undefined ? { parentRef } : {}),
-		};
-	}
-	const { result, isError } = extractToolResult(event.entry?.model?.[0]);
-	const entryData = typeof event.entry === "object" && event.entry !== null && "data" in event.entry
-		? (event.entry as { data?: unknown }).data
-		: undefined;
-	const bufferedDetails = activeToolDetails.get(event.toolCallId);
-	activeToolDetails.delete(event.toolCallId);
-	const details = entryData ?? event.details ?? bufferedDetails;
+	return {
+		type: "tool_execution_end",
+		toolCallId: event.toolCallId,
+		toolName: event.toolName,
+		result: decoded.errorMessage,
+		isError: true,
+		...(canonicalDetails !== undefined ? { details: canonicalDetails } : {}),
+		...(parentRef !== undefined ? { parentRef } : {}),
+	};
+}
+
+function buildTerminalSuccess(
+	event: NativeToolEndEvent,
+	decoded: Extract<NativeDecodedOutcome, { status: "entry" | "result" }>,
+	scoped: { output?: string; details?: unknown },
+	canonicalDetails: unknown,
+	parentRef?: string,
+): BBToolExecutionEndEvent {
+	const details = canonicalDetails !== undefined ? canonicalDetails : scoped.details;
+	const result = presentToolResult({
+		toolName: event.toolName,
+		rawOutput: decoded.rawOutput,
+		isError: decoded.isError,
+		diagnostics: decoded.status === "result" ? decoded.diagnostics : undefined,
+		retainedOutput: scoped.output,
+	});
+
 	return {
 		type: "tool_execution_end",
 		toolCallId: event.toolCallId,
 		toolName: event.toolName,
 		result,
-		isError,
+		isError: decoded.isError,
 		...(details !== undefined ? { details } : {}),
 		...(parentRef !== undefined ? { parentRef } : {}),
 	};
+}
+
+export class ToolEventProjector {
+	private readonly progressState = new ToolProgressState();
+
+	public projectToolUpdate(
+		event: NativeToolUpdateEvent,
+		parentRef?: string,
+	): BBToolExecutionUpdateEvent | undefined {
+		let partialResult: string | undefined;
+		if (event.output) {
+			partialResult = this.progressState.applyOutputUpdate(event.toolCallId, event.output);
+		} else if (event.details !== undefined) {
+			partialResult = this.progressState.getRetainedOutput(event.toolCallId) ?? "";
+		}
+		if (event.details !== undefined) {
+			this.progressState.setDetails(event.toolCallId, event.details);
+		}
+		let trimStart: number | undefined;
+		if (event.output && "trimStart" in event.output && typeof event.output.trimStart === "number") {
+			trimStart = event.output.trimStart;
+		}
+
+		if (partialResult !== undefined || trimStart !== undefined || event.details !== undefined) {
+			return {
+				type: "tool_execution_update",
+				toolCallId: event.toolCallId,
+				toolName: event.toolName,
+				partialResult: partialResult ?? "",
+				...(trimStart !== undefined ? { trimStart } : {}),
+				...(event.details !== undefined ? { details: event.details } : {}),
+				...(parentRef !== undefined ? { parentRef } : {}),
+			};
+		}
+		return undefined;
+	}
+
+	public projectToolEnd(
+		event: NativeToolEndEvent,
+		parentRef?: string,
+	): BBToolExecutionEndEvent {
+		const decoded = decodeNativeToolEnd(event);
+		const scoped = this.progressState.take(event.toolCallId);
+		const canonicalDetails = extractCanonicalToolDetails(event);
+
+		if (decoded.status === "missing" || decoded.status === "invalid") {
+			const fallback = canonicalDetails !== undefined ? canonicalDetails : scoped.details;
+			return buildTerminalError(event, decoded, fallback, parentRef);
+		}
+
+		return buildTerminalSuccess(event, decoded, scoped, canonicalDetails, parentRef);
+	}
+
+	public clear(): void {
+		this.progressState.clear();
+	}
+
+	public seedFromSnapshot(
+		tools?: readonly { callId: string | number; output?: unknown; details?: unknown }[],
+		nestedTools?: readonly { callId: string | number; output?: unknown; details?: unknown }[],
+	): void {
+		this.progressState.seedFromSnapshot(tools, nestedTools);
+	}
+}
+
+export function extractToolResult(modelItem: unknown): { result: string; isError: boolean } {
+	const msg = typeof modelItem === "object" && modelItem !== null ? (modelItem as RawToolResultMessage) : undefined;
+	const isError = Boolean(msg?.isError);
+	const raw = msg?.content ?? msg?.output;
+	const result = presentToolResult({
+		toolName: "tool",
+		rawOutput: raw,
+		isError,
+	});
+	return { result, isError };
 }

@@ -73,7 +73,7 @@ export function translateToolUpdate(
 	const callId = String(event.toolCallId);
 	const toolName = String(event.toolName);
 	const parentRef = resolveSafeParentRef(event.parentRef ?? event.parentToolCallId, parentShape);
-	if (!event.partialResult) return null;
+	if (typeof event.partialResult !== "string") return null;
 
 	if (toolName === "bash") {
 		return {
@@ -82,9 +82,11 @@ export function translateToolUpdate(
 				providerItemId: callId,
 				...(parentRef ? { parentRef } : {}),
 			},
-			text: String(event.partialResult),
+			text: event.partialResult,
 		};
 	}
+
+	if (!event.partialResult) return null;
 
 	return {
 		kind: "item.progress",
@@ -92,7 +94,7 @@ export function translateToolUpdate(
 			providerItemId: callId,
 			...(parentRef ? { parentRef } : {}),
 		},
-		message: String(event.partialResult),
+		message: event.partialResult,
 	};
 }
 

@@ -19,6 +19,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.2.52] - 2026-10-25
+
+### Fixed
+- **Tool Result Parity (tool-result-parity)**:
+  - Fixed false failures for nested tool executions (`read`, `write`, `edit`, `bash`, MCP tools) inside `codemode` or script engines: correctly decodes native `event.result` for nested calls and `event.entry.model[0]` for model-issued calls.
+  - Fixed details metadata extraction: reads canonical details from `entry.model[0].details` or `result.details` instead of diagnostic envelope `entry.data` (`{ diagnostics }`).
+  - Fixed bash progress snapshots: maintains cumulative retained stdout snapshots across `append`, `trimStart`, and `set: ""` updates; metadata-only progress updates no longer wipe retained snapshots.
+  - Fixed image presentation: restricted image formatting to genuine `type: "image"` blocks; generic JSON payloads containing `data` properties (e.g. `{ data: "customer-record" }`) are no longer corrupted into image descriptors; nested image base64 data is redacted while preserving sibling fields.
+  - Eliminated module-global singleton state: scoped `ToolEventProjector` per adapter instance with clean resets on run boundaries and prefixed snapshot seeding for child conversations.
+
+---
+
 ## [0.2.0] - 2026-10-07
 
 ### Added

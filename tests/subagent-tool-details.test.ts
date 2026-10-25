@@ -1,33 +1,33 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {
-	buildToolExecutionUpdate,
-	buildToolExecutionEnd,
-} from "../src/runner/bridge/tool-result-extractor.ts";
+import { ToolEventProjector } from "../src/runner/bridge/tool-result-extractor.ts";
 import { DeltaTranslator } from "../src/host/delta-translator.ts";
 import { threadDeltaSchema } from "@get-bb/plugin-sdk/provider-bridge";
 
 test("buildToolExecutionEnd recovers buffered conversationId from tool_execution_update", () => {
+	const projector = new ToolEventProjector();
 	const toolCallId = "call_subagent_123";
 
 	// 1. Tool execution update provides details with conversationId
-	const update = buildToolExecutionUpdate({
+	const update = projector.projectToolUpdate({
+		type: "tool_execution_update",
 		toolCallId,
 		toolName: "subagent",
 		details: { conversationId: 42, task: "Analyze metrics" },
-	});
+	} as any);
 	assert.ok(update);
 	assert.deepEqual(update.details, { conversationId: 42, task: "Analyze metrics" });
 
 	// 2. Tool execution end arrives with NO details and NO entry.data
-	const endEvent = buildToolExecutionEnd({
+	const endEvent = projector.projectToolEnd({
+		type: "tool_execution_end",
 		toolCallId,
 		toolName: "subagent",
 		entry: {
-			kind: "tool_result",
-			model: [{ isError: false, content: "Done" }],
+			kind: "toolResult",
+			model: [{ role: "toolResult", isError: false, content: "Done" }],
 		} as any,
-	});
+	} as any);
 
 	// Details should be recovered from the buffered update!
 	assert.ok(endEvent.details, "Details must be recovered from buffered update");
@@ -74,4 +74,30 @@ test("DeltaTranslator propagates buffered conversationId to delegation item.clos
 	// childRef must be the recovered conversationId (77), NOT fallback "subagent"!
 	assert.equal(item.childRef, "77");
 	assert.equal(threadDeltaSchema.safeParse(closeDelta).success, true);
+});
+
+test("ToolEventProjector: canonical details in entry.model[0] take precedence", () => {
+	const projector = new ToolEventProjector();
+	const callId = "call_canonical_details";
+
+	// Seed buffered details
+	projector.projectToolUpdate({
+		type: "tool_execution_update",
+		toolCallId: callId,
+		toolName: "subagent",
+		details: { conversationId: 10 },
+	} as any);
+
+	// End event has final conversationId 20 in model[0].details
+	const end = projector.projectToolEnd({
+		type: "tool_execution_end",
+		toolCallId: callId,
+		toolName: "subagent",
+		entry: {
+			kind: "toolResult",
+			model: [{ role: "toolResult", isError: false, details: { conversationId: 20 } }],
+		} as any,
+	} as any);
+
+	assert.deepEqual(end.details, { conversationId: 20 });
 });

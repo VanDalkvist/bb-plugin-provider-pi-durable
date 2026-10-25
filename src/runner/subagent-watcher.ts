@@ -10,21 +10,16 @@ import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { BBEventAdapter } from "./bridge/bb-event-adapter.ts";
 import type { BBChildEventAdapter } from "./bridge/bb-child-event-adapter.ts";
 import type { DurableView } from "./runtime.ts";
+import { extractCanonicalToolDetails } from "./bridge/native-tool-result.ts";
 
 export interface SubagentWatcherController {
 	close: () => void;
 }
 
 function extractChildConversationId(event: AgentEvent): ConversationId | undefined {
-	if (event.type === "tool_execution_update") {
-		const details = event.details as { conversationId?: ConversationId } | undefined;
+	if (event.type === "tool_execution_update" || event.type === "tool_execution_end") {
+		const details = extractCanonicalToolDetails(event) as { conversationId?: ConversationId } | undefined;
 		return details?.conversationId;
-	}
-	if (event.type === "tool_execution_end") {
-		const entryData = typeof event.entry === "object" && event.entry !== null && "data" in event.entry
-			? (event.entry as { data?: { conversationId?: ConversationId } }).data
-			: undefined;
-		return entryData?.conversationId;
 	}
 	return undefined;
 }

@@ -1,15 +1,8 @@
 import type { AgentEvent, SnapshotEvent } from "@earendil-works/pi-durable";
 import type { DurableView } from "../runtime.ts";
-import {
-	type BBWireEvent,
-	type BBAssistantMessage,
-	type BBAssistantMessageUsage,
-} from "./contracts.ts";
+import type { BBWireEvent, BBAssistantMessage, BBAssistantMessageUsage } from "./contracts.ts";
 import { resolveTurnSummary, findSubmissionFault } from "./turn-summary.ts";
-import {
-	buildToolExecutionUpdate,
-	buildToolExecutionEnd,
-} from "./tool-result-extractor.ts";
+import { ToolEventProjector } from "./tool-result-extractor.ts";
 import { BBChildEventAdapter } from "./bb-child-event-adapter.ts";
 
 export { resolveToolCallArgs } from "./tool-args-resolver.ts";
@@ -31,6 +24,7 @@ export class BBEventAdapter {
 	private readonly resolveContextWindow?: (provider?: string, modelId?: string) => number | undefined;
 	private readonly submissions = new Map<string | number, { status: string; reason?: string; detail?: string }>();
 	private readonly activeToolNames = new Map<string | number, string>();
+	private readonly toolProjector = new ToolEventProjector();
 	private lastTaskError?: string;
 	private lastAssistantMessage?: BBAssistantMessage;
 	private lastCheckpointId?: string;
@@ -69,10 +63,10 @@ export class BBEventAdapter {
 		const isError = summary.isError && !isAborted;
 		const base = {
 			contextWindow: summary.cw,
-			...(this.lastCheckpointId ? { providerCheckpointId: this.lastCheckpointId } : {}),
-			...(summary.cumulativeUsage ? { cumulativeUsage: summary.cumulativeUsage } : {}),
-			...(isAborted ? { aborted: true, stopReason: "aborted" } : {}),
-			...(isError ? { stopReason: "error", ...(summary.errorMessage ? { errorMessage: summary.errorMessage } : {}) } : {}),
+			...(this.lastCheckpointId && { providerCheckpointId: this.lastCheckpointId }),
+			...(summary.cumulativeUsage && { cumulativeUsage: summary.cumulativeUsage }),
+			...(isAborted && { aborted: true, stopReason: "aborted" }),
+			...(isError && { stopReason: "error", ...(summary.errorMessage && { errorMessage: summary.errorMessage }) }),
 		};
 		if (type === "turn_end") this.output({ type: "turn_end", message: summary.finalMsg, ...base });
 		else this.output({ type: "agent_end", messages: [summary.finalMsg], ...base });
@@ -89,10 +83,11 @@ export class BBEventAdapter {
 	public handleEvent(event: AgentEvent, current: DurableView): void {
 		switch (event.type) {
 			case "snapshot": {
-				const snap = event as SnapshotEvent & { view?: { conversation?: { entries?: readonly { id?: unknown }[] } } };
-				const entries = snap.view?.conversation?.entries ?? event.entries ?? current?.conversation?.entries;
+				const snap = event as SnapshotEvent & { view?: DurableView };
+				const entries = snap.view?.conversation?.entries ?? snap.entries ?? current?.conversation?.entries;
 				const tail = entries?.at(-1);
 				if (tail?.id !== undefined) this.lastCheckpointId = String(tail.id);
+				this.toolProjector.seedFromSnapshot(snap.tools, snap.nestedTools);
 				break;
 			}
 
@@ -103,6 +98,7 @@ export class BBEventAdapter {
 				this.isInThinking = false;
 				this.lastAssistantMessage = undefined;
 				this.activeToolNames.clear();
+				this.toolProjector.clear();
 				this.output({ type: "agent_start" });
 				break;
 			}
@@ -137,12 +133,12 @@ export class BBEventAdapter {
 				break;
 			}
 			case "tool_execution_update": {
-				const update = buildToolExecutionUpdate(event, this.resolveParentRef(event.parentToolCallId));
+				const update = this.toolProjector.projectToolUpdate(event, this.resolveParentRef(event.parentToolCallId));
 				if (update) this.output(update);
 				break;
 			}
 			case "tool_execution_end": {
-				this.output(buildToolExecutionEnd(event, this.resolveParentRef(event.parentToolCallId)));
+				this.output(this.toolProjector.projectToolEnd(event, this.resolveParentRef(event.parentToolCallId)));
 				break;
 			}
 			case "message_end": {
@@ -185,6 +181,7 @@ export class BBEventAdapter {
 				this.emitTerminal("turn_end", current);
 				break;
 			case "run_end":
+				this.toolProjector.clear();
 				this.emitTerminal("agent_end", current, (event as any).inputs);
 				break;
 			case "auto_retry_start":
