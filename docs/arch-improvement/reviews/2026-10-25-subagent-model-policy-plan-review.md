@@ -37,4 +37,14 @@ The recovery planner saved a 685-line amended plan before a second transport fai
 
 **Tasks4–10: still pending targeted seam review**, not blanket approved. Parent corrected identical same-revision idempotence, explicit host route, final S9 naming, and accidental thread-storage handoff instructions. Remaining phase checks include actual registry construction order (Task4/5), real lifecycle terminal events and failed/interrupted semantics (Task7), public picker props/host selection + behavior—not source-string—tests (Task8), and workspace instruction scope (Task9).
 
-This is not a runtime S9 PASS. Keep S8 selected slices separate from final two-circuit verification. No scope expansion to generic provider rewrite, standalone config, role registry, or public release.
+### Parent S7 readback — native batch Tasks4–5
+
+Source-backed seam report: `2026-10-25-native-policy-seams.md`. Parent verified runtime-loader, runtime, harness-setup, session-commands, binding-docs and subagent/subagent-docs sources.
+
+**Tasks4–5: APPROVED as one ordered native runtime batch** (factory introduction must accompany required registry injection; no broken Task4-only commit). The canonical plan now includes runtime return wiring, required getter before optional registry parameters, <200-line dispatcher extraction, native execution ACK Doc restored before harness.resume, serialized async persistence-before-cache setter and immutable admission metadata. New child preflight fetches native available models / parent snapshot, then captures one latest acknowledged policy and resolves before creation. Existing child/reporter reuse precedes preflight, so replay never switches a child's model.
+
+One seam-review suggestion is explicitly REJECTED: retaining a default-inherit `Subagent` export solely for old fixtures. Migrate the internal test callers to the required factory instead; avoid an unconfigured production bypass. Metadata source values use the existing `ResolvedChildConfiguration` union, not another enum.
+
+Architecture boundary remains BB KV=user settings; native ACK Doc=last acknowledged execution checkpoint in existing Durable SQLite, NOT a new config sidecar. Failed persist leaves acknowledged cache unchanged; identical updates do not write; concurrent writes serialize. New code must prove restore before scheduling and retain owner/Anchor cancellation semantics.
+
+**Tasks6–10 remain pending seam-specific readback** (actual mirror model + first policy acknowledgement, real lifecycle outcome sources, public picker/routing/UI behavior, instruction scoping). This is not a runtime S9 PASS. Keep S8 selected slices separate from final two-circuit verification. No generic provider rewrite, standalone config, role registry, or public release.

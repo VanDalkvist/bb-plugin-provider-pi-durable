@@ -4,7 +4,7 @@
 
 **Canonical location:** This repository file is the working execution plan, per the user's explicit correction on 2026-10-25. Thread-storage copies are drafts, not the source of truth.
 
-**Execution baseline:** User approved implementation in `thr_3e4z9meeqs`. Repository `main`, HEAD `4d02d4c`, version `0.2.52`; 330 baseline tests and `npx tsc --noEmit` pass. Remote is PUBLIC: local commits are allowed, but this task does not authorize public push/tag/release. Installed BB0.47.1 / latest stable SDK0.6.79 confirmed. Task1 is implemented locally in `1deba49` (332 tests pass; root server is typechecked). SDK CLI check reports version match but exits1 on its generic devDependency advice; retain runtime dependency per provider-bridge contract and document this deviation, never label that command PASS. Independent migration review hit transport timeout and remains pending. After the parent S7 readback, Tasks2–3 are approved as the next bounded slice; Tasks4–10 remain pending their concrete seam review. No final S9 PASS has been issued.
+**Execution baseline:** User approved implementation in `thr_3e4z9meeqs`. Repository `main`, HEAD `4d02d4c`, version `0.2.52`; 330 baseline tests and `npx tsc --noEmit` pass. Remote is PUBLIC: local commits are allowed, but this task does not authorize public push/tag/release. Installed BB0.47.1 / latest stable SDK0.6.79 confirmed. Task1 is implemented locally in `1deba49` (332 tests pass; root server is typechecked). SDK CLI check reports version match but exits1 on its generic devDependency advice; retain runtime dependency per provider-bridge contract and document this deviation, never label that command PASS. Independent migration review now PASS (`2026-10-25-sdk-migration-review.md`), slice only. Backend Tasks2–3 implemented in `4754427`, independent backend review PASS, parent fresh focused24/full356 tests, tsc and build PASS; one P3 defense-in-depth mapping suggestion is log-only (SDK input contract already validates). After the parent S7 readback, Tasks2–3 are approved as the next bounded slice; Tasks4–5 are approved as one native batch after `2026-10-25-native-policy-seams.md` and parent readback; Tasks6–10 remain pending their seam review. No final S9 PASS has been issued.
 
 **Goal:** Implement centralized user subagent model policy (inherit/configured), Pi catalog integration, typed runtime delivery, native child conversation application, lifecycle/mirror fixes, instruction separation, and dual-circuit verification on latest BB SDK 0.6.79 without backwards compatibility.
 
@@ -126,7 +126,7 @@ export interface SubagentPolicyRecord {
 
 export interface SubagentPolicyHolder {
   getRecord(): SubagentPolicyRecord;
-  setRecord(record: SubagentPolicyRecord): void;
+  setRecord(record: SubagentPolicyRecord): Promise<void>;
 }
 
 export interface ResolvedChildConfiguration {
@@ -310,15 +310,18 @@ git commit -m "feat(policy): implement SubagentPolicyStore with optimistic CAS, 
 
 ### Task 4: Runner Policy Holder Instance & Session Commands Wiring
 
+**Execution batch:** Tasks4–5 execute together, introducing the required extension factory in the same coherent batch as registry injection. No Task4-only broken import commit. Public setter async persistence and native execution ACK restore are required by S7 seam review.
+
 **Boundary:** Runner Process & Session Command Boundary.  
 **AP Gates:** `AP-011` (Low coupling), `AP-012` (Fail-fast), `AP-019` (Line budgets), `AP-020` (Clean Architecture), `AP-034` (Instance-scoped concurrency, no global mutable singleton), `AP-035` (Idempotent commands), `AP-038` (Traceability).  
 **Files:**
-- Create: `src/runner/subagent-policy-state.ts`
-- Modify: `src/runner/runtime-types.ts`
-- Modify: `src/runner/runtime-loader.ts`
-- Modify: `src/runner/harness-setup.ts`
-- Modify: `src/runner/session-commands.ts`
-- Test: `tests/runner-subagent-policy.test.ts`
+- Create: `src/runner/subagent-policy-state.ts` (instance holder, serialized async persistence)
+- Create: `src/runner/subagent-policy-ack.ts` (public native session Doc and load/persist adapter)
+- Create: `src/runner/session-state-commands.ts` (bounded read-only get_state/get_session_stats extraction; current dispatcher199 lines)
+- Modify: `src/policy/types.ts` (holder setter becomes async)
+- Modify: `src/runner/runtime-types.ts`, `src/runner/runtime-loader.ts`, `src/runner/runtime.ts`
+- Modify: `src/runner/harness-setup.ts`, `src/runner/session-commands.ts`
+- Test: `tests/runner-subagent-policy.test.ts`; add native ack restore/failed-persist/concurrency/startup tests
 
 - [ ] **Step 1: Write failing tests for instance-scoped policy holder and runner commands**
 
@@ -335,11 +338,14 @@ Expected output: FAIL with module not found or missing property errors.
 
 - [ ] **Step 3: Implement `subagent-policy-state.ts` and modify runner integration files**
 
-- `src/runner/subagent-policy-state.ts`: export `createSubagentPolicyHolder(initial?: SubagentPolicyRecord): SubagentPolicyHolder`. No module-global mutable singleton. Enforce schema validation and monotonic revision rules.
-- `src/runner/runtime-types.ts`: add `readonly subagentPolicyHolder: SubagentPolicyHolder` to `OpenDurableResult`.
-- `src/runner/runtime-loader.ts`: instantiate `const subagentPolicyHolder = createSubagentPolicyHolder()` per `openDurable`. Pass to `createCodingRegistry` and expose on `OpenDurableResult`.
-- `src/runner/harness-setup.ts`: accept `subagentPolicyHolder: SubagentPolicyHolder` in `createCodingRegistry`, pass getter `() => subagentPolicyHolder.getRecord()` into `createSubagentExtension`.
-- `src/runner/session-commands.ts`: handle `"set_subagent_policy"` via `durable.subagentPolicyHolder.setRecord`. In `"get_state"`, target `parseConversationId(cmd.conversationId)`.
+- `src/runner/subagent-policy-state.ts`: export `createSubagentPolicyHolder({ initialRecord, persist }): SubagentPolicyHolder`. Required narrow async persistence callback. Setter validates shape, serializes comparison + native persistence + cache update, rejects downgrade / same-revision different payload; identical replay is a no-write success. Failed persistence leaves last acknowledged snapshot intact, queue recovers. Getter returns defensive snapshot. No mutable module singleton.
+- `src/runner/subagent-policy-ack.ts`: public `defineDoc` session-scope `SubagentPolicyAckDoc`, kind `bb.subagent-policy-ack`, version1, initial nullable record. Export `loadSubagentPolicyHolder(harness)` to restore last execution ACK and bind native `harness.commit(tx => tx.doc(...))` persistence. BB KV remains sole user configuration authority; native doc is only the previously acknowledged execution checkpoint.
+- `src/runner/runtime-loader.ts`: registry is built BEFORE Harness.open. Inject a narrow getter closure over this instance's holder; if invoked before initialization, explicitly reject, do not silently inherit. Once Harness.open returns (paused), load/validate the native ACK and construct holder before returning `LoadedHarnessEnvironment`; expose holder there. New/no-ACK sessions get canonical revision0 inherit without timestamp.
+- `src/runner/runtime.ts`: expose holder in returned `OpenDurableResult`; restoration MUST finish before existing `harness.resume()` so persisted owner jobs never admit a child under a temporary default. Do not delay/background-redesign resume or Anchor ownership.
+- `src/runner/harness-setup.ts`: add REQUIRED policy getter before optional arguments to `createCodingRegistry`; migrate all callsites. Install `createSubagentExtension(getPolicy)` with stable extension name, not a global compatibility instance.
+- `src/runner/session-state-commands.ts`: extract read-only state/stats handler using existing binding-handler pattern. Child get_state calls public `harness.conversation(targetId).agent(ctx)` without changing root/current selection.
+- `src/runner/session-commands.ts`: typed policyRecord payload; await holder.setRecord then respond success. Failed schema/revision/persistence yields coded actionable error, never success. Dispatcher stays <200 lines.
+- Native ACK tests must cover process-like close/reopen restoration BEFORE resume, failed-commit cache consistency, concurrent incoming revisions, idempotent retry, and separate-runtime isolation.
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -361,8 +367,9 @@ git commit -m "feat(runner): implement instance-scoped SubagentPolicyHolder and 
 **AP Gates:** `AP-010` (Thin Adapter), `AP-011` (High cohesion), `AP-012` (Fail-fast validation), `AP-020` (SRP), `AP-026` (Replay safety & contracts), `AP-027` (Validated configuration), `AP-028` (Deterministic tests with real SDK fixture).  
 **Files:**
 - Create: `src/runner/subagent-role.ts`
-- Modify: `src/runner/subagent.ts`
+- Modify: `src/runner/subagent.ts`, `src/runner/subagent-docs.ts`
 - Test: `tests/subagent-native-model-application.test.ts`
+- Migrate existing native fixtures in `subagent-auto-spawn`, `subagent-courier-delivery`, `durable-subagent`, `codemode-canonical-routines`, `subagent-error-handling`, `subagent-async-envelope` tests as needed (explicit factory/getter and registered available fixture model). No production compatibility singleton.
 
 - [ ] **Step 1: Write failing tests for neutral role envelope, real SDK model resolution, and replay safety**
 
@@ -384,8 +391,10 @@ Expected output: FAIL with missing role helper or configuration mismatch.
 - `src/runner/subagent.ts`:
   - Export `createSubagentExtension(getPolicy: () => SubagentPolicyRecord): Extension`.
   - Replay guard first: check `tx.doc(SubagentsDoc, api.conversationId)`. If existing child exists for task, reuse existing record and reporter.
-  - New child admission: outside `api.commit`, call `await api.models.getAvailable()`, resolve via `resolveSubagentModelConfiguration(getPolicy(), parentContext, availableModels)`.
-  - Inside `api.commit`: create task-owned child conversation, record `actualModel`, `source`, `policyRevision` in metadata, configure with `buildTechnicalWorkerRole()`.
+  - New child admission: outside `api.commit`, fetch `await api.models.getAvailable()` and latest parent agent snapshot. Then capture one immutable latest acknowledged policy from `getPolicy()` and resolve via `resolveSubagentModelConfiguration(record, parentContext, availableModels)` before creation. Freeze that snapshot for this admission; no remote/catalog I/O inside durable transaction. No availability checks/reconfiguration for a reused child.
+  - Inside `api.commit`: rescan ownership before create, preserve existing SubagentsDoc record/reporter, create at most one task-owned child, configure with resolved model/thinking and `buildTechnicalWorkerRole()`. Extend `SubagentRecord` with `actualModel`, `thinkingLevel`, `source: ResolvedChildConfiguration["source"]`, `policyRevision`; preserve optional historical-record fields without reconfiguration.
+  - Emit the same actual profile/source/revision in `api.details` and final tool details for mirror observability. Task is user input only, never interpolated into role envelope.
+  - Migrate internal tests/callers to explicit factory injection. Do NOT retain `export const Subagent = ...default inherit...` as a legacy fixture shim; no hidden bypass of saved policy. Update registry setup tests with required getter.
 
 - [ ] **Step 4: Run test to verify it passes**
 
