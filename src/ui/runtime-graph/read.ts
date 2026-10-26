@@ -38,6 +38,11 @@ interface ThreadEventRow {
 	readonly kind?: string;
 	readonly extensionKind?: string;
 	readonly payload?: unknown;
+	readonly data?: {
+		readonly kind?: string;
+		readonly extensionKind?: string;
+		readonly payload?: unknown;
+	};
 	readonly seq?: number | string;
 }
 
@@ -84,9 +89,10 @@ export async function readRuntimeGraphSnapshot(
 
 		for (const raw of rows) {
 			const row = raw as ThreadEventRow;
-			const kind = row.kind ?? row.extensionKind;
-			if (kind === RUNTIME_GRAPH_EXTENSION_KIND && row.payload !== undefined) {
-				const parsed = runtimeGraphSnapshotSchema.safeParse(row.payload);
+			const kind = row.kind ?? row.data?.kind ?? row.extensionKind ?? row.data?.extensionKind;
+			const payload = row.payload ?? row.data?.payload;
+			if (kind === RUNTIME_GRAPH_EXTENSION_KIND && payload !== undefined) {
+				const parsed = runtimeGraphSnapshotSchema.safeParse(payload);
 				if (parsed.success) {
 					let snapshot = parsed.data as unknown as RuntimeGraphSnapshot;
 					if (options?.conversationId !== undefined) {

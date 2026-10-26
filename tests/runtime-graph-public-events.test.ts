@@ -150,3 +150,27 @@ test("runtime-graph-public-events: filters by child conversation if specified", 
 		assert.deepEqual(Object.keys(result.snapshot.nodes), ["2"]);
 	}
 });
+
+test("runtime-graph-public-events: reads snapshot nested inside event.data envelope", async () => {
+	const snapshot = makeSnapshot("epoch_data", 1);
+	const mockSdk = createMockSdk([
+		[
+			{
+				type: "thread/extensionState/updated",
+				data: {
+					kind: "provider-pi-durable/runtime-graph",
+					payload: snapshot,
+				},
+				threadId: "thr_1",
+				seq: 15,
+			},
+		],
+	]);
+
+	const result = await readRuntimeGraphSnapshot(mockSdk as any, "thr_1");
+	assert.equal(result.status, "ok");
+	if (result.status === "ok") {
+		assert.equal(result.snapshot.observation.epoch, "epoch_data");
+	}
+});
+

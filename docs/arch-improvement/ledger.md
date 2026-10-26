@@ -415,6 +415,28 @@
   - *G3 (UI Context Segment & Task Graph Renderer):* Primitives `src/ui/runtime-graph/{read,subscription}.ts` протестированы. Выявлено точное архитектурное противоречие: SDK 0.6.79 предоставляет контейнерный слот `experimental_threadContextSegment` и плоские примитивы (`experimental_InfoList`, `experimental_DetailRow`), но не содержит готовых компонентов дерева или инспектора задач. Рендеринг иерархического дерева требует кастомных React-элементов, что подпадает под ограничение `AGENTS.md` («Не изобретать свои UI-компоненты») и ожидает решения оператора (предоставление narrow G-UI exception против плоского списка `experimental_InfoList`).
 - **Installed Provider Status:** **NOT CHANGED** (`0.2.53`, git-кеш `7d0b5b8`).
 
+### G2 Live Transport Verifier Tool Implementation — 2026-10-26 (Execution Receipt)
+- **Цель и статус:** Реализован и верифицирован узкий инструмент верификации сквозного сохранения и realtime-доставки runtime graph snapshots в BB (`scripts/verify-live-g2-transport.mjs` и `scripts/g2-transport/*`).
+- **Соблюдение архитектурных границ и правил:**
+  - Установленный рантайм `0.2.53` **НЕ мутировался** и не перезапускался; cutover отложен до согласованного окна.
+  - Пользовательские треды и активные сессии **НЕ затрагивались**.
+  - Первоисточники проверены: подтверждено отсутствие несуществующего пакета `@bb/sdk/node`; реальный seam реализован через стандартные публичные HTTP эндпоинты (`/api/v1/threads/:id/events`), нативный WebSocket (`/ws`) и клиентские модули `src/ui/runtime-graph/{read,subscription}.ts`.
+  - Модуль `src/ui/runtime-graph/read.ts` минимально адаптирован: поддержан как верхнеуровневый `{ kind, payload }`, так и вложенный конверт `{ data: { kind, payload } }`, возвращаемый реальным сервером BB. Семантика и контракты полностью сохранены.
+  - Запрет принудительного `process.exit(0)` соблюдён: код завершения устанавливается через `process.exitCode`, сокеты и подписки корректно закрываются публичным teardown.
+- **Модульная структура инструмента (все TS/MJS < 200 LOC, AP-019):**
+  - `scripts/g2-transport/readiness.mjs`: проверка готовности рантайма, определение установленной версии (0.2.53) и наличия `provider-pi-durable/runtime-graph` в `extensionKinds`.
+  - `scripts/g2-transport/client.mjs`: публичный HTTP/WebSocket адаптер, реализующий интерфейс `RuntimeGraphRealtimeClient` с методами `threads.events.list`, `realtime.subscribe` и `close()`.
+  - `scripts/g2-transport/verifier.mjs`: оркестратор проверки с предварительным гейтом поколений, подпиской до вызова модели, валидацией схемы, скоупа сессии/беседы, защитой от устаревших ревизий и конечными таймаутами.
+  - `scripts/verify-live-g2-transport.mjs`: исполняемый CLI с флагами `--readiness`, `--thread <id>`, `--conversation <id>`, `--timeout <ms>`, `--json` и строгим разграничением статусов `PASS`, `FAILED`, `BLOCKED`.
+- **TDD и доказательная база:**
+  - `tests/runtime-graph-public-events.test.ts`: добавлен тест парсинга снапшота внутри конверта `event.data`.
+  - `tests/verify-live-g2-transport.test.ts`: behavioral тесты для correlation (PASS), invalid payload (FAILED), wrong scope (FAILED), timeout and cleanup (FAILED).
+  - `tests/verify-live-g2-scenarios.test.ts`: тесты stale revision drop, blocked environment on version < 0.3.0, checkProviderReadiness BLOCKED on 0.2.53, checkProviderReadiness READY on 0.3.0.
+  - Результат тестов: **519 тестов, 26 сьютов: 519 pass, 0 fail** (было 510 pass, добавлено 9 новых тестов).
+  - Безопасный запуск CLI на текущем рантайме: `node scripts/verify-live-g2-transport.mjs --readiness` возвращает **BLOCKED (exit code 2)** с точной диагностикой: `Installed plugin version is 0.2.53, but 0.3.0 is required for runtime graph transport. Run local cutover first.` Бесполезные запуски моделей предотвращены.
+- **Файловый артефакт:** `/Users/vanya/.bb/thread-storage/thr_ct3kk9xne6/g2-transport-verifier-result.md`.
+
+
 
 
 
