@@ -28,7 +28,12 @@ export function mapTaskGraphNodeState(state: TaskGraphNode["state"]): RuntimeTas
 			};
 		case "sleeping":
 			return { status: "sleeping", phase: state.phase, until: state.until };
-		case "completing":
-			return { status: "completing", outcome: state.outcome as TaskOutcomeName };
+		case "completing": {
+			const outcome =
+				typeof state.outcome === "object" && state.outcome !== null && "status" in (state.outcome as Record<string, unknown>)
+					? (state.outcome as { status: unknown }).status
+					: state.outcome;
+			return { status: "completing", outcome: (outcome as TaskOutcomeName) ?? "completed" };
+		}
 	}
 }

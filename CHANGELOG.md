@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.3.1] - 2026-10-26
+
+### Fixed
+- **Runtime Graph `completing` Receipt Protocol Fault**: Resolved `INVALID_MESSAGE` runner protocol fault caused by passing raw `TaskOutcome<R>` object to `receipt.outcome` when a task transitions to `completing` state during subagent delegation. Both `terminal` and `completing` tasks now canonicalize `state.outcome.status` to `TaskOutcomeName` enum.
+- **Task Graph Node State Object Handling**: Guarded `mapTaskGraphNodeState` and `taskLabel` to unwrap object outcomes safely, preventing `[object Object]` serialization in live labels.
+
+---
+
 ## [0.3.0] - 2026-10-26
 
 ### Added

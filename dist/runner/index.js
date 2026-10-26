@@ -3736,7 +3736,10 @@ function taskLabel(node, names) {
   const plain = KIND_NAMES[node.kind];
   const kind = call ?? plain ?? (node.kind.startsWith("pi.") ? node.kind.slice(3) : node.kind);
   if (state.status === "waiting") return `${kind} \xB7 waiting on ${state.on.length}`;
-  if (state.status === "completing") return `${kind} \xB7 completing (${state.outcome})`;
+  if (state.status === "completing") {
+    const outcome = typeof state.outcome === "object" && state.outcome !== null && "status" in state.outcome ? state.outcome.status : state.outcome;
+    return `${kind} \xB7 completing (${String(outcome ?? "completed")})`;
+  }
   return call !== void 0 || plain !== void 0 ? kind : `${kind} \xB7 ${state.phase}`;
 }
 
@@ -3996,9 +3999,9 @@ var RuntimeGraphReceiptsCollector = class {
     let outcome = "completed";
     let error;
     const state = task.state;
-    if (state.status === "terminal") {
-      const taskOutcome = state.outcome;
-      outcome = taskOutcome.status;
+    if (state.status === "terminal" || state.status === "completing") {
+      const taskOutcome = typeof state.outcome === "object" && state.outcome !== null && "status" in state.outcome ? state.outcome : { status: String(state.outcome ?? "completed") };
+      outcome = taskOutcome.status ?? "completed";
       if ("error" in taskOutcome && taskOutcome.error) {
         const err = taskOutcome.error;
         error = {
@@ -4008,8 +4011,6 @@ var RuntimeGraphReceiptsCollector = class {
       } else if ("reason" in taskOutcome && taskOutcome.reason) {
         error = { message: String(taskOutcome.reason) };
       }
-    } else if (state.status === "completing") {
-      outcome = state.outcome ?? "completed";
     }
     let preview = options?.preview;
     if (preview && preview.length > MAX_PREVIEW_LENGTH) {
@@ -4118,8 +4119,10 @@ function mapTaskGraphNodeState(state) {
       };
     case "sleeping":
       return { status: "sleeping", phase: state.phase, until: state.until };
-    case "completing":
-      return { status: "completing", outcome: state.outcome };
+    case "completing": {
+      const outcome = typeof state.outcome === "object" && state.outcome !== null && "status" in state.outcome ? state.outcome.status : state.outcome;
+      return { status: "completing", outcome: outcome ?? "completed" };
+    }
   }
 }
 

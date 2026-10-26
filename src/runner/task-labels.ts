@@ -72,7 +72,13 @@ export function taskLabel(node: TaskGraphNode, names?: TaskNames): string {
 	const plain = KIND_NAMES[node.kind];
 	const kind = call ?? plain ?? (node.kind.startsWith("pi.") ? node.kind.slice(3) : node.kind);
 	if (state.status === "waiting") return `${kind} · waiting on ${state.on.length}`;
-	if (state.status === "completing") return `${kind} · completing (${state.outcome})`;
+	if (state.status === "completing") {
+		const outcome =
+			typeof state.outcome === "object" && state.outcome !== null && "status" in (state.outcome as Record<string, unknown>)
+				? (state.outcome as { status: unknown }).status
+				: state.outcome;
+		return `${kind} · completing (${String(outcome ?? "completed")})`;
+	}
 	// A named task says what it does; the phase of an unnamed one is all there is to show.
 	return call !== undefined || plain !== undefined ? kind : `${kind} · ${state.phase}`;
 }

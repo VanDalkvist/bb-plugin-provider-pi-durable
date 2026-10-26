@@ -30,9 +30,12 @@ export class RuntimeGraphReceiptsCollector {
 		let error: { message: string; code?: string } | undefined;
 
 		const state = task.state;
-		if (state.status === "terminal") {
-			const taskOutcome = state.outcome;
-			outcome = taskOutcome.status as TaskOutcomeName;
+		if (state.status === "terminal" || state.status === "completing") {
+			const taskOutcome =
+				typeof state.outcome === "object" && state.outcome !== null && "status" in state.outcome
+					? (state.outcome as { status: string; error?: unknown; reason?: unknown })
+					: { status: String(state.outcome ?? "completed") };
+			outcome = (taskOutcome.status as TaskOutcomeName) ?? "completed";
 			if ("error" in taskOutcome && taskOutcome.error) {
 				const err = taskOutcome.error as { message?: string; code?: string };
 				error = {
@@ -42,8 +45,6 @@ export class RuntimeGraphReceiptsCollector {
 			} else if ("reason" in taskOutcome && taskOutcome.reason) {
 				error = { message: String(taskOutcome.reason) };
 			}
-		} else if (state.status === "completing") {
-			outcome = (state.outcome as unknown as TaskOutcomeName) ?? "completed";
 		}
 
 		let preview = options?.preview;
