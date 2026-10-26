@@ -436,6 +436,53 @@
   - Безопасный запуск CLI на текущем рантайме: `node scripts/verify-live-g2-transport.mjs --readiness` возвращает **BLOCKED (exit code 2)** с точной диагностикой: `Installed plugin version is 0.2.53, but 0.3.0 is required for runtime graph transport. Run local cutover first.` Бесполезные запуски моделей предотвращены.
 - **Файловый артефакт:** `/Users/vanya/.bb/thread-storage/thr_ct3kk9xne6/g2-transport-verifier-result.md`.
 
+### G2 Transport Verifier Blockers Remediation Slice Plan — 2026-10-26 (Execution Receipt)
+- **Цель и контекст:** Устранение 3 блокирующих дефектов (2 P1 + 1 P2) в верификаторе сквозного транспорта G2, зафиксированных в независимом аудите `s9-g2-transport-verifier.md`.
+- **Архитектурный скоуп:**
+  1. `[P1] Ложный PASS на историческом REST snapshot`: реализация доказательной последовательности с фиксацией базового состояния (baseline seq/epoch/rev) ДО триггера, запретом PASS на исходном REST snapshot, обязательным получением WS-уведомления `thread:changed` ПОСЛЕ триггера и валидацией строго нового persisted snapshot без лексикографического сравнения opaque epoch.
+  2. `[P1] Разделение статусов installed / restart / runtime`: приведение `readiness.mjs` и CLI в соответствие с чеклистом обновления `AGENTS.md`. Исключение ложного вердикта `READY` по метаданным диска. Честная фиксация `runtime: unverified` при отсутствии живой свежей эмиссии.
+  3. `[P2] CLI флаг --expected-session и полная матрица негативных сценариев TDD`: добавление и валидация `--expected-session` в CLI; переписывание тестов сценариев на реальное сквозное исполнение verifier callback path (historical-only, WS-only, REST-only, stale/out-of-order drop, causal epoch progression, wrong session scope, timeout & teardown).
+- **План TDD:**
+  - *Фаза RED:* поведенческие тесты, воспроизводящие ложный PASS на историческом снапшоте без WS, ложный READY по метаданным и пропуск устаревших ревизий.
+  - *Фаза GREEN:* минимальные направленные исправления в `src/ui/runtime-graph/read.ts`, `src/ui/runtime-graph/subscription.ts`, `scripts/g2-transport/{readiness,verifier}.mjs`, `scripts/verify-live-g2-transport.mjs`.
+  - *Фаза VERIFY:* проверка всех тестов (100% pass), проверка бюджетов AP-019 (< 200 LOC), запуск CLI на живом 0.2.53 (подтверждение статуса BLOCKED).
+
+### G2 Transport Verifier 3 Blockers Remediation — 2026-10-26 (Execution Receipt)
+- **Цель и статус:** 3 блокера независимого аудита `s9-g2-transport-verifier.md` (2 P1 + 1 P2) полностью устранены по строгому циклу TDD. Все тесты верификатора проходят (11/11), общий набор тестов зелёный (522/522 pass: 513 unit + 9 UI).
+- **Устранённые дефекты и доказательная база:**
+  1. *[P1] Устранение ложного PASS на историческом snapshot:*
+     - В `scripts/g2-transport/verifier.mjs` реализована строгая фазированная последовательность: 1) регистрация WebSocket-подписки на `thread:changed`; 2) асинхронный захват исходного базового состояния (`baselineSeq`, `baselineEpoch`, `baselineRevision`, `baselineObservedAt`); 3) разрешение вызова триггера только ПОСЛЕ фиксации baseline; 4) строгая фильтрация устаревших снапшотов (`revision <= baselineRevision` в той же эпохе игнорируются); 5) требование поступления живого scoped уведомления `thread:changed` ПОСЛЕ baseline/триггера (`realtimeNotified === true`); 6) верификация причинной связи при смене эпохи (`observedAt >= baselineObservedAt`, `revision >= 1`, соответствие сессии) без лексикографического сравнения `epoch < lastEpoch`.
+     - Исторический snapshot без WS, одиночный REST update без WS или WS без нового snapshot не завершают верификацию PASS, а завершаются по таймауту с FAILED.
+  2. *[P1] Разделение статусов installed / restart / runtime (AGENTS.md):*
+     - В `scripts/g2-transport/readiness.mjs` и `scripts/verify-live-g2-transport.mjs` исключён ложный вердикт `outcome: "READY"` на основе только `plugin.version` и `extensionKinds`.
+     - Реализовано явное разделение на 3 независимых статуса: `installed: { version, status: verified|outdated }`, `restart: { status: pending|unverified }`, `runtime: { status: verified|unverified|blocked }`.
+     - При совпадении установленной версии на диске (>= 0.3.0) precheck честно возвращает `outcome: "UNVERIFIED"`, `runtime.status: "unverified"`. Статус `runtime.status: "verified"` присваивается ИСКЛЮЧИТЕЛЬНО после фактического получения живой валидной эмиссии графа.
+  3. *[P2] CLI флаг --expected-session и полная негативная матрица TDD:*
+     - В CLI `scripts/verify-live-g2-transport.mjs` добавлен аргумент `--expected-session <sessionId>` (алиас `--session`) со строгой валидацией непустой строки.
+     - Параметр сквозным образом передаётся в `verifyLiveG2Transport` и проверяет `snapshot.scope.sessionId === expectedSessionId`, немедленно завершая проверку с `outcome: "FAILED", reason: "scope_mismatch"` при несовпадении.
+     - Тесты сценариев в `tests/verify-live-g2-scenarios.test.ts` и `tests/verify-live-g2-transport.test.ts` полностью переписаны на сквозное исполнение реального callback/transport пути:
+       * `stale or out-of-order revision is dropped (FAILED)`
+       * `epoch reset with valid causal progression (PASS)`
+       * `epoch reset without causal link (older timestamp) is dropped (FAILED)`
+       * `wrong session scope fails with scope_mismatch (FAILED)`
+       * `historical-only REST snapshot without WS notification fails with timeout (FAILED)`
+       * `WS notification without fresh snapshot fails with timeout (FAILED)`
+       * `REST update without WS notification fails with timeout (FAILED)`
+       * `success correlation with trigger and WS (PASS, realtimeNotified: true, runtime.status: verified)`
+- **Line Budgets (AP-019):**
+  - `src/ui/runtime-graph/read.ts`: 120 строк (< 200)
+  - `src/ui/runtime-graph/subscription.ts`: 95 строк (< 200)
+  - `scripts/g2-transport/client.mjs`: 136 строк (< 200)
+  - `scripts/g2-transport/readiness.mjs`: 160 строк (< 200)
+  - `scripts/g2-transport/verifier.mjs`: 123 строк (< 200)
+  - `scripts/verify-live-g2-transport.mjs`: 129 строк (< 200)
+  - `tests/verify-live-g2-scenarios.test.ts`: 148 строк (< 200)
+  - `tests/verify-live-g2-transport.test.ts`: 190 строк (< 200)
+- **Live Runtime Gate:** **BLOCKED** (`0.2.53` resident в BB). Прогон `node scripts/verify-live-g2-transport.mjs --readiness` возвращает честный `BLOCKED (installed_version_outdated)` с exit code 2. Сессии и живой рантайм не мутировались.
+- **Файловый артефакт:** `/Users/vanya/.bb/thread-storage/thr_ct3kk9xne6/g2-transport-verifier-fixes-result.md`.
+
+
+
 
 
 

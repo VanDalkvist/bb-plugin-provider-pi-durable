@@ -12,7 +12,7 @@ export interface ReadRuntimeGraphOptions {
 }
 
 export type ReadRuntimeGraphResult =
-	| { readonly status: "ok"; readonly snapshot: RuntimeGraphSnapshot }
+	| { readonly status: "ok"; readonly snapshot: RuntimeGraphSnapshot; readonly seq?: number }
 	| {
 			readonly status: "unavailable";
 			readonly reason: "no_events" | "invalid_payload" | "page_cap_reached" | "aborted";
@@ -98,7 +98,8 @@ export async function readRuntimeGraphSnapshot(
 					if (options?.conversationId !== undefined) {
 						snapshot = filterSnapshotForConversation(snapshot, options.conversationId);
 					}
-					return { status: "ok", snapshot };
+					const seq = row.seq !== undefined ? Number(row.seq) : undefined;
+					return { status: "ok", snapshot, seq };
 				}
 			}
 		}

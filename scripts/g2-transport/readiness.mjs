@@ -79,6 +79,17 @@ export async function checkProviderReadiness(options = {}) {
 			installedVersion,
 			candidateVersion: CANDIDATE_VERSION,
 			hasExtensionKind: false,
+			installed: {
+				version: installedVersion,
+				status: "outdated",
+			},
+			restart: {
+				status: "pending",
+			},
+			runtime: {
+				status: "blocked",
+				message: `Installed plugin version is ${installedVersion}, but ${CANDIDATE_VERSION} is required.`,
+			},
 			message: `Installed plugin version is ${installedVersion}, but ${CANDIDATE_VERSION} is required for runtime graph transport. Run local cutover first.`,
 		};
 	}
@@ -110,17 +121,40 @@ export async function checkProviderReadiness(options = {}) {
 			installedVersion,
 			candidateVersion: CANDIDATE_VERSION,
 			hasExtensionKind: false,
+			installed: {
+				version: installedVersion,
+				status: "verified",
+			},
+			restart: {
+				status: "unverified",
+			},
+			runtime: {
+				status: "blocked",
+				message: `Provider pi-durable is registered but does not declare ${RUNTIME_GRAPH_EXTENSION_KIND} extension state schema.`,
+			},
 			message: `Provider pi-durable is registered but does not declare ${RUNTIME_GRAPH_EXTENSION_KIND} extension state schema.`,
 		};
 	}
 
 	return {
 		ready: true,
-		outcome: "READY",
-		reason: "ok",
+		outcome: "UNVERIFIED",
+		reason: "runtime_unverified",
 		installedVersion,
 		candidateVersion: CANDIDATE_VERSION,
 		hasExtensionKind: true,
-		message: `Provider pi-durable v${installedVersion} is active and ready for live G2 transport verification.`,
+		installed: {
+			version: installedVersion,
+			status: "verified",
+		},
+		restart: {
+			status: "unverified",
+			message: "Process generation unconfirmed; resident runners may hold earlier version.",
+		},
+		runtime: {
+			status: "unverified",
+			message: "Active runtime generation is unverified until fresh native emission is observed.",
+		},
+		message: `Provider pi-durable v${installedVersion} is installed with extension schema registered. Active runtime generation is unverified until fresh native emission on target thread.`,
 	};
 }
