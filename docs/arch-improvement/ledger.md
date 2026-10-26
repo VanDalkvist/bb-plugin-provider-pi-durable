@@ -336,7 +336,27 @@
 - **G3 (UI Context Segment & Permission): PENDING**
   - Read-only UI projection primitives created in `src/ui/runtime-graph/`, but operator UI permission is pending. No UI component invented outside approved primitives.
 - **Plan Status: INCOMPLETE (Backend Checkpoint Only)**
-  - Entire plan is NOT complete. No package version bump, no tag, no marketplace release, no install/restart executed. Final 0.2.x release deferred until G3 and remaining gates are satisfied.
+  - Entire plan is NOT complete. No package version bump, no tag, no marketplace release, no install/restart executed. Final 0.3.0 release (per 2026-10-26 amendment) deferred until G2/G3 and remaining gates are satisfied.
+
+### Governing Release Amendment — 2026-10-26 (v0.3.0 Release Target & Tag Preservation)
+- **Решение оператора:** «этот арх луп надо финалить под 0.3.0...много изменений ломающих поведение» (GBrain fact #1699).
+- **Финальный релиз: 0.3.0 вместо 0.2.x.** Вследствие фундаментальных breaking behavior changes (Pi 1.4 foundation, проекция runtime task graph, координация admission race и селекторные привязки session bindings, централизованная subagent policy v1) итоговый релиз арх-лупа переориентирован на версию `0.3.0`.
+- **Сохранение тега v0.2.53 (Инвариант целостности):**
+  - Опубликованный тег `v0.2.53` (`7d0b5b8`) категорически **НЕ удаляется и НЕ переносится**; он остаётся валидной неизменной исторической точкой.
+  - Доказано кодом Beyond Boundaries Core (`server/dist/start-server.js`):
+    - Резолвер обновлений `resolveGitRangeUpdate` при отсутствии тега даёт отказ: `security check failed: recorded git tag "${args.intent.resolvedTag}" no longer exists in ${args.url}; bb will not re-resolve a missing release tag. Restore the tag, or remove and install the plugin again` (`outcome: "unavailable"`).
+    - При смещении тега на новый коммит (`movedGitTagDetail`): `security check failed: git tag "${args.tag}" in ${args.url} moved from ${args.recordedCommit} to ${args.currentCommit}; bb will not re-resolve a tag that changed. Remove the plugin and install it again to accept the new commit` (`outcome: "unavailable"`).
+  - Разделение границ: доказан отказ апдейт-резолвера (`outcome: "unavailable"` при фоновой проверке обновлений), а не автоматическая гибель уже запущенного resident runtime. Удаление GitHub Release и удаление git tag — раздельные сущности (архивы git tag обслуживаются Git archive endpoint независимо от GH Release), но мутация git-тега разрушает проверку целостности в BB Core.
+- **Селекторная несовместимость (^0.2.0 vs 0.3.0):**
+  - В semver `^0.2.0` раскрывается как `>=0.2.0 <0.3.0-0` (`semver.satisfies("0.3.0", "^0.2.0") === false`). Резолвер `satisfyingGitSemverTags` в BB Core вернёт `outcome: "current"` и не увидит 0.3.0 как допустимый апдейт.
+  - По `assertInstallRegistrationAvailable` в BB Core параллельная установка поверх другого диапазона блокируется (`plugin id "..." is already installed from ...; remove it first`).
+  - Для перехода установленного плагина на 0.3.0 потребуется отдельная процедура смены селектора (re-install / source change с пре-дренажем и согласованным перезапуском).
+- **Статус ворот и релиза на текущий момент:**
+  - G3 UI exception — **PENDING** (не получено).
+  - G2 live roundtrip — **BLOCKED / unproven** (не подтверждено в живом Electron-рантайме).
+  - Ворота НЕ отмечаются закрытыми.
+  - Никакого реального релиза сейчас: `package.json` остаётся 0.2.53, коммит `0.3.0` будет создан строго из будущего финального состояния после прохождения G2/G3 ворот.
+  - Исторические факты и отчёты о релизе `0.2.53` сохраняются без изменений.
 
 
 
