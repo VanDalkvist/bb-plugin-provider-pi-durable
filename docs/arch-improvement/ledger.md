@@ -388,5 +388,23 @@
 - **Installed Status:** **NOT CHANGED** (установленный плагин остаётся на 0.2.53; смена селектора и локальное переключение — следующие шаги цикла).
 - **Следующие срезы текущего арх-лупа:** Local cutover / installation migration, marketplace PR, G2 live roundtrip verification, G3 UI renderer.
 
+### Pre-Cutover Safety Inventory & Recoverability Card — 2026-10-26 (Execution Receipt)
+- **Цель и статус:** Проведён предоперационный read-only инвентарь для безопасного переключения установленного плагина с `git:^0.2.0` (v0.2.53) на локальный чекаут `/Users/vanya/Projects/bb-plugin-provider-pi-durable` (v0.3.0). Никаких мутаций, удалений, установок или перезапусков не производилось. Ожидается явное подтверждение («yes») оператора.
+- **Инвентарь удаляемого состояния (Data Loss Audit):**
+  - Удаляемый кеш: `/Users/vanya/.bb/plugins/cache/git/github.com/VanDalkvist/bb-plugin-provider-pi-durable/7d0b5b83258958eaa2e6c8b725ef0e779c0ecce1` (214 MB, 17 465 файлов). 100% восстановим из неизменного GitHub tag `v0.2.53` (`7d0b5b8`).
+  - Секреты плагина: `pluginSecretsDir` (`~/.bb/plugins/provider-pi-durable/secrets` и `~/.bb/plugins/secrets/`) отсутствует на диске (0 файлов). Код `remove` выполняет `rm -rf`, удаление затрагивает 0 файлов.
+  - Настройки плагина (`pluginSettings`): удаляются вызовом `deleteAllPluginSettings`. Текущее значение `hideThinking: false` (равно дефолту схемы). Подготовлена официальная команда восстановления: `bb plugin config provider-pi-durable set hideThinking false`.
+  - Расписания плагина (`pluginSchedules`): удаляются вызовом `deletePluginSchedules`. По публичному API `schedules: []` (0 расписаний). Пользовательские автоматизации (`automations`, `auto_*`) не затрагиваются. Скрытые внутренние строки в `bb.db` вне публичного API честно классифицированы как UNKNOWN.
+  - Сохранность KV (`subagent.policy.v1`): подтверждена по коду BB Core — в Drizzle-схеме отсутствует `ON DELETE CASCADE` на `plugins`, `deleteAllPluginKvValues` вызывается только при списании встроенных плагинов, поэтому запись политики субагентов остаётся в `bb.db`.
+- **Дренаж пользовательской активности:**
+  - Проверены все треды проекта `proj_t4zxb4pcrk`. Активность обнаружена только в треде текущего арх-лупа (`thr_ct3kk9xne6`) и субагента инвентаря (`thr_wawt4wqe96`). Все прочие треды находятся в `idle` или `error`. Фоновых пользовательских операций нет.
+- **Анализ прерывания рантайма и подготовка отвязанного исполнения:**
+  - Установлено по первичному коду BB Core (`start-server.js`, `start-host-daemon.js`): команда `bb plugin remove` вызывает `disposePluginHost` (сигнал `plugin.host.dispose` останавливает worker моста PID 95282), прерывает tool calls (`plugin-disposed`) и физически стирает с диска кеш `managedDir`, откуда запущен runner PID 97718.
+  - Агент, исполняющийся под `pi-durable`, не может последовательно выполнить две отдельные команды в сессии. Подготовлен автономный скрипт `/Users/vanya/.bb/thread-storage/thr_ct3kk9xne6/cutover-to-local.sh`, выполняющий цепочку `remove` -> `install` -> `config restore` в едином отвязанном процессе.
+- **Артефакты инвентаря:**
+  - Полная карточка восстановимости и handoff: `/Users/vanya/.bb/thread-storage/thr_ct3kk9xne6/local-cutover-confirmation-card.md`.
+  - Автономный скрипт cutover (готов, но НЕ запущен): `/Users/vanya/.bb/thread-storage/thr_ct3kk9xne6/cutover-to-local.sh`.
+
+
 
 
