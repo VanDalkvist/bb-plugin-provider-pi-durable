@@ -301,4 +301,42 @@
 - Fresh combined pre-pin run: **432 Node tests, 431 pass / 1 failing legacy mirror fixture**, then that fixture's missing new consume/register contract was fixed and its suite **5/5** passed. This is NOT reported as a fresh combined 432/432 run. New 1.4 manifest tests are now intentionally RED against 1.3 (`u1-version-red.log`).
 - Remaining: R5 complete typed fixture/compiler migration and touched-test budgets, exact target 1.4 adaptation and re-verification, one final independent detailed Antigravity architecture/product round, final 0.2.x bump/push. No installed-plugin change, original-session migration, backup, restart, tag or marketplace release performed by this thread.
 
+---
+
+## Cycle durable-1.4-foundation-and-runtime-graph-backend — 2026-10-26
+
+### Context and implemented slices
+- Branch `main`; base `7d0b5b8` (0.2.53), commits `3325275` (R0) and `8103a38` (R1–R4).
+- Target: Pi 1.4 cutover (exact 1.4.0 pins for `@earendil-works/pi-durable`, `@earendil-works/pi-coding-agent`, `@earendil-works/pi-codemode`, `@earendil-works/chord`, `@earendil-works/pi-ai`), SDK 0.6.79.
+- Boundary remediation R0–R5 + U1/R6: typed boundary fixtures (`tsconfig.contract-tests.json`), negative contract compiler guard (`scripts/check-negative-contracts.mjs`), test splits keeping all touched TS/TSX strictly < 200 lines (AP-019).
+- Foundation S9 Reviews: `reviews/2026-10-26-s9-architecture-1.4.md` (PASS) and `reviews/2026-10-26-s9-product-1.4.md` (PASS).
+- Runtime Graph Backend (G1) & Admission Race (S8):
+  - Read model: `src/runtime-graph/`, `src/runner/runtime-graph-*.ts`, debounced snapshots, scope filtering, receipts bounded to 128 entries.
+  - Admission coordination: `src/host/session-admission.ts`, single writer mutex, fine-grained participant cancellation.
+  - Independent S9 review initially reported 8 findings (4 P1, 4 P2) in `reviews/2026-10-26-s9-runtime-graph-backend.md` (historical FAIL).
+  - Remediation applied and retested in `reviews/2026-10-26-s9-runtime-graph-backend-retest.md` (PASS).
+- Integration Verification & Final Remediation:
+  - Full integration test run identified 9 alias failures + 2 oversized test files recorded in `reviews/2026-10-26-integrated-verification.md` (historical FAIL).
+  - Core cause: BB subthread child identity contract — child thread receives own `providerThreadId` alias, while composite IDs (`conversationId !== undefined`) require exact parent match; `turn/start` without `providerThreadId` must resolve bound identity rather than generate timestamp.
+  - Fixes applied: `src/host/session-binding.ts` (`SessionBindingTracker`), `SessionRegistry.createOrGet`, `bridge-router.ts`, test splits (`tests/runtime-graph-source.scenarios-2.test.ts`, `tests/session-admission-race.scenarios-2.test.ts`).
+  - Result verified in `reviews/2026-10-26-integration-regression-fix-result.md` (PASS).
+
+### Verified Status of Milestones
+- **Foundation Pi 1.4 + G1 (Runtime Graph Backend): VERIFIED**
+  - Full test suite: **510 tests passed, 0 failed** (501 node:test + 9 UI tsx).
+  - Source typecheck `npx tsc --noEmit`: exit 0.
+  - Contract compiler & negative guard: exit 0 (actual TS2322 rejection confirmed).
+  - Import AST graph: 123 source files, **0 cycles (Tarjan SCC)**.
+  - File budgets (AP-019): **All touched and new TS/TSX files strictly < 200 lines**.
+  - Dist build: `npm run build` exit 0, all artifacts current.
+  - Dependency security: `npm audit` found 0 vulnerabilities; exact 1.4.0 pins for Pi ecosystem.
+  - BB identity contract: Legitimate child has own alias `providerThreadId`; same-thread hostile replacement and foreign composite root forbidden; single writer and cancellation lifecycle preserved.
+- **G2 (Public BB Event Transport): BLOCKED / unproven live roundtrip**
+  - Event schemas and delta translation unit-tested, but real Electron desktop roundtrip is unproven in live harness.
+- **G3 (UI Context Segment & Permission): PENDING**
+  - Read-only UI projection primitives created in `src/ui/runtime-graph/`, but operator UI permission is pending. No UI component invented outside approved primitives.
+- **Plan Status: INCOMPLETE (Backend Checkpoint Only)**
+  - Entire plan is NOT complete. No package version bump, no tag, no marketplace release, no install/restart executed. Final 0.2.x release deferred until G3 and remaining gates are satisfied.
+
+
 

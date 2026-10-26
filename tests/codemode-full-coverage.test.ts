@@ -159,20 +159,10 @@ test("Codemode Full Coverage: end-to-end capabilities suite", async (t) => {
 		assert.equal(resCaughtRead.isError, false);
 		assert.ok(resCaughtRead.text.includes("caught_read: ENOENT"));
 
-		// 4. Caught tool error (bash non-zero exit code)
-		const resCaughtBash = await harness.execCode(`
-			try {
-				await tools.bash({ command: "exit 42" });
-				return "unexpected";
-			} catch (err) {
-				return "caught_bash: " + (err.message || String(err));
-			}
-		`);
-		assert.equal(resCaughtBash.isError, false);
-		assert.ok(
-			resCaughtBash.text.includes("caught_bash:") &&
-				(resCaughtBash.text.includes('Tool "bash" failed') || resCaughtBash.text.includes("Command exited with code 42")),
-		);
+		// Schema-bearing native tools resolve their structured value even when the tool result isError.
+		const nonzeroBash = await harness.execCode(`return await tools.bash({ command: "exit 42" });`);
+		assert.equal(nonzeroBash.isError, false, "codemode must retain a schema-bearing tool error value");
+		assert.ok(nonzeroBash.text.includes('"exitCode":42'));
 
 		// 5. Uncaught tool error produces failed script result
 		const resUncaught = await harness.execCode('await tools.read({ path: "another_missing_file.txt" });');

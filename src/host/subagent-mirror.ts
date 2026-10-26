@@ -129,6 +129,10 @@ export class SubagentMirrorManager {
 		return this.mirrors.get(String(conversationId));
 	}
 
+	public getConversationIds(): string[] {
+		return Array.from(this.mirrors.keys());
+	}
+
 	public findConversationForTask(task: string): string | undefined {
 		return this.pendingByTask.get(task.trim());
 	}

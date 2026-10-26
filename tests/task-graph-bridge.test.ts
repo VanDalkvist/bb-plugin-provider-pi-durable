@@ -8,37 +8,10 @@ import type { DurableView } from "../src/runner/runtime-types.ts";
 import { DeltaTranslator } from "../src/host/delta-translator.ts";
 import type { BBPlanStep } from "../src/runner/bridge/contracts.ts";
 import type { DurableViewSource } from "../src/runner/runtime-types.ts";
-
-function node(id: number, kind: string, state: TaskGraphState, owner?: number): TaskGraphNode {
-	return {
-		id,
-		kind,
-		conversationId: 1,
-		...(owner === undefined ? {} : { owner }),
-		background: false,
-		abortRequested: false,
-		state,
-		conversations: [],
-	} as unknown as TaskGraphNode;
-}
-
-function graph(tasks: Record<string, TaskGraphNode>): TaskGraph {
-	return { tasks } as unknown as TaskGraph;
-}
-
-
-/** A view is only read for `pi.live` and the transcript, so a fixture needs no more than that. */
-function liveView(live: unknown, entries: unknown[] = []): DurableView {
-	return { conversation: { docs: { "pi.live": live }, entries } } as unknown as DurableView;
-}
-
-/** A model-issued call: its name is on the slot, its arguments are on the assistant entry. */
-function runningCall(callId: string, name: string, taskId: number, args: Record<string, unknown>): DurableView {
-	return liveView({
-		tools: [{ callId, name, status: "running", taskId }],
-		generation: { message: { content: [{ type: "toolCall", id: callId, arguments: args }] } },
-	});
-}
+import type { EntryRecord } from "@earendil-works/pi-durable";
+import { jsonFixture, taskNodeFixture, graphFixture, viewFixture, taskViewSourceFixture as viewSourceFixture } from "./fixtures/durable.ts";
+import { wireFixture } from "./fixtures/wire.ts";
+import { node, graph, liveView, runningCall } from "./fixtures/task-graph-bridge-support.ts";
 
 test("taskSteps: creation order with children nested under their owner", () => {
 	const steps = taskSteps(
@@ -87,446 +60,112 @@ test("taskSteps: an empty graph yields no rows", () => {
 });
 
 test("tasks_snapshot translates into a planSteps item that BB's schema accepts", () => {
-	const steps: BBPlanStep[] = [
-		{ step: "#1 assistant turn", status: "active" },
-		{ step: "  #2 bash: echo alpha", status: "completed" },
-	];
-	const deltas = new DeltaTranslator().translate({ type: "tasks_snapshot", steps }, { threadId: "thread-1" });
-
-	assert.deepEqual(deltas.map((delta) => delta.kind), ["item.open", "item.close"]);
-	for (const delta of deltas) {
-		const parsed = threadDeltaSchema.safeParse(delta);
-		assert.equal(parsed.success, true, `delta must validate against threadDeltaSchema: ${JSON.stringify(delta)}`);
-		assert.equal((delta.key as { channel: string }).channel, "pi-durable-tasks");
-	}
-
-	const closed = deltas[1];
-	assert.equal(closed.status, "completed");
-	assert.deepEqual(closed.item, { type: "planSteps", steps });
+    const steps: BBPlanStep[] = [
+        { step: "#1 assistant turn", status: "active" },
+        { step: "  #2 bash: echo alpha", status: "completed" },
+    ];
+    const deltas = new DeltaTranslator().translate(wireFixture("tasks_snapshot", { type: "tasks_snapshot", steps }), { threadId: "thread-1" });
+    assert.deepEqual(deltas.map((delta) => delta.kind), ["item.open", "item.close"]);
+    for (const delta of deltas) {
+        const parsed = threadDeltaSchema.safeParse(delta);
+        assert.equal(parsed.success, true, `delta must validate against threadDeltaSchema: ${JSON.stringify(delta)}`);
+        assert.equal((delta.key as {
+            channel: string;
+        }).channel, "pi-durable-tasks");
+    }
+    const closed = deltas[1];
+    assert.equal(closed.status, "completed");
+    assert.deepEqual(closed.item, { type: "planSteps", steps });
 });
 
 test("tasks_snapshot without steps emits nothing", () => {
-	assert.deepEqual(new DeltaTranslator().translate({ type: "tasks_snapshot", steps: [] }, { threadId: "thread-1" }), []);
+    assert.deepEqual(new DeltaTranslator().translate(wireFixture("tasks_snapshot", { type: "tasks_snapshot", steps: [] }), { threadId: "thread-1" }), []);
 });
 
 test("startTaskGraphBridge coalesces rapid graph updates into a single snapshot after 50ms", (t) => {
-	t.mock.timers.enable({ apis: ["setTimeout"] });
-	let current: { tasks?: TaskGraph } = {};
-	let notify: (() => void) | undefined;
-	const view = {
-		current: () => current,
-		subscribe: (listener: () => void) => {
-			notify = listener;
-			return () => {
-				notify = undefined;
-			};
-		},
-	} as unknown as DurableViewSource;
-
-	const emitted: BBPlanStep[][] = [];
-	startTaskGraphBridge(view, (event) => emitted.push(event.steps));
-
-	// Rapid sequence of updates within 50ms
-	current = { tasks: graph({ "1": node(1, "pi.generation", { status: "running", phase: "request" }) }) };
-	notify?.();
-	t.mock.timers.tick(15);
-	assert.equal(emitted.length, 0, "must not emit before 50ms debounce window expires");
-
-	current = {
-		tasks: graph({
-			"1": node(1, "pi.generation", { status: "running", phase: "tools" }),
-			"2": node(2, "pi.tool", { status: "pending", phase: "call" }, 1),
-		}),
-	};
-	notify?.();
-	t.mock.timers.tick(25);
-	assert.equal(emitted.length, 0, "debounce timer resets on rapid subsequent update");
-
-	current = {
-		tasks: graph({
-			"1": node(1, "pi.generation", { status: "running", phase: "tools" }),
-			"2": node(2, "pi.tool", { status: "running", phase: "execute" }, 1),
-		}),
-	};
-	notify?.();
-	t.mock.timers.tick(49);
-	assert.equal(emitted.length, 0, "must not emit at 49ms");
-
-	// Debounce period completes (50ms after the last update)
-	t.mock.timers.tick(1);
-	assert.equal(emitted.length, 1, "exactly one coalesced snapshot emitted after 50ms");
-	assert.deepEqual(emitted[0], [
-		{ step: "#1 assistant turn", status: "active" },
-		{ step: "  #2 tool · execute", status: "active" },
-	]);
-
-	// Further time passing without updates does not emit additional snapshots
-	t.mock.timers.tick(100);
-	assert.equal(emitted.length, 1);
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    let current: {
+        tasks?: TaskGraph;
+    } = {};
+    let notify: (() => void) | undefined;
+    const view = viewSourceFixture({
+        current: () => current,
+        subscribe: (listener: () => void) => {
+            notify = listener;
+            return () => {
+                notify = undefined;
+            };
+        },
+    });
+    const emitted: BBPlanStep[][] = [];
+    startTaskGraphBridge(view, (event) => emitted.push(event.steps));
+    // Rapid sequence of updates within 50ms
+    current = { tasks: graph({ "1": node(1, "pi.generation", { status: "running", phase: "request" }) }) };
+    notify?.();
+    t.mock.timers.tick(15);
+    assert.equal(emitted.length, 0, "must not emit before 50ms debounce window expires");
+    current = {
+        tasks: graph({
+            "1": node(1, "pi.generation", { status: "running", phase: "tools" }),
+            "2": node(2, "pi.tool", { status: "pending", phase: "call" }, 1),
+        }),
+    };
+    notify?.();
+    t.mock.timers.tick(25);
+    assert.equal(emitted.length, 0, "debounce timer resets on rapid subsequent update");
+    current = {
+        tasks: graph({
+            "1": node(1, "pi.generation", { status: "running", phase: "tools" }),
+            "2": node(2, "pi.tool", { status: "running", phase: "execute" }, 1),
+        }),
+    };
+    notify?.();
+    t.mock.timers.tick(49);
+    assert.equal(emitted.length, 0, "must not emit at 49ms");
+    // Debounce period completes (50ms after the last update)
+    t.mock.timers.tick(1);
+    assert.equal(emitted.length, 1, "exactly one coalesced snapshot emitted after 50ms");
+    assert.deepEqual(emitted[0], [
+        { step: "#1 assistant turn", status: "active" },
+        { step: "  #2 tool · execute", status: "active" },
+    ]);
+    // Further time passing without updates does not emit additional snapshots
+    t.mock.timers.tick(100);
+    assert.equal(emitted.length, 1);
 });
 
 test("startTaskGraphBridge unsubscribe cancels pending debounce timer and unsubscribes from view", (t) => {
-	t.mock.timers.enable({ apis: ["setTimeout"] });
-	let current: { tasks?: TaskGraph } = {};
-	let notify: (() => void) | undefined;
-	let unsubscribedFromView = false;
-	const view = {
-		current: () => current,
-		subscribe: (listener: () => void) => {
-			notify = listener;
-			return () => {
-				unsubscribedFromView = true;
-				notify = undefined;
-			};
-		},
-	} as unknown as DurableViewSource;
-
-	const emitted: BBPlanStep[][] = [];
-	const handle = startTaskGraphBridge(view, (event) => emitted.push(event.steps));
-	assert.equal(typeof handle?.unsubscribe, "function", "startTaskGraphBridge must return handle with unsubscribe");
-
-	current = { tasks: graph({ "1": node(1, "pi.generation", { status: "running", phase: "request" }) }) };
-	notify?.();
-	assert.equal(emitted.length, 0, "update is scheduled, not yet emitted");
-
-	handle.unsubscribe();
-	assert.equal(unsubscribedFromView, true, "unsubscribe must remove listener from view");
-
-	// Tick past the debounce delay: no snapshot should be emitted because timer was cleared
-	t.mock.timers.tick(100);
-	assert.equal(emitted.length, 0, "cancelled debounce timer must not emit");
-
-	// Idempotent unsubscribe call should not throw
-	handle.unsubscribe();
-
-	// Subsequent notify should have no effect
-	notify?.();
-	t.mock.timers.tick(100);
-	assert.equal(emitted.length, 0, "subsequent view notifications must not emit after unsubscribe");
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    let current: {
+        tasks?: TaskGraph;
+    } = {};
+    let notify: (() => void) | undefined;
+    let unsubscribedFromView = false;
+    const view = viewSourceFixture({
+        current: () => current,
+        subscribe: (listener: () => void) => {
+            notify = listener;
+            return () => {
+                unsubscribedFromView = true;
+                notify = undefined;
+            };
+        },
+    });
+    const emitted: BBPlanStep[][] = [];
+    const handle = startTaskGraphBridge(view, (event) => emitted.push(event.steps));
+    assert.equal(typeof handle?.unsubscribe, "function", "startTaskGraphBridge must return handle with unsubscribe");
+    current = { tasks: graph({ "1": node(1, "pi.generation", { status: "running", phase: "request" }) }) };
+    notify?.();
+    assert.equal(emitted.length, 0, "update is scheduled, not yet emitted");
+    handle.unsubscribe();
+    assert.equal(unsubscribedFromView, true, "unsubscribe must remove listener from view");
+    // Tick past the debounce delay: no snapshot should be emitted because timer was cleared
+    t.mock.timers.tick(100);
+    assert.equal(emitted.length, 0, "cancelled debounce timer must not emit");
+    // Idempotent unsubscribe call should not throw
+    handle.unsubscribe();
+    // Subsequent notify should have no effect
+    notify?.();
+    t.mock.timers.tick(100);
+    assert.equal(emitted.length, 0, "subsequent view notifications must not emit after unsubscribe");
 });
-
-test("startTaskGraphBridge publishes on change only", (t) => {
-	t.mock.timers.enable();
-	let current: { tasks?: TaskGraph } = {};
-	let notify: (() => void) | undefined;
-	const view = {
-		current: () => current,
-		subscribe: (listener: () => void) => {
-			notify = listener;
-			return () => {
-				notify = undefined;
-			};
-		},
-	} as unknown as DurableViewSource;
-
-	const emitted: BBPlanStep[][] = [];
-	const bridge = startTaskGraphBridge(view, (event) => emitted.push(event.steps));
-	t.mock.timers.tick(50);
-	assert.equal(emitted.length, 0, "no graph yet means nothing to show");
-
-	current = { tasks: graph({ "1": node(1, "pi.generation", { status: "running", phase: "request" }) }) };
-	notify?.();
-	t.mock.timers.tick(50);
-	assert.deepEqual(emitted, [[{ step: "#1 assistant turn", status: "active" }]]);
-
-	notify?.();
-	t.mock.timers.tick(50);
-	assert.equal(emitted.length, 1, "an unchanged graph must not re-emit");
-
-	current = { tasks: graph({ "1": node(1, "pi.generation", { status: "pending", phase: "request" }) }) };
-	notify?.();
-	t.mock.timers.tick(50);
-	assert.equal(emitted.length, 2);
-	assert.deepEqual(emitted[1], [{ step: "#1 assistant turn", status: "pending" }]);
-
-	// A phase the panel does not show is not a change worth a new row.
-	current = { tasks: graph({ "1": node(1, "pi.generation", { status: "pending", phase: "tools" }) }) };
-	notify?.();
-	t.mock.timers.tick(50);
-	assert.equal(emitted.length, 2, "a hidden phase change must not re-emit");
-
-	current = {};
-	notify?.();
-	t.mock.timers.tick(50);
-	assert.equal(emitted.length, 3, "an empty graph emits a final snapshot with all tasks completed");
-	assert.deepEqual(emitted[2], [{ step: "#1 assistant turn", status: "completed" }]);
-
-	notify?.();
-	t.mock.timers.tick(50);
-	assert.equal(emitted.length, 3, "an unchanged empty graph must not re-emit");
-
-	bridge.unsubscribe();
-});
-
-test("taskNames: a tool task is named from the call the harness runs in it", () => {
-	const names = new TaskNames();
-	names.learn(runningCall("call-1", "bash", 3, { command: "echo alpha" }));
-
-	assert.deepEqual(
-		taskSteps(
-			graph({
-				"1": node(1, "pi.generation", { status: "running", phase: "tools" }),
-				"3": node(3, "pi.tool", { status: "running", phase: "execute" }, 1),
-			}),
-			names,
-		),
-		[
-			{ step: "#1 assistant turn", status: "active" },
-			{ step: "  #3 bash: echo alpha", status: "active" },
-		],
-	);
-});
-
-test("taskNames: a nested call names itself, a slot without a task names nothing, a learned name outlives its slot", () => {
-	const names = new TaskNames();
-	names.learn(
-		liveView({
-			// Not offered, so not started: there is no task to name yet.
-			tools: [{ callId: "call-9", name: "bash", status: "pending" }],
-			nestedTools: [
-				{
-					callId: "call-1/n1",
-					name: "read",
-					status: "running",
-					taskId: 4,
-					parentCallId: "call-1",
-					parentTaskId: 3,
-					arguments: { path: "src/runner/index.ts" },
-				},
-			],
-		}),
-	);
-
-	const waiting: TaskGraphState = { status: "waiting", phase: "execute", on: [5 as never], policy: "allSettled" };
-	assert.deepEqual(taskSteps(graph({ "4": node(4, "pi.tool", waiting) }), names), [
-		{ step: "#4 read: src/runner/index.ts · waiting on 1", status: "pending" },
-	]);
-
-	// The slot leaves pi.live when the call ends, and the name it taught stays.
-	names.learn(liveView({ tools: [] }));
-	assert.deepEqual(taskSteps(graph({ "4": node(4, "pi.tool", { status: "completing", outcome: "completed" }) }), names), [
-		{ step: "#4 read: src/runner/index.ts · completing (completed)", status: "completed" },
-	]);
-	assert.deepEqual(taskSteps(graph({ "5": node(5, "pi.tool", { status: "running", phase: "execute" }) }), names), [
-		{ step: "#5 tool · execute", status: "active" },
-	]);
-});
-
-test("taskNames: a name is one bounded line, and no registry changes nothing", () => {
-	const names = new TaskNames();
-	names.learn(
-		runningCall("call-1", "bash", 3, {
-			command: "  git log\n  --oneline --decorate --all --graph --stat --pretty=format:%H  ",
-		}),
-	);
-
-	const tasks = graph({ "3": node(3, "pi.tool", { status: "running", phase: "execute" }) });
-	const [step] = taskSteps(tasks, names);
-	assert.ok(step !== undefined);
-	assert.ok(step.step.startsWith("#3 bash: git log --oneline"), step.step);
-	assert.equal(step.step.endsWith("…"), true, "a long command is clipped");
-	assert.equal(step.step.includes("\n"), false, "a multi-line command stays on one line");
-	assert.equal(step.step.length, 3 + 48, "the name is bounded");
-
-	assert.deepEqual(taskSteps(tasks), [{ step: "#3 tool · execute", status: "active" }]);
-});
-
-test("taskSteps: retains completed tasks as completed when evicted from live graph", () => {
-	const names = new TaskNames();
-	const known = new Map<string, BBPlanStep>();
-
-	// Tick 1: generation running and child tool executing
-	const g1 = graph({
-		"1": node(1, "pi.generation", { status: "running", phase: "tools" }),
-		"2": node(2, "pi.tool", { status: "running", phase: "execute" }, 1),
-	});
-	const steps1 = taskSteps(g1, names, known);
-	assert.deepEqual(steps1, [
-		{ step: "#1 assistant turn", status: "active" },
-		{ step: "  #2 tool · execute", status: "active" },
-	]);
-
-	// Tick 2: tool completed and evicted from TaskGraph (terminal eviction)
-	const g2 = graph({
-		"1": node(1, "pi.generation", { status: "running", phase: "tools" }),
-	});
-	const steps2 = taskSteps(g2, names, known);
-	assert.deepEqual(steps2, [
-		{ step: "#1 assistant turn", status: "active" },
-		{ step: "  #2 tool · execute", status: "completed" },
-	]);
-
-	// Tick 3: new tool started under same generation
-	const g3 = graph({
-		"1": node(1, "pi.generation", { status: "running", phase: "tools" }),
-		"3": node(3, "pi.tool", { status: "running", phase: "execute" }, 1),
-	});
-	const steps3 = taskSteps(g3, names, known);
-	assert.deepEqual(steps3, [
-		{ step: "#1 assistant turn", status: "active" },
-		{ step: "  #2 tool · execute", status: "completed" },
-		{ step: "  #3 tool · execute", status: "active" },
-	]);
-});
-
-test("startTaskGraphBridge: emits final snapshot when graph empties with all steps completed and no spinners", (t) => {
-	t.mock.timers.enable({ apis: ["setTimeout"] });
-	let current: { tasks?: TaskGraph } = {};
-	let notify: (() => void) | undefined;
-	const view = {
-		current: () => current,
-		subscribe: (listener: () => void) => {
-			notify = listener;
-			return () => {
-				notify = undefined;
-			};
-		},
-	} as unknown as DurableViewSource;
-
-	const emitted: BBPlanStep[][] = [];
-	const bridge = startTaskGraphBridge(view, (event) => emitted.push(event.steps));
-
-	// 1. Graph with active generation and active subagent
-	current = {
-		tasks: graph({
-			"1": node(1, "pi.generation", { status: "running", phase: "tools" }),
-			"2": node(2, "pi.tool", { status: "running", phase: "execute" }, 1),
-		}),
-	};
-	notify?.();
-	t.mock.timers.tick(50);
-	assert.equal(emitted.length, 1);
-	assert.deepEqual(emitted[0], [
-		{ step: "#1 assistant turn", status: "active" },
-		{ step: "  #2 tool · execute", status: "active" },
-	]);
-
-	// 2. Graph becomes empty (turn finishes, terminal eviction)
-	current = { tasks: graph({}) };
-	notify?.();
-	t.mock.timers.tick(50);
-
-	assert.equal(emitted.length, 2, "final snapshot must be emitted when graph empties");
-	const finalSteps = emitted[1];
-	assert.equal(finalSteps.length, 2);
-	// All steps must be completed, none active or pending (no hanging spinners in BB plan panel)
-	for (const step of finalSteps) {
-		assert.equal(step.status, "completed", `step ${step.step} must have status completed`);
-	}
-	assert.deepEqual(finalSteps, [
-		{ step: "#1 assistant turn", status: "completed" },
-		{ step: "  #2 tool · execute", status: "completed" },
-	]);
-
-	// 3. Repeated empty tick must not re-emit
-	notify?.();
-	t.mock.timers.tick(50);
-	assert.equal(emitted.length, 2, "subsequent empty graph tick must not emit duplicate snapshot");
-
-	bridge.unsubscribe();
-});
-
-test("taskNames: subagent tool displays '#id subagent: <task>'", () => {
-	const names = new TaskNames();
-	names.learn(
-		runningCall("call-sub-1", "subagent", 2, {
-			task: "run all unit tests and verify output",
-		}),
-	);
-
-	const steps = taskSteps(
-		graph({
-			"1": node(1, "pi.generation", { status: "running", phase: "tools" }),
-			"2": node(2, "pi.tool", { status: "running", phase: "execute" }, 1),
-		}),
-		names,
-	);
-
-	assert.deepEqual(steps, [
-		{ step: "#1 assistant turn", status: "active" },
-		{ step: "  #2 subagent: run all unit tests and verify output", status: "active" },
-	]);
-});
-
-test("taskSteps: preserves failed task status across task graph eviction and empty graph finalization", () => {
-	const names = new TaskNames();
-	const known = new Map<string, BBPlanStep>();
-
-	// Tick 1: generation running and child tool completing with failure
-	const g1 = graph({
-		"1": node(1, "pi.generation", { status: "running", phase: "tools" }),
-		"2": node(2, "pi.tool", { status: "completing", outcome: "failed" }, 1),
-	});
-	const steps1 = taskSteps(g1, names, known);
-	assert.deepEqual(steps1, [
-		{ step: "#1 assistant turn", status: "active" },
-		{ step: "  #2 tool · completing (failed)", status: "failed" },
-	]);
-
-	// Tick 2: tool completed and evicted from TaskGraph (terminal eviction), parent still running
-	const g2 = graph({
-		"1": node(1, "pi.generation", { status: "running", phase: "tools" }),
-	});
-	const steps2 = taskSteps(g2, names, known);
-	assert.deepEqual(steps2, [
-		{ step: "#1 assistant turn", status: "active" },
-		{ step: "  #2 tool · completing (failed)", status: "failed" },
-	]);
-
-	// Tick 3: graph becomes completely empty (turn finishes)
-	const g3 = graph({});
-	const steps3 = taskSteps(g3, names, known);
-	assert.deepEqual(steps3, [
-		{ step: "#1 assistant turn", status: "completed" },
-		{ step: "  #2 tool · completing (failed)", status: "failed" },
-	]);
-});
-
-test("startTaskGraphBridge: preserves failed status when task is evicted and when graph empties", (t) => {
-	t.mock.timers.enable({ apis: ["setTimeout"] });
-	let current: { tasks?: TaskGraph } = {};
-	let notify: (() => void) | undefined;
-	const view = {
-		current: () => current,
-		subscribe: (listener: () => void) => {
-			notify = listener;
-			return () => {
-				notify = undefined;
-			};
-		},
-	} as unknown as DurableViewSource;
-
-	const emitted: BBPlanStep[][] = [];
-	const bridge = startTaskGraphBridge(view, (event) => emitted.push(event.steps));
-
-	// 1. Tool failed
-	current = {
-		tasks: graph({
-			"1": node(1, "pi.generation", { status: "running", phase: "tools" }),
-			"2": node(2, "pi.tool", { status: "completing", outcome: "failed" }, 1),
-		}),
-	};
-	notify?.();
-	t.mock.timers.tick(50);
-	assert.equal(emitted.length, 1);
-	assert.deepEqual(emitted[0], [
-		{ step: "#1 assistant turn", status: "active" },
-		{ step: "  #2 tool · completing (failed)", status: "failed" },
-	]);
-
-	// 2. Graph empties (turn ends)
-	current = { tasks: graph({}) };
-	notify?.();
-	t.mock.timers.tick(50);
-
-	assert.equal(emitted.length, 2);
-	assert.deepEqual(emitted[1], [
-		{ step: "#1 assistant turn", status: "completed" },
-		{ step: "  #2 tool · completing (failed)", status: "failed" },
-	]);
-
-	bridge.unsubscribe();
-});
-
-
-

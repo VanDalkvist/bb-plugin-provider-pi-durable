@@ -8,19 +8,18 @@ import { forkSessionDatabase } from "../src/host/thread-fork.ts";
 import { ProviderBridge } from "../src/host/bridge.ts";
 import { SessionRegistry } from "../src/host/session-registry.ts";
 import type { PiThreadSession } from "../src/host/session.ts";
+import { sessionFixture } from "./fixtures/mirror.ts";
 
 class MockSessionRegistry extends SessionRegistry {
-	public created: Array<{ threadId: string; providerThreadId: string }> = [];
-
-	public override async createOrGet(
-		threadId: string,
-		providerThreadId: string,
-		_params: Record<string, unknown>,
-	): Promise<PiThreadSession> {
-		this.created.push({ threadId, providerThreadId });
-		const stub = { runner: { exited: false }, options: { cwd: "/mock/cwd", providerThreadId } };
-		return stub as unknown as PiThreadSession;
-	}
+    public created: Array<{
+        threadId: string;
+        providerThreadId: string;
+    }> = [];
+    public override async createOrGet(threadId: string, providerThreadId: string, _params: Record<string, unknown>) {
+        this.created.push({ threadId, providerThreadId });
+        const stub = sessionFixture({ runner: { exited: false }, options: { cwd: "/mock/cwd", providerThreadId } });
+        return stub;
+    }
 }
 
 function createSessionDb(dir: string, entries: Array<{ id: number; record: string }>): void {

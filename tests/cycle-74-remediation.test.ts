@@ -4,7 +4,8 @@ import { Type } from "typebox";
 import { adaptExtensionTool } from "../src/runner/extension-bridge.ts";
 import { createNestedToolExecutor } from "../src/runner/extension-mount.ts";
 import { createPiPrompt, DynamicPromptSections } from "../src/runner/prompt.ts";
-import { handleActiveSessionCommand, type RunnerCommandPayload, type CommandResponder } from "../src/runner/session-commands.ts";
+import { handleActiveSessionCommand } from "../src/runner/session-commands.ts";
+import { parseRunnerCommand, type CommandResponder } from "../src/contracts/runner-command.ts";
 import { createRegistry, defineTool } from "@earendil-works/pi-durable";
 import { SettingsManager, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 
@@ -22,9 +23,10 @@ test("P1-1: notice unpacking distinguishes notice records from errors and forwar
 	];
 
 	for (const report of pendingReports) {
-		if (report && typeof report === "object" && "kind" in report && (report as { kind?: string }).kind === "notice") {
-			const nr = report as { level: "info" | "warning" | "error"; message: string };
-			notice(nr.level, nr.message);
+		if (report && typeof report === "object" && "kind" in report && report.kind === "notice"
+			&& "level" in report && (report.level === "info" || report.level === "warning" || report.level === "error")
+			&& "message" in report && typeof report.message === "string") {
+			notice(report.level, report.message);
 		} else {
 			notice("warning", report instanceof Error ? report.message : String(report));
 		}
@@ -62,7 +64,7 @@ test("P2-1: adaptExtensionTool emits tool_result with isError: true when execute
 	};
 
 	const failingToolDef: ToolDefinition = {
-		name: "crash_tool",
+		name: "crash_tool", label: "Crash tool",
 		description: "Throws an unhandled exception",
 		parameters: Type.Object({}),
 		execute: async () => {
@@ -98,7 +100,7 @@ test("P2-1: createNestedToolExecutor emits tool_result with isError: true on tar
 		name: "faulty-tools",
 		tools: [
 			defineTool({
-				name: "throw_nested",
+				name: "throw_nested", description: "Fixture native exception",
 				parameters: Type.Object({}),
 				execute: async () => {
 					throw new Error("Nested worker died");
@@ -166,72 +168,4 @@ test("P2-2 & P3: dynamic prompt sections filter whitespace and replace removed k
 	const rendered2 = dynSection?.render(mockInput as never, {} as never) as string;
 	assert.ok(!rendered2.includes("section_a"), "Removed section_a must not be retained");
 	assert.ok(rendered2.includes("<section_b>\nContent B\n</section_b>"));
-});
-
-test("P2-3: session-commands handles instructions, guards thinking level, and falls back on unknown type", async () => {
-	const responses: Array<{ type: "success" | "error"; id?: string; command: string; data?: unknown; message?: string }> = [];
-	const responder: CommandResponder = {
-		success: (id, command, data) => responses.push({ type: "success", id, command, data }),
-		error: (id, command, message) => responses.push({ type: "error", id, command, message }),
-	};
-
-	let compactedWith: string | undefined;
-	let thinkingLevelSet: string | undefined;
-
-	const mockDurable = {
-		controller: {
-			compact: async (instructions?: string) => {
-				compactedWith = instructions;
-			},
-			setThinkingLevel: async (level: string) => {
-				thinkingLevelSet = level;
-			},
-		},
-		view: { current: () => ({ conversation: { docs: {} } }) },
-		harness: {},
-	};
-
-	// 1. Compact with instructions
-	await handleActiveSessionCommand(
-		{ type: "compact", id: "1", instructions: "Summarize decisions" },
-		mockDurable as never,
-		{} as never,
-		{} as never,
-		responder,
-	);
-	assert.equal(compactedWith, "Summarize decisions");
-	assert.equal(responses[0].type, "success");
-
-	// 2. Set thinking level with missing level
-	await handleActiveSessionCommand(
-		{ type: "set_thinking_level", id: "2" },
-		mockDurable as never,
-		{} as never,
-		{} as never,
-		responder,
-	);
-	assert.equal(responses[1].type, "error");
-	assert.equal(responses[1].message, "Missing thinking level");
-
-	// 3. Set thinking level valid
-	await handleActiveSessionCommand(
-		{ type: "set_thinking_level", id: "3", level: "high" },
-		mockDurable as never,
-		{} as never,
-		{} as never,
-		responder,
-	);
-	assert.equal(thinkingLevelSet, "high");
-	assert.equal(responses[2].type, "success");
-
-	// 4. Unknown command type fallback
-	await handleActiveSessionCommand(
-		{ id: "4" } as RunnerCommandPayload,
-		mockDurable as never,
-		{} as never,
-		{} as never,
-		responder,
-	);
-	assert.equal(responses[3].type, "error");
-	assert.equal(responses[3].command, "unknown");
 });

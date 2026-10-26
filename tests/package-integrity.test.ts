@@ -45,11 +45,11 @@ test("package.json integrity: @get-bb/plugin-sdk is strictly pinned to 0.6.79 an
   assert.equal(pkg.dependencies?.["@get-bb/plugin-sdk"], "0.6.79", "@get-bb/plugin-sdk must be exact 0.6.79");
   assert.equal(pkg.engines?.bbPluginSdk, ">=0.6.79", "engines.bbPluginSdk must require >=0.6.79");
   assert.equal(pkg.engines?.bb, ">=0.47.1", "engines.bb must require >=0.47.1");
-  assert.equal(pkg.dependencies?.["@earendil-works/pi-durable"], "1.3.0", "Pi Durable must remain exact installed 1.3.0");
-  assert.equal(pkg.dependencies?.["@earendil-works/pi-coding-agent"], "1.3.0", "Pi Coding Agent must remain exact installed 1.3.0");
-  assert.equal(pkg.dependencies?.["@earendil-works/pi-codemode"], "1.3.0", "Pi Codemode must remain exact installed 1.3.0");
-  assert.equal(pkg.overrides?.["@earendil-works/chord"], "1.3.0", "chord override must be exact 1.3.0");
-  assert.equal(pkg.overrides?.["@earendil-works/pi-ai"], "1.3.0", "pi-ai override must be exact 1.3.0");
+  assert.equal(pkg.dependencies?.["@earendil-works/pi-durable"], "1.4.0", "Pi Durable must resolve exact candidate 1.4.0");
+  assert.equal(pkg.dependencies?.["@earendil-works/pi-coding-agent"], "1.4.0", "Pi Coding Agent must resolve exact candidate 1.4.0");
+  assert.equal(pkg.dependencies?.["@earendil-works/pi-codemode"], "1.4.0", "Pi Codemode must resolve exact candidate 1.4.0");
+  assert.equal(pkg.overrides?.["@earendil-works/chord"], "1.4.0", "chord override must be exact 1.4.0");
+  assert.equal(pkg.overrides?.["@earendil-works/pi-ai"], "1.4.0", "pi-ai override must be exact 1.4.0");
 });
 
 test("package.json integrity: manifest entries point to canonical source paths", () => {
@@ -72,13 +72,13 @@ test("package.json integrity: runtime dependencies contain all modules imported 
   assert.ok(deps.includes("@earendil-works/pi-durable"), "missing @earendil-works/pi-durable");
   assert.ok(deps.includes("@earendil-works/pi-coding-agent"), "missing @earendil-works/pi-coding-agent");
   assert.ok(deps.includes("@earendil-works/pi-codemode"), "missing @earendil-works/pi-codemode");
-  assert.strictEqual(pkg.dependencies["@earendil-works/pi-durable"], "1.3.0");
-  assert.strictEqual(pkg.dependencies["@earendil-works/pi-coding-agent"], "1.3.0");
-  assert.strictEqual(pkg.dependencies["@earendil-works/pi-codemode"], "1.3.0");
+  assert.strictEqual(pkg.dependencies["@earendil-works/pi-durable"], "1.4.0");
+  assert.strictEqual(pkg.dependencies["@earendil-works/pi-coding-agent"], "1.4.0");
+  assert.strictEqual(pkg.dependencies["@earendil-works/pi-codemode"], "1.4.0");
   assert.ok(deps.includes("proper-lockfile"), "missing proper-lockfile");
   assert.ok(deps.includes("zod"), "missing zod");
-  assert.strictEqual(pkg.overrides?.["@earendil-works/chord"], "1.3.0");
-  assert.strictEqual(pkg.overrides?.["@earendil-works/pi-ai"], "1.3.0");
+  assert.strictEqual(pkg.overrides?.["@earendil-works/chord"], "1.4.0");
+  assert.strictEqual(pkg.overrides?.["@earendil-works/pi-ai"], "1.4.0");
 });
 
 test("server.ts registers current settings, rpc, and provider without legacy disposal", async () => {

@@ -27,6 +27,7 @@ import { captureNativeToolEnds } from "./native-tool-events.fixture.ts";
 import { DeltaTranslator } from "../src/host/delta-translator.ts";
 import { BBEventAdapter } from "../src/runner/bridge/bb-event-adapter.ts";
 import type { BBWireEvent } from "../src/runner/bridge/contracts.ts";
+import { wireFixture } from "./fixtures/wire.ts";
 
 test("Slice 4: Harness native events project to schema-valid BB deltas", async () => {
 	const { leafEnd, badleafEnd, batchEnd } = await captureNativeToolEnds();
@@ -141,27 +142,25 @@ test("Slice 4: Real Harness + CodemodeSandbox full matrix (write, edit, bash suc
 });
 
 test("Slice 4: Structured generic MCP-style tool output conforms to BB delta schema", () => {
-	const translator = new DeltaTranslator();
-	const deltaCtx = { threadId: "thr_mcp", cwd: "/test" };
-
-	const startDeltas = translator.translate({
-		type: "tool_execution_start",
-		toolCallId: "call_mcp_1",
-		toolName: "mcp__github__get_issue",
-		args: { issue_number: 42 },
-	}, deltaCtx);
-	assert.equal(startDeltas.length, 1);
-	assert.ok(threadDeltaSchema.safeParse(startDeltas[0]).success);
-
-	const endDeltas = translator.translate({
-		type: "tool_execution_end",
-		toolCallId: "call_mcp_1",
-		toolName: "mcp__github__get_issue",
-		result: JSON.stringify({ id: 42, title: "Fix tool parity", state: "open" }),
-		isError: false,
-	}, deltaCtx);
-	assert.equal(endDeltas.length, 1);
-	const closeDelta = endDeltas[0];
-	assert.equal(closeDelta.status, "completed");
-	assert.ok(threadDeltaSchema.safeParse(closeDelta).success);
+    const translator = new DeltaTranslator();
+    const deltaCtx = { threadId: "thr_mcp", cwd: "/test" };
+    const startDeltas = translator.translate(wireFixture("tool_execution_start", {
+        type: "tool_execution_start",
+        toolCallId: "call_mcp_1",
+        toolName: "mcp__github__get_issue",
+        args: { issue_number: 42 },
+    }), deltaCtx);
+    assert.equal(startDeltas.length, 1);
+    assert.ok(threadDeltaSchema.safeParse(startDeltas[0]).success);
+    const endDeltas = translator.translate(wireFixture("tool_execution_end", {
+        type: "tool_execution_end",
+        toolCallId: "call_mcp_1",
+        toolName: "mcp__github__get_issue",
+        result: JSON.stringify({ id: 42, title: "Fix tool parity", state: "open" }),
+        isError: false,
+    }), deltaCtx);
+    assert.equal(endDeltas.length, 1);
+    const closeDelta = endDeltas[0];
+    assert.equal(closeDelta.status, "completed");
+    assert.ok(threadDeltaSchema.safeParse(closeDelta).success);
 });

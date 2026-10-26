@@ -144,7 +144,7 @@ test("session-commands: targeted child get_state reads child agent without alter
 	const harness = await Harness.open(storage, { models, registry }, ctx);
 
 	const root = await harness.root(ctx, { agent: { model: { provider: "root-p", modelId: "root-m" } } });
-	const childConv = await harness.createConversation({ ownership: { kind: "session" } }, ctx);
+	const childConv = await harness.createConversation({ ownership: { kind: "ownerless" } }, ctx);
 	await childConv.configure({ model: { provider: "child-p", modelId: "child-m" }, thinkingLevel: "high" }, ctx);
 
 	let rootStateRes: any;

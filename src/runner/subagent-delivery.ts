@@ -1,7 +1,7 @@
 import type { Context } from "@earendil-works/chord";
 import {
 	AssistantEntry, defineTask, type ConversationHandle, type ConversationId,
-	type Extension, type Task,
+	type Extension, type Task, type TaskRecord,
 } from "@earendil-works/pi-durable";
 import { SubagentsDoc, extractAssistantText } from "./subagent-docs.ts";
 import { nativeChildTitle } from "../shared/child-title.ts";
@@ -9,6 +9,11 @@ export { answerText } from "./subagent-docs.ts";
 
 export const BACKGROUND = { ownership: { kind: "conversation" }, background: true } as const;
 const GATHER_MS = 50;
+
+type CourierLiveness = { state: Pick<TaskRecord<null, { phase: string }, null>["state"], "status"> };
+export function courierIsIdle(active: CourierLiveness | undefined): boolean {
+	return active === undefined || active.state.status === "terminal";
+}
 
 export type SubagentAdmission = (child: ConversationHandle, requestId: string, context: Context) => Promise<void>;
 export type Admission = (conversation: ConversationHandle, requestId: string, context: Context) => Promise<void>;
@@ -73,8 +78,7 @@ export function reporterFor(courier: CourierTask, admit?: SubagentAdmission): Su
 						state.outbox = [...(state.outbox ?? []), { id: reportId, name, text: task.state.checkpoint.text }];
 					}
 					const active = state.courier === undefined ? undefined : await tx.task(state.courier);
-					const isIdle = !active || (active.state.status !== "pending" && active.state.status !== "running" && active.state.status !== "waiting");
-					if (isIdle) state.courier = await tx.createTask(courier, null, BACKGROUND);
+					if (courierIsIdle(active)) state.courier = await tx.createTask(courier, null, BACKGROUND);
 					return { status: "terminal", outcome: { status: "completed", result: null } };
 				}, context),
 		},
@@ -88,10 +92,7 @@ export function courierFor(admit?: Admission): SubagentTaskExtension<null, Couri
 		name: "bb.subagent-courier", version: 1,
 		initial: () => ({ phase: "gather" }),
 		phases: {
-			gather: async (_task, runtime, context) => {
-				await runtime.sleep(runtime.now() + GATHER_MS, context);
-				await runtime.commit(() => ({ status: "running", checkpoint: { phase: "next" } }), context);
-			},
+			gather: (_task, runtime, context) => runtime.sleepUntil(runtime.now() + GATHER_MS, { phase: "next" }, context),
 			next: async (task, runtime, context) => runtime.commit(async (tx) => {
 				const state = await tx.doc(SubagentsDoc, runtime.conversationId);
 				if (state.deliveryHold !== undefined) return { status: "running", checkpoint: { phase: "hold" } };

@@ -11,6 +11,8 @@ import { getPiDurableVersion } from "./version.ts";
 import { createBridgeSender, initBridgeInboundChannel } from "./bridge-channel.ts";
 import { startSubagentWatcher, type SubagentWatcherController } from "./subagent-watcher.ts";
 import { startTaskGraphBridge, type TaskGraphBridgeController } from "./task-graph-bridge.ts";
+import { RuntimeGraphSource } from "./runtime-graph-source.ts";
+import { ROOT_CONVERSATION_ID } from "@earendil-works/pi-durable";
 
 const argv = process.argv.slice(2);
 
@@ -32,11 +34,15 @@ async function main() {
 	let activeDurable: OpenDurableResult | null = null;
 	let activeWatcher: SubagentWatcherController | null = null;
 	let activeTaskBridge: TaskGraphBridgeController | null = null;
+	let activeGraphSource: RuntimeGraphSource | null = null;
 	let isTerminating = false;
 
 	const handleExit = async (signalOrReason: string) => {
 		if (isTerminating) return;
 		isTerminating = true;
+		if (activeGraphSource) {
+			try { activeGraphSource.teardown(); } catch {}
+		}
 		if (activeTaskBridge) {
 			try {
 				activeTaskBridge.unsubscribe();
@@ -151,6 +157,18 @@ async function main() {
 	const watcher = await startSubagentWatcher(durable.harness, adapter, () => durable.view.current());
 	activeWatcher = watcher;
 	activeTaskBridge = startTaskGraphBridge(durable.view, output);
+	activeGraphSource = new RuntimeGraphSource(
+		durable.view,
+		{
+			sessionId: durable.view.current().session.id,
+			rootConversationId: String(ROOT_CONVERSATION_ID),
+			buildId: "pi-durable-1.4",
+		},
+		{
+			harness: durable.harness,
+		},
+	);
+	activeGraphSource.subscribe((snapshot) => output({ type: "runtime_graph_snapshot", snapshot }));
 
 	// Handle stdin RPC commands in active session
 	attachJsonlLineReader(process.stdin, async (line) => {

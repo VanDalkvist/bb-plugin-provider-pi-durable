@@ -22,6 +22,7 @@ export const BindingDoc = defineDoc<BindingState>({
 	kind: "bb.native-child-binding",
 	version: 2,
 	scope: "conversation",
+	checkpointWhen: () => false,
 	history: "latest",
 	fork: "initial",
 	initial: () => ({ binding: null }),
@@ -31,6 +32,7 @@ export const BindingIndexDoc = defineDoc<BindingIndex>({
 	kind: "bb.native-child-binding-index",
 	version: 1,
 	scope: "session",
+	checkpointWhen: () => false,
 	initial: () => ({ byIdentity: {}, byThreadId: {} }),
 });
 

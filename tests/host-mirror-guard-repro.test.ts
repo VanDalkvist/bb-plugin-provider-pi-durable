@@ -7,91 +7,72 @@ import {
 	resolveTargetConversationId,
 } from "../src/host/child-turn-guard.ts";
 import { detectNativeChild } from "../src/host/session-owner.ts";
+import { sessionFixture } from "./fixtures/mirror.ts";
 
 test("validateChildTurn: parses flat runner DTO and blocks model override on cold mirror (P1 repro)", async () => {
-	const session = {
-		options: { threadId: "root_1" },
-		getSubagentState: () => ({ status: "running" as const, task: "child task" }), // cold mirror, actualModel undefined
-		runner: {
-			requestOk: async (cmd: Record<string, unknown>) => {
-				assert.equal(cmd.type, "get_state");
-				assert.equal(cmd.conversationId, "conv_42");
-				return {
-					model: { provider: "antigravity", id: "gemini-3.8-flash", modelId: "gemini-3.8-flash" },
-					thinkingLevel: "low",
-				};
-			},
-		},
-	};
-
-	// 1. Different model must be rejected with -32602
-	const res = await validateChildTurn(
-		{ threadId: "child_1", options: { model: "anthropic/claude-3-7-sonnet" } },
-		session as any,
-		"conv_42",
-	);
-	assert.equal(res.valid, false, "Model override must be rejected");
-	if (!res.valid) {
-		assert.equal(res.code, -32602);
-		assert.ok(res.message.includes("CHILD_MODEL_POLICY_LOCKED"));
-	}
-
-	// 2. Matching model must be accepted
-	const matchRes = await validateChildTurn(
-		{ threadId: "child_1", options: { model: "antigravity/gemini-3.8-flash", reasoningLevel: "low" } },
-		session as any,
-		"conv_42",
-	);
-	assert.equal(matchRes.valid, true, "Matching model and thinking must be allowed");
+    const session = sessionFixture({
+        options: { threadId: "root_1" },
+        getSubagentState: () => ({ status: "running" as const, task: "child task" }), // cold mirror, actualModel undefined
+        runner: {
+            requestOk: async (cmd: Record<string, unknown>) => {
+                assert.equal(cmd.type, "get_state");
+                assert.equal(cmd.conversationId, "conv_42");
+                return {
+                    model: { provider: "antigravity", id: "gemini-3.8-flash", modelId: "gemini-3.8-flash" },
+                    thinkingLevel: "low",
+                };
+            },
+        },
+    });
+    // 1. Different model must be rejected with -32602
+    const res = await validateChildTurn({ threadId: "child_1", options: { model: "anthropic/claude-3-7-sonnet" } }, session as any, "conv_42");
+    assert.equal(res.valid, false, "Model override must be rejected");
+    if (!res.valid) {
+        assert.equal(res.code, -32602);
+        assert.ok(res.message.includes("CHILD_MODEL_POLICY_LOCKED"));
+    }
+    // 2. Matching model must be accepted
+    const matchRes = await validateChildTurn({ threadId: "child_1", options: { model: "antigravity/gemini-3.8-flash", reasoningLevel: "low" } }, session as any, "conv_42");
+    assert.equal(matchRes.valid, true, "Matching model and thinking must be allowed");
 });
 
 test("validateChildTurn: fails closed when runner state fetch fails or model is unresolvable", async () => {
-	const failingSession = {
-		options: { threadId: "root_1" },
-		getSubagentState: () => ({ status: "running" as const, task: "task" }),
-		runner: {
-			requestOk: async () => {
-				throw new Error("Runner communication failure");
-			},
-		},
-	};
-
-	// When an override is requested but state cannot be resolved, fail-closed
-	const res = await validateChildTurn(
-		{ threadId: "child_1", options: { model: "anthropic/claude-3-7-sonnet" } },
-		failingSession as any,
-		"conv_99",
-	);
-	assert.equal(res.valid, false, "Must fail closed if child model cannot be resolved");
-	if (!res.valid) {
-		assert.equal(res.code, -32602);
-		assert.ok(res.message.includes("CHILD_MODEL_POLICY_LOCKED"));
-	}
+    const failingSession = sessionFixture({
+        options: { threadId: "root_1" },
+        getSubagentState: () => ({ status: "running" as const, task: "task" }),
+        runner: {
+            requestOk: async () => {
+                throw new Error("Runner communication failure");
+            },
+        },
+    });
+    // When an override is requested but state cannot be resolved, fail-closed
+    const res = await validateChildTurn({ threadId: "child_1", options: { model: "anthropic/claude-3-7-sonnet" } }, failingSession as any, "conv_99");
+    assert.equal(res.valid, false, "Must fail closed if child model cannot be resolved");
+    if (!res.valid) {
+        assert.equal(res.code, -32602);
+        assert.ok(res.message.includes("CHILD_MODEL_POLICY_LOCKED"));
+    }
 });
 
 test("validateChildTurn: checks thinking level when model is cached but thinking is missing", async () => {
-	const session = {
-		options: { threadId: "root_1" },
-		getSubagentState: () => ({
-			status: "running" as const,
-			task: "task",
-			actualModel: { provider: "p1", modelId: "m1" },
-			// thinkingLevel is undefined in cache
-		}),
-		runner: {
-			requestOk: async () => ({
-				model: { provider: "p1", id: "m1", modelId: "m1" },
-				thinkingLevel: "low",
-			}),
-		},
-	};
-
-	const res = await validateChildTurn(
-		{ threadId: "child_1", options: { reasoningLevel: "high" } },
-		session as any,
-		"conv_1",
-	);
-	assert.equal(res.valid, false, "Thinking override must be rejected even if model was cached");
+    const session = sessionFixture({
+        options: { threadId: "root_1" },
+        getSubagentState: () => ({
+            status: "running" as const,
+            task: "task",
+            actualModel: { provider: "p1", modelId: "m1" },
+            // thinkingLevel is undefined in cache
+        }),
+        runner: {
+            requestOk: async () => ({
+                model: { provider: "p1", id: "m1", modelId: "m1" },
+                thinkingLevel: "low",
+            }),
+        },
+    });
+    const res = await validateChildTurn({ threadId: "child_1", options: { reasoningLevel: "high" } }, session as any, "conv_1");
+    assert.equal(res.valid, false, "Thinking override must be rejected even if model was cached");
 });
 
 test("isChildTurn: manual BB subthread with parentThreadId is NOT a child if it has its own root session", () => {

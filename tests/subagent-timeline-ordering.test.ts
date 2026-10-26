@@ -5,24 +5,25 @@ import { DeltaTranslator } from "../src/host/delta-translator.ts";
 import { BBChildEventAdapter } from "../src/runner/bridge/bb-child-event-adapter.ts";
 import type { AgentEvent } from "@earendil-works/pi-durable";
 import type { BBWireEvent } from "../src/runner/bridge/contracts.ts";
+import { publicDeltaFixture, wireFixture } from "./fixtures/wire.ts";
 
 test("Subagent delegation item carries task in label and summary", () => {
-	const task = "Search for authentication bugs across repository";
-	const event = {
-		type: "tool_execution_start",
-		toolCallId: "call_sub_1",
-		toolName: "subagent",
-		args: { task },
-	} as any;
-
-	const { shape, delta } = translateToolStart(event, "/tmp");
-
-	assert.equal(shape.type, "delegation");
-	assert.equal(shape.label, task);
-	assert.equal(shape.summary, task);
-	assert.equal(delta.item?.type, "delegation");
-	assert.equal(delta.item?.label, task);
-	assert.equal(delta.item?.summary, task);
+    const task = "Search for authentication bugs across repository";
+    const event = wireFixture("tool_execution_start", {
+        type: "tool_execution_start",
+        toolCallId: "call_sub_1",
+        toolName: "subagent",
+        args: { task },
+    });
+    const { shape, delta: rawDelta } = translateToolStart(event, "/tmp");
+    const delta = publicDeltaFixture(rawDelta);
+    assert.ok(delta.kind === "item.open" && delta.item.type === "delegation");
+    assert.equal(shape.type, "delegation");
+    assert.equal(shape.label, task);
+    assert.equal(shape.summary, task);
+    assert.equal(delta.item?.type, "delegation");
+    assert.equal(delta.item?.label, task);
+    assert.equal(delta.item?.summary, task);
 });
 
 test("BBChildEventAdapter does NOT duplicate user task prompt into card stream", () => {
@@ -45,24 +46,22 @@ test("BBChildEventAdapter does NOT duplicate user task prompt into card stream",
 });
 
 test("Child tool execution deltas strictly carry parentRef and parentToolCallId matching delegation callId", () => {
-	const translator = new DeltaTranslator();
-	const childToolStart: any = {
-		type: "tool_execution_start",
-		toolCallId: "call_sub_1:call_bash_1",
-		toolName: "bash",
-		args: { command: "ls -la" },
-		parentRef: "call_sub_1",
-	};
-
-	const deltas = translator.translate(childToolStart, {
-		providerOptions: {},
-		lastCheckpointId: null,
-		fallbackCwd: "/tmp",
-	});
-
-	assert.equal(deltas.length, 1);
-	const delta = deltas[0];
-	assert.equal(delta.kind, "item.open");
-	assert.equal(delta.key.parentRef, "call_sub_1");
-	assert.equal(delta.item?.parentToolCallId, "call_sub_1");
+    const translator = new DeltaTranslator();
+    const childToolStart = wireFixture("tool_execution_start", {
+        type: "tool_execution_start",
+        toolCallId: "call_sub_1:call_bash_1",
+        toolName: "bash",
+        args: { command: "ls -la" },
+        parentRef: "call_sub_1",
+    });
+    const deltas = translator.translate(childToolStart, {
+        threadId: "thr_child", cwd: "/tmp",
+    });
+    assert.equal(deltas.length, 1);
+    const delta = publicDeltaFixture(deltas[0]);
+    assert.ok(delta.kind === "item.open");
+    assert.equal(delta.key.parentRef, "call_sub_1");
+    const item = deltas[0].item;
+    assert.ok(item && typeof item === "object" && "parentToolCallId" in item);
+    assert.equal(item.parentToolCallId, "call_sub_1", "raw compatibility metadata; SDK hierarchy is key.parentRef above");
 });

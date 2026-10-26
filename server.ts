@@ -10,6 +10,7 @@ import {
   SubagentPolicyInvalidError,
   SubagentRevisionConflictError,
 } from "./src/policy/errors.ts";
+import { runtimeGraphSnapshotSchema } from "./src/runtime-graph/schema.ts";
 
 export { rpcContract };
 
@@ -104,6 +105,11 @@ export default async function plugin(bb: BbPluginApi) {
       ],
     },
     experimental_resolvesNativeRoots: true,
+    extensionKinds: {
+      "runtime-graph": {
+        state: runtimeGraphSnapshotSchema,
+      },
+    },
     composerActions: [],
   });
 }

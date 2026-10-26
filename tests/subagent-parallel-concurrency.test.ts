@@ -65,13 +65,13 @@ test("Slice 6.3: Parallel subagents stream with strict buffer and translator iso
 			assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "DB pool healthy." },
 		},
 		// Subagent 1 completes
-		{
+		{ messages: [],
 			type: "agent_end",
 			conversationId: "101",
 			parentRef: "call_sub_1",
 		},
 		// Subagent 2 completes
-		{
+		{ messages: [],
 			type: "agent_end",
 			conversationId: "102",
 			parentRef: "call_sub_2",

@@ -109,6 +109,33 @@ export class SessionSubagentHandler {
 			}
 		}
 
+		if (event.type === "runtime_graph_snapshot" && !event.conversationId) {
+			const rootId = String((event.snapshot as any)?.scope?.rootConversationId ?? "1");
+			const convKeys = new Set<string>([
+				...Object.keys((event.snapshot as any)?.conversations ?? {}),
+				...this.mirrors.getConversationIds(),
+			]);
+			for (const cid of convKeys) {
+				if (cid === rootId) continue;
+				const childThreadId = session.getThreadIdForConversation(cid);
+				const childEvent = { ...event, conversationId: cid, parentRef: undefined };
+				if (childThreadId) {
+					const childTranslator = this.getChildTranslator(childThreadId);
+					const childDeltas = childTranslator.translate(childEvent, {
+						threadId: childThreadId,
+						cwd: session.options.cwd,
+						providerOptions: session.options.providerOptions,
+					});
+					if (childDeltas.length > 0) {
+						sendNotification("thread/delta", { threadId: childThreadId, deltas: childDeltas });
+					}
+				} else if (this.mirrors.getState(cid)) {
+					this.mirrors.bufferEvent(cid, childEvent);
+				}
+			}
+			return false;
+		}
+
 		const isChildEvent = event.conversationId !== undefined && event.conversationId !== null;
 		const childThreadId = isChildEvent
 			? session.getThreadIdForConversation(event.conversationId as string | number)

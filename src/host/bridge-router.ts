@@ -1,11 +1,11 @@
-import type { SessionRegistry } from "./session-registry.ts";
+import type { SessionRegistryPort } from "./session-port.ts";
 import { adoptInitialMirror } from "./mirror-adoption.ts";
 import { extractPiPromptInput, isCompactCommand, extractCompactInstructions } from "./prompt-input.ts";
 import { reconcileSessionOptions } from "./session-reconcile.ts";
 import { isChildTurn, validateChildTurn, sendInputAccepted, resolveTargetConversationId, synthesizeCompletionDeltas } from "./child-turn-guard.ts";
 
 export interface BridgeRouterContext {
-	registry: SessionRegistry;
+	registry: SessionRegistryPort;
 	sendNotification: (method: string, params: Record<string, unknown>) => void;
 	sendResult: (id: string | number, result: Record<string, unknown>) => void;
 	sendError: (id: string | number, code: number, message: string) => void;
@@ -42,7 +42,11 @@ export interface ThreadStopParams {
 }
 
 export async function handleTurnStart(id: string | number, params: TurnStartParams, ctx: BridgeRouterContext): Promise<void> {
-	const providerThreadId = params.providerThreadId || `pi_durable_${Date.now()}`;
+	const existingSession = ctx.registry.get(params.threadId);
+	const providerThreadId = params.providerThreadId
+		|| ctx.registry.getBoundProviderThreadId?.(params.threadId)
+		|| existingSession?.options.providerThreadId
+		|| `pi_durable_${Date.now()}`;
 	const session = await ctx.registry.createOrGet(params.threadId, providerThreadId, params);
 	const isChild = isChildTurn(params, session);
 

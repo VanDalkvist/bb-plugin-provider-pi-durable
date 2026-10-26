@@ -8,67 +8,56 @@ import {
 } from "../src/host/tool-delta-translator.ts";
 import type { DurableView } from "../src/runner/runtime-types.ts";
 import type { BBWireEvent, BBToolExecutionEndEvent } from "../src/runner/bridge/contracts.ts";
+import { viewFixture } from "./fixtures/durable.ts";
 
 test("BBEventAdapter: tool_execution_end forwards canonical details from model[0].details (D-6)", () => {
-	const emitted: BBWireEvent[] = [];
-	const adapter = new BBEventAdapter((evt) => emitted.push(evt));
-	const dummyView = {} as DurableView;
-
-	const diffDetails = { diff: "@@ -1 +1 @@\n-a\n+b\n", patch: "patch string" };
-
-	adapter.handleEvent(
-		{
-			type: "tool_execution_end",
-			toolCallId: "call_edit_1",
-			toolName: "edit",
-			entry: {
-				kind: "toolResult",
-				data: { diagnostics: [] },
-				model: [
-					{
-						role: "toolResult",
-						content: [{ type: "text", text: "applied patch" }],
-						isError: false,
-						details: diffDetails,
-					},
-				],
-			} as any,
-		},
-		dummyView,
-	);
-
-	assert.equal(emitted.length, 1);
-	const endEvt = emitted[0] as BBToolExecutionEndEvent;
-	assert.deepEqual(endEvt.details, diffDetails);
+    const emitted: BBWireEvent[] = [];
+    const adapter = new BBEventAdapter((evt) => emitted.push(evt));
+    const dummyView = viewFixture({});
+    const diffDetails = { diff: "@@ -1 +1 @@\n-a\n+b\n", patch: "patch string" };
+    adapter.handleEvent({
+        type: "tool_execution_end",
+        toolCallId: "call_edit_1",
+        toolName: "edit",
+        entry: {
+            kind: "toolResult",
+            data: { diagnostics: [] },
+            model: [
+                {
+                    role: "toolResult",
+                    content: [{ type: "text", text: "applied patch" }],
+                    isError: false,
+                    details: diffDetails,
+                },
+            ],
+        } as any,
+    }, dummyView);
+    assert.equal(emitted.length, 1);
+    const endEvt = emitted[0] as BBToolExecutionEndEvent;
+    assert.deepEqual(endEvt.details, diffDetails);
 });
 
 test("BBEventAdapter: nested tool_execution_end forwards canonical details from result.details", () => {
-	const emitted: BBWireEvent[] = [];
-	const adapter = new BBEventAdapter((evt) => emitted.push(evt));
-	const dummyView = {} as DurableView;
-
-	const diffDetails = { diff: "@@ -1 +1 @@\n-x\n+y\n", patch: "nested patch" };
-
-	adapter.handleEvent(
-		{
-			type: "tool_execution_end",
-			toolCallId: "call_nested_edit",
-			toolName: "edit",
-			result: {
-				taskId: "t_nested_1" as any,
-				structuredOutput: "nested applied patch",
-				isError: false,
-				details: diffDetails,
-				diagnostics: [],
-			},
-		} as any,
-		dummyView,
-	);
-
-	assert.equal(emitted.length, 1);
-	const endEvt = emitted[0] as BBToolExecutionEndEvent;
-	assert.deepEqual(endEvt.details, diffDetails);
-	assert.equal(endEvt.isError, false);
+    const emitted: BBWireEvent[] = [];
+    const adapter = new BBEventAdapter((evt) => emitted.push(evt));
+    const dummyView = viewFixture({});
+    const diffDetails = { diff: "@@ -1 +1 @@\n-x\n+y\n", patch: "nested patch" };
+    adapter.handleEvent({
+        type: "tool_execution_end",
+        toolCallId: "call_nested_edit",
+        toolName: "edit",
+        result: {
+            taskId: "t_nested_1" as any,
+            structuredOutput: "nested applied patch",
+            isError: false,
+            details: diffDetails,
+            diagnostics: [],
+        },
+    } as any, dummyView);
+    assert.equal(emitted.length, 1);
+    const endEvt = emitted[0] as BBToolExecutionEndEvent;
+    assert.deepEqual(endEvt.details, diffDetails);
+    assert.equal(endEvt.isError, false);
 });
 
 test("tool-delta-translator: enriches fileChange item with diff metadata and validates with threadDeltaSchema (D-6)", () => {

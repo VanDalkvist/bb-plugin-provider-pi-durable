@@ -60,6 +60,7 @@ export const SubagentsDoc = defineDoc<SubagentsState>({
 	kind: "bb.subagents",
 	version: 1,
 	scope: "conversation",
+	checkpointWhen: () => false,
 	history: "latest",
 	fork: "initial",
 	initial: () => ({ agents: {} }),

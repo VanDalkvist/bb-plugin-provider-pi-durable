@@ -9,6 +9,7 @@ import {
 	translateMessageEnd,
 	translateAgentEnd,
 } from "./message-delta-translator.ts";
+import { translateRuntimeGraphSnapshot } from "./runtime-graph-delta.ts";
 import type { RunnerEvent, ThreadDelta } from "./types.ts";
 
 /** Timeline channel of the durable task graph; stable so every snapshot closes over the same key. */
@@ -146,6 +147,11 @@ export class DeltaTranslator {
 					{ kind: "item.open", key: { channel: TASKS_CHANNEL }, item, presentation },
 					{ kind: "item.close", key: { channel: TASKS_CHANNEL }, status: "completed", item, presentation },
 				);
+				break;
+			}
+
+			case "runtime_graph_snapshot": {
+				deltas.push(...translateRuntimeGraphSnapshot(event, event.conversationId));
 				break;
 			}
 

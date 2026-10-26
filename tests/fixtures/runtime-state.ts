@@ -28,7 +28,7 @@ export async function nativeRuntimeState() {
 	const storage = new MemoryStorage();
 	const harness = await Harness.open(storage, { registry: createRegistry(), models: createModels() }, context);
 	const root = await harness.root(context);
-	const child = await harness.createConversation({ ownership: { kind: "session" } }, context);
+	const child = await harness.createConversation({ ownership: { kind: "ownerless" } }, context);
 	const view = await root.viewState(context);
 	const conversation = view.value;
 	view.dispose();

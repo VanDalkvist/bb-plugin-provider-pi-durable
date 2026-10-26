@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { ToolEventProjector } from "../src/runner/bridge/tool-result-extractor.ts";
 import { DeltaTranslator } from "../src/host/delta-translator.ts";
 import { threadDeltaSchema } from "@get-bb/plugin-sdk/provider-bridge";
+import { wireFixture } from "./fixtures/wire.ts";
 
 test("buildToolExecutionEnd recovers buffered conversationId from tool_execution_update", () => {
 	const projector = new ToolEventProjector();
@@ -35,45 +36,41 @@ test("buildToolExecutionEnd recovers buffered conversationId from tool_execution
 });
 
 test("DeltaTranslator propagates buffered conversationId to delegation item.close childRef", () => {
-	const translator = new DeltaTranslator();
-	const ctx = { threadId: "thr_parent", cwd: "/test" };
-
-	// 1. Tool start: initial delegation item.open
-	const startDeltas = translator.translate({
-		type: "tool_execution_start",
-		toolCallId: "call_sub_buff_1",
-		toolName: "subagent",
-		args: { task: "Subagent mission" },
-	}, ctx);
-	assert.equal(startDeltas.length, 1);
-	assert.equal(startDeltas[0].kind, "item.open");
-
-	// 2. Tool update arrives with conversationId in details
-	translator.translate({
-		type: "tool_execution_update",
-		toolCallId: "call_sub_buff_1",
-		toolName: "subagent",
-		details: { conversationId: 77 },
-		partialResult: "Starting work...",
-	}, ctx);
-
-	// 3. Tool end arrives without details
-	const endDeltas = translator.translate({
-		type: "tool_execution_end",
-		toolCallId: "call_sub_buff_1",
-		toolName: "subagent",
-		result: "Task completed successfully",
-		isError: false,
-	}, ctx);
-
-	assert.equal(endDeltas.length, 1);
-	const closeDelta = endDeltas[0];
-	assert.equal(closeDelta.kind, "item.close");
-	const item = closeDelta.item as Record<string, unknown>;
-	assert.equal(item.type, "delegation");
-	// childRef must be the recovered conversationId (77), NOT fallback "subagent"!
-	assert.equal(item.childRef, "77");
-	assert.equal(threadDeltaSchema.safeParse(closeDelta).success, true);
+    const translator = new DeltaTranslator();
+    const ctx = { threadId: "thr_parent", cwd: "/test" };
+    // 1. Tool start: initial delegation item.open
+    const startDeltas = translator.translate(wireFixture("tool_execution_start", {
+        type: "tool_execution_start",
+        toolCallId: "call_sub_buff_1",
+        toolName: "subagent",
+        args: { task: "Subagent mission" },
+    }), ctx);
+    assert.equal(startDeltas.length, 1);
+    assert.equal(startDeltas[0].kind, "item.open");
+    // 2. Tool update arrives with conversationId in details
+    translator.translate(wireFixture("tool_execution_update", {
+        type: "tool_execution_update",
+        toolCallId: "call_sub_buff_1",
+        toolName: "subagent",
+        details: { conversationId: 77 },
+        partialResult: "Starting work...",
+    }), ctx);
+    // 3. Tool end arrives without details
+    const endDeltas = translator.translate(wireFixture("tool_execution_end", {
+        type: "tool_execution_end",
+        toolCallId: "call_sub_buff_1",
+        toolName: "subagent",
+        result: "Task completed successfully",
+        isError: false,
+    }), ctx);
+    assert.equal(endDeltas.length, 1);
+    const closeDelta = endDeltas[0];
+    assert.equal(closeDelta.kind, "item.close");
+    const item = closeDelta.item as Record<string, unknown>;
+    assert.equal(item.type, "delegation");
+    // childRef must be the recovered conversationId (77), NOT fallback "subagent"!
+    assert.equal(item.childRef, "77");
+    assert.equal(threadDeltaSchema.safeParse(closeDelta).success, true);
 });
 
 test("ToolEventProjector: canonical details in entry.model[0] take precedence", () => {

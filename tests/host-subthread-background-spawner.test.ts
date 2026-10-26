@@ -35,30 +35,28 @@ test("buildSpawnArgs respects explicit projectId", () => {
 });
 
 test("spawnSubthreadInBb executes command and links registered thread", async () => {
-	let registeredThread: { threadId: string; conversationId?: string } | undefined;
-	const mockSession = {
-		registerThread: (threadId: string, conversationId?: string) => {
-			registeredThread = { threadId, conversationId };
-		},
-	};
-
-	const threadId = await spawnSubthreadInBb(
-		{
-			projectId: "proj_personal",
-			parentThreadId: "thr_parent_1",
-			title: "Background task",
-			task: "Compute prime numbers",
-			conversationId: "conv_88",
-		},
-		mockSession,
-		{
-			execCommand: async () => JSON.stringify({ id: "thr_child_88", ok: true }),
-		},
-	);
-
-	assert.equal(threadId, "thr_child_88");
-	assert.deepEqual(registeredThread, {
-		threadId: "thr_child_88",
-		conversationId: "conv_88",
-	});
+    let registeredThread: {
+        threadId: string;
+        conversationId?: string;
+    } | undefined;
+    const mockSession = {
+        registerThread: (threadId: string, conversationId?: string) => {
+            registeredThread = { threadId, conversationId };
+            return false;
+        },
+    };
+    const threadId = await spawnSubthreadInBb({
+        projectId: "proj_personal",
+        parentThreadId: "thr_parent_1",
+        title: "Background task",
+        task: "Compute prime numbers",
+        conversationId: "conv_88",
+    }, mockSession, {
+        execCommand: async () => JSON.stringify({ id: "thr_child_88", ok: true }),
+    });
+    assert.equal(threadId, "thr_child_88");
+    assert.deepEqual(registeredThread, {
+        threadId: "thr_child_88",
+        conversationId: "conv_88",
+    });
 });

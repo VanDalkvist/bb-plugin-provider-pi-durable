@@ -4,49 +4,57 @@ import assert from "node:assert/strict";
 import { SessionRegistry } from "../src/host/session-registry.ts";
 import { handleTurnStart } from "../src/host/bridge-router.ts";
 import type { PiThreadSession } from "../src/host/session.ts";
+import { sessionFixture } from "./fixtures/mirror.ts";
 
 test("VERIFICATION 1: Without mirror guard, spawning a subthread triggers a duplicate session.prompt", async () => {
-	let promptCallCount = 0;
-	let promptArgs: { text: string; conversationId?: string } | undefined;
-
-	const mockSession = {
-		runner: { exited: false },
-		options: {
-			threadId: "thr_parent",
-			providerThreadId: "pi_durable_root",
-		},
-		prompt: async ({ text, conversationId }: PromptRequest) => {
-			promptCallCount++;
-			promptArgs = { text, conversationId };
-		},
-	} as unknown as PiThreadSession;
-
-	const registry = new SessionRegistry(() => {});
-	(registry as unknown as { sessions: Map<string, PiThreadSession> }).sessions.set("thr_child", mockSession);
-
-	const notifications: Array<{ method: string; params: Record<string, unknown> }> = [];
-	const results: Array<{ id: string | number; result: Record<string, unknown> }> = [];
-	const errors: Array<{ id: string | number; code: number; message: string }> = [];
-
-	const ctx = {
-		registry,
-		sendNotification: (method: string, params: Record<string, unknown>) => notifications.push({ method, params }),
-		sendResult: (id: string | number, result: Record<string, unknown>) => results.push({ id, result }),
-		sendError: (id: string | number, code: number, message: string) => errors.push({ id, code, message }),
-	};
-
-	// When BB spawns thr_child with prompt "Audit database", BB immediately sends turn/start:
-	await handleTurnStart("req_spawn_turn", {
-		threadId: "thr_child",
-		providerThreadId: "pi_durable_root:2", // Conversation 2
-		input: [{ type: "text", text: "Audit database" }],
-	}, ctx);
-
-	// PROOF OF USER'S SUSPICION:
-	// BB's turn/start triggers session.prompt!
-	// If the subagent was ALREADY running in conversation 2, this causes a DUPLICATE / PARALLEL execution!
-	assert.equal(promptCallCount, 1, "Currently, turn/start ALWAYS calls session.prompt");
-	assert.deepEqual(promptArgs, { text: "Audit database", conversationId: "2" });
+    let promptCallCount = 0;
+    let promptArgs: {
+        text: string;
+        conversationId?: string;
+    } | undefined;
+    const mockSession = sessionFixture({
+        runner: { exited: false },
+        options: {
+            threadId: "thr_parent",
+            providerThreadId: "pi_durable_root",
+        },
+        prompt: async ({ text, conversationId }: PromptRequest) => {
+            promptCallCount++;
+            promptArgs = { text, conversationId };
+        },
+    });
+    const registry = new SessionRegistry(() => { });
+    registry.track("thr_child", mockSession);
+    const notifications: Array<{
+        method: string;
+        params: Record<string, unknown>;
+    }> = [];
+    const results: Array<{
+        id: string | number;
+        result: Record<string, unknown>;
+    }> = [];
+    const errors: Array<{
+        id: string | number;
+        code: number;
+        message: string;
+    }> = [];
+    const ctx = {
+        registry,
+        sendNotification: (method: string, params: Record<string, unknown>) => notifications.push({ method, params }),
+        sendResult: (id: string | number, result: Record<string, unknown>) => results.push({ id, result }),
+        sendError: (id: string | number, code: number, message: string) => errors.push({ id, code, message }),
+    };
+    // When BB spawns thr_child with prompt "Audit database", BB immediately sends turn/start:
+    await handleTurnStart("req_spawn_turn", {
+        threadId: "thr_child",
+        providerThreadId: "pi_durable_root:2", // Conversation 2
+        input: [{ type: "text", text: "Audit database" }],
+    }, ctx);
+    // PROOF OF USER'S SUSPICION:
+    // BB's turn/start triggers session.prompt!
+    // If the subagent was ALREADY running in conversation 2, this causes a DUPLICATE / PARALLEL execution!
+    assert.equal(promptCallCount, 1, "Currently, turn/start ALWAYS calls session.prompt");
+    assert.deepEqual(promptArgs, { text: "Audit database", conversationId: "2" });
 });
 
 test("VERIFICATION 2: With Active Subagent Deduplication Pattern, prompt is NOT called twice", async () => {

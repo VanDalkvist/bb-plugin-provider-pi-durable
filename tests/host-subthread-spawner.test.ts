@@ -66,30 +66,29 @@ test("buildSpawnArgs appends --environment when environmentId is explicitly pass
 });
 
 test("spawnSubthreadInBb registers thread when CLI returns thread JSON", async () => {
-	let registered: { threadId: string; conversationId: string } | undefined;
-	const mockSession = {
-		registerThread: (threadId: string, conversationId?: string) => {
-			if (conversationId) registered = { threadId, conversationId };
-		},
-	};
-
-	// Mock spawner function injecting simulated JSON output
-	await spawnSubthreadInBb(
-		{
-			projectId: "proj_personal",
-			parentThreadId: "thr_parent_123",
-			title: "Subagent: Audit",
-			task: "Audit",
-			conversationId: "2",
-		},
-		mockSession,
-		{
-			execCommand: async () => JSON.stringify({ id: "thr_child_456", ok: true }),
-		},
-	);
-
-	assert.deepEqual(registered, {
-		threadId: "thr_child_456",
-		conversationId: "2",
-	});
+    let registered: {
+        threadId: string;
+        conversationId: string;
+    } | undefined;
+    const mockSession = {
+        registerThread: (threadId: string, conversationId?: string) => {
+            if (conversationId)
+                registered = { threadId, conversationId };
+            return false;
+        },
+    };
+    // Mock spawner function injecting simulated JSON output
+    await spawnSubthreadInBb({
+        projectId: "proj_personal",
+        parentThreadId: "thr_parent_123",
+        title: "Subagent: Audit",
+        task: "Audit",
+        conversationId: "2",
+    }, mockSession, {
+        execCommand: async () => JSON.stringify({ id: "thr_child_456", ok: true }),
+    });
+    assert.deepEqual(registered, {
+        threadId: "thr_child_456",
+        conversationId: "2",
+    });
 });

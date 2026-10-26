@@ -38,6 +38,7 @@ var SubagentsDoc = defineDoc({
   kind: "bb.subagents",
   version: 1,
   scope: "conversation",
+  checkpointWhen: () => false,
   history: "latest",
   fork: "initial",
   initial: () => ({ agents: {} })
@@ -62,7 +63,7 @@ import {
   defineTask
 } from "@earendil-works/pi-durable";
 
-// src/runner/child-title.ts
+// src/shared/child-title.ts
 function nativeChildTitle(name, role, model) {
   const part = (value, limit) => Array.from(
     value.replace(/[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u2028-\u202e\u2066-\u2069]/gu, " ").replace(/\s+/gu, " ").trim()
@@ -83,6 +84,9 @@ function nativeChildTitle(name, role, model) {
 // src/runner/subagent-delivery.ts
 var BACKGROUND = { ownership: { kind: "conversation" }, background: true };
 var GATHER_MS = 50;
+function courierIsIdle(active) {
+  return active === void 0 || active.state.status === "terminal";
+}
 function asExtensionTask(task, extensionName) {
   return Object.assign(task, { name: extensionName, tasks: [task] });
 }
@@ -141,8 +145,7 @@ function reporterFor(courier, admit) {
           state.outbox = [...state.outbox ?? [], { id: reportId, name, text: task2.state.checkpoint.text }];
         }
         const active = state.courier === void 0 ? void 0 : await tx.task(state.courier);
-        const isIdle = !active || active.state.status !== "pending" && active.state.status !== "running" && active.state.status !== "waiting";
-        if (isIdle) state.courier = await tx.createTask(courier, null, BACKGROUND);
+        if (courierIsIdle(active)) state.courier = await tx.createTask(courier, null, BACKGROUND);
         return { status: "terminal", outcome: { status: "completed", result: null } };
       }, context)
     },
@@ -156,10 +159,7 @@ function courierFor(admit) {
     version: 1,
     initial: () => ({ phase: "gather" }),
     phases: {
-      gather: async (_task, runtime, context) => {
-        await runtime.sleep(runtime.now() + GATHER_MS, context);
-        await runtime.commit(() => ({ status: "running", checkpoint: { phase: "next" } }), context);
-      },
+      gather: (_task, runtime, context) => runtime.sleepUntil(runtime.now() + GATHER_MS, { phase: "next" }, context),
       next: async (task2, runtime, context) => runtime.commit(async (tx) => {
         const state = await tx.doc(SubagentsDoc, runtime.conversationId);
         if (state.deliveryHold !== void 0) return { status: "running", checkpoint: { phase: "hold" } };
@@ -1037,6 +1037,28 @@ async function firstInput(harness, id) {
   return titleOf(first);
 }
 
+// src/runner/compaction-hooks.ts
+var CompactionSideEffectError = class extends Error {
+  code;
+  operation;
+  constructor(operation, cause) {
+    const code = operation === "compact_context" ? "CONTEXT_RETRIEVAL_FAILED" : "COMPACTION_HOOK_FAILED";
+    super(`${operation} failed (${code})`, { cause });
+    this.name = "CompactionSideEffectError";
+    this.operation = operation;
+    this.code = code;
+  }
+};
+async function runCompactionSideEffect(operation, action, notice) {
+  try {
+    return { status: "succeeded", value: await action() };
+  } catch (cause) {
+    const error = new CompactionSideEffectError(operation, cause);
+    notice("warning", error.message);
+    return { status: "failed", error };
+  }
+}
+
 // src/runner/runtime-controller.ts
 import { clampThinkingLevel, getSupportedThinkingLevels as getSupportedThinkingLevels2 } from "@earendil-works/pi-ai";
 function createDurableController(ctx) {
@@ -1095,40 +1117,38 @@ function createDurableController(ctx) {
           );
         }
       }
-      return watchAnswer(await ctx.getCurrent().submit({ type: "input", content: input, whenBusy }, runtimeContext));
+      return watchAnswer(await ctx.bindings.current.submit({ type: "input", content: input, whenBusy }, runtimeContext));
     }),
     compact: (instructions) => command(async () => {
-      if (ctx.extensionRunner) {
-        try {
-          const ctxView = await ctx.getCurrent().context(runtimeContext).catch(() => void 0);
-          const msgs = ctxView?.messages ? [...ctxView.messages] : [];
-          const entries = ctxView?.entries ? [...ctxView.entries] : [];
-          await ctx.extensionRunner.emit({
+      const extensionRunner = ctx.extensionRunner;
+      if (extensionRunner) {
+        const context = await runCompactionSideEffect("compact_context", () => ctx.bindings.current.context(runtimeContext), ctx.notice);
+        if (context.status === "succeeded") {
+          const ctxView = context.value;
+          const msgs = [...ctxView.messages], entries = [...ctxView.entries];
+          await runCompactionSideEffect("session_before_compact", () => extensionRunner.emit({
             type: "session_before_compact",
-            preparation: { firstKeptEntryId: ctxView?.head?.id !== void 0 ? String(ctxView.head.id) : "", messagesToSummarize: msgs, turnPrefixMessages: [], isSplitTurn: false, tokensBefore: 0, fileOps: { read: /* @__PURE__ */ new Set(), written: /* @__PURE__ */ new Set(), edited: /* @__PURE__ */ new Set() }, settings: {} },
+            preparation: { firstKeptEntryId: ctxView.head?.id !== void 0 ? String(ctxView.head.id) : "", messagesToSummarize: msgs, turnPrefixMessages: [], isSplitTurn: false, tokensBefore: 0, fileOps: { read: /* @__PURE__ */ new Set(), written: /* @__PURE__ */ new Set(), edited: /* @__PURE__ */ new Set() }, settings: {} },
             branchEntries: entries,
             customInstructions: instructions,
             reason: "manual",
             willRetry: false,
             signal: new AbortController().signal
-          });
-        } catch (err) {
-          ctx.notice("warning", `session_before_compact error: ${err instanceof Error ? err.message : String(err)}`);
+          }), ctx.notice);
         }
       }
-      const id = await ctx.getCurrent().compact(instructions, runtimeContext);
+      const id = await ctx.bindings.current.compact(instructions, runtimeContext);
       void ctx.opened.waitForTask(id, runtimeContext).then(async (receipt) => {
         const outcome = receipt.state.outcome;
         if (outcome.status === "completed") {
-          if (ctx.extensionRunner) {
-            void ctx.extensionRunner.emit({
+          if (extensionRunner) {
+            void runCompactionSideEffect("session_compact", () => extensionRunner.emit({
               type: "session_compact",
               compactionEntry: { id: outcome.result?.entryId ?? "", type: "compaction", summary: "", tokensBefore: 0, tokensAfter: 0 },
               fromExtension: false,
               reason: "manual",
               willRetry: false
-            }).catch(() => {
-            });
+            }), ctx.notice).catch(ctx.fail);
           }
           const { entryId, submissionId } = outcome.result;
           const status = submissionId === void 0 ? void 0 : (await (await ctx.opened.submission(submissionId, runtimeContext))?.status(runtimeContext))?.status;
@@ -1139,53 +1159,173 @@ function createDurableController(ctx) {
         } else {
           ctx.notice("error", `Compaction ${outcome.status}: ${outcome.error?.message ?? outcome.reason ?? ""}`);
         }
-      }, ctx.fail);
+      }).catch(ctx.fail);
     }),
-    abort: () => ctx.getCurrent().abort(runtimeContext).catch(ctx.fail),
+    abort: () => ctx.bindings.current.abort(runtimeContext).catch(ctx.fail),
     cycleThinking: () => command(async () => {
       const model = agentModel();
       if (!model.reasoning) throw new Error("Current model does not support thinking");
       const levels = getSupportedThinkingLevels2(model), level = agentOf(ctx.getState().conversation).thinkingLevel ?? "off";
-      await ctx.getCurrent().configure({ thinkingLevel: levels[(levels.indexOf(level) + 1) % levels.length] ?? "off" }, runtimeContext);
+      await ctx.bindings.current.configure({ thinkingLevel: levels[(levels.indexOf(level) + 1) % levels.length] ?? "off" }, runtimeContext);
     }),
     setThinkingLevel: (targetLevel) => command(async () => {
       const model = agentModel();
       if (!model.reasoning) {
         if (targetLevel === "off" || targetLevel === "none") {
-          return void await ctx.getCurrent().configure({ thinkingLevel: "off" }, runtimeContext);
+          return void await ctx.bindings.current.configure({ thinkingLevel: "off" }, runtimeContext);
         }
         throw new Error("Current model does not support thinking");
       }
-      await ctx.getCurrent().configure({ thinkingLevel: clampThinkingLevel(model, targetLevel) }, runtimeContext);
+      await ctx.bindings.current.configure({ thinkingLevel: clampThinkingLevel(model, targetLevel) }, runtimeContext);
     }),
     setModel: (ref) => command(async () => {
       const model = ctx.modelRuntime.getModel(ref.provider, ref.modelId);
       if (model === void 0) throw new Error(`Unknown model: ${ref.provider}/${ref.modelId}`);
       ctx.setActiveModelRef(ref);
       const thinking = agentOf(ctx.getState().conversation).thinkingLevel ?? "off";
-      await ctx.getCurrent().configure({ model: ref, thinkingLevel: clampThinkingLevel(model, thinking) }, runtimeContext);
+      await ctx.bindings.current.configure({ model: ref, thinkingLevel: clampThinkingLevel(model, thinking) }, runtimeContext);
     }),
     toggleTasks: () => command(async () => {
-      if (ctx.getTasks() !== void 0) {
-        ctx.closeTasks();
-        ctx.update({ tasks: void 0 });
-        return;
-      }
-      const graph = await ctx.opened.taskGraph(runtimeContext);
-      ctx.setTasks(graph);
-      ctx.setUnsubscribeTasks(graph.subscribe((value) => ctx.update({ tasks: value })));
+      if (ctx.bindings.tasksOpen) return ctx.bindings.closeTasks();
+      ctx.bindings.attachTasks(await ctx.opened.taskGraph(runtimeContext));
     }),
     switchConversation: (id) => command(async () => {
       const next = await ctx.opened.conversation(id, runtimeContext);
       if (next === void 0) throw new Error(`Conversation ${id} does not exist`);
-      const nextState = await next.viewState(runtimeContext);
-      ctx.getUnsubscribeConversation()();
-      ctx.getConversationState().dispose();
-      ctx.setCurrent(next);
-      ctx.setConversationState(nextState);
-      ctx.setUnsubscribeConversation(nextState.subscribe((value) => ctx.update({ conversation: value })));
+      ctx.bindings.bindConversation(next, await next.viewState(runtimeContext));
     })
   };
+}
+
+// src/runner/runtime-bindings.ts
+var RuntimeBindings = class {
+  conversation;
+  view;
+  unsubscribe;
+  tasks;
+  unsubscribeTasks;
+  epoch = 0;
+  taskEpoch = 0;
+  closed = false;
+  update;
+  constructor(conversation, view, update) {
+    this.conversation = conversation;
+    this.view = view;
+    this.update = update;
+    try {
+      this.unsubscribe = view.subscribe((value) => {
+        if (!this.closed && this.epoch === 0) this.update({ conversation: value });
+      });
+    } catch (cause) {
+      try {
+        view.dispose();
+      } catch (cleanup) {
+        throw new AggregateError([cause, cleanup], "SUBSCRIBE_FAILED");
+      }
+      throw new Error("SUBSCRIBE_FAILED", { cause });
+    }
+  }
+  get current() {
+    return this.conversation;
+  }
+  get tasksOpen() {
+    return this.tasks !== void 0;
+  }
+  bindConversation(conversation, view) {
+    if (this.closed) {
+      view.dispose();
+      throw new Error("BINDING_CLOSED");
+    }
+    if (this.view === view) return;
+    const epoch = this.epoch + 1;
+    let unsubscribe;
+    try {
+      unsubscribe = view.subscribe((value) => {
+        if (!this.closed && this.epoch === epoch) this.update({ conversation: value });
+      });
+    } catch (cause) {
+      view.dispose();
+      throw new Error("SUBSCRIBE_FAILED", { cause });
+    }
+    const previous = this.view, previousUnsubscribe = this.unsubscribe;
+    this.view = view;
+    this.conversation = conversation;
+    this.unsubscribe = unsubscribe;
+    this.epoch = epoch;
+    try {
+      previousUnsubscribe();
+    } finally {
+      previous.dispose();
+    }
+    this.update({ conversation: view.value });
+  }
+  attachTasks(view) {
+    if (this.closed) {
+      view.dispose();
+      throw new Error("BINDING_CLOSED");
+    }
+    if (this.tasks === view) return;
+    const epoch = this.taskEpoch + 1;
+    let unsubscribe;
+    try {
+      unsubscribe = view.subscribe((value) => {
+        if (!this.closed && this.taskEpoch === epoch) this.update({ tasks: value });
+      });
+    } catch (cause) {
+      view.dispose();
+      throw new Error("SUBSCRIBE_FAILED", { cause });
+    }
+    const previous = this.tasks, previousUnsubscribe = this.unsubscribeTasks;
+    this.tasks = view;
+    this.unsubscribeTasks = unsubscribe;
+    this.taskEpoch = epoch;
+    try {
+      previousUnsubscribe?.();
+    } finally {
+      previous?.dispose();
+    }
+    this.update({ tasks: view.value });
+  }
+  closeTasks() {
+    if (!this.tasks) return;
+    this.taskEpoch++;
+    const previous = this.tasks, unsubscribe = this.unsubscribeTasks;
+    this.tasks = void 0;
+    this.unsubscribeTasks = void 0;
+    try {
+      unsubscribe?.();
+    } finally {
+      previous.dispose();
+    }
+    if (!this.closed) this.update({ tasks: void 0 });
+  }
+  close() {
+    if (this.closed) return;
+    this.closed = true;
+    this.epoch++;
+    try {
+      this.unsubscribe();
+    } finally {
+      try {
+        this.view.dispose();
+      } finally {
+        this.closeTasks();
+      }
+    }
+  }
+};
+
+// src/runner/runtime-cleanup.ts
+async function closeRuntimeResources(operations) {
+  const failures = [];
+  for (const operation of operations) {
+    try {
+      await operation();
+    } catch (cause) {
+      failures.push(cause);
+    }
+  }
+  if (failures.length) throw new AggregateError(failures, "RUNTIME_CLEANUP_FAILED");
 }
 
 // src/runner/runtime-loader.ts
@@ -1770,6 +1910,7 @@ var SubagentPolicyAckDoc = defineDoc2({
   kind: "bb.subagent-policy-ack",
   version: 1,
   scope: "session",
+  checkpointWhen: () => false,
   initial: () => ({ record: null })
 });
 async function loadSubagentPolicyHolder(harness) {
@@ -1983,8 +2124,7 @@ async function openDurable(options = {}) {
       }
     }
     const summaries = await loadSummaries(harness, root.id);
-    let current = root;
-    let conversation = await root.viewState(runtimeContext);
+    const conversation = await root.viewState(runtimeContext);
     const enabled = settingsManager.getEnabledModels();
     const scoped = enabled?.length ? await resolveModelScopeWithDiagnostics2(enabled, modelRuntime) : void 0;
     const scopedList = scoped?.scopedModels?.length ? scoped.scopedModels.map((sm) => sm.model) : modelRuntime.getAvailableSnapshot();
@@ -2021,7 +2161,7 @@ async function openDurable(options = {}) {
       }
     }
     activeEnvState.setNoticeForwarder?.((level, message) => notice(level, message));
-    let unsubscribeConversation = conversation.subscribe((val) => update({ conversation: val }));
+    const bindings = new RuntimeBindings(root, conversation, update);
     const unsubscribeCommits = harness.subscribeCommits((pub) => {
       let convs = state.conversations;
       for (const ch of pub.changes) {
@@ -2034,42 +2174,14 @@ async function openDurable(options = {}) {
       }
       if (convs !== state.conversations) update({ conversations: convs });
     });
-    let tasks;
-    let unsubscribeTasks = () => {
-    };
-    const closeTasks = () => {
-      unsubscribeTasks();
-      tasks?.dispose();
-      tasks = void 0;
-    };
     const opened = harness;
     const controller = createDurableController({
-      getCurrent: () => current,
-      setCurrent: (c) => {
-        current = c;
-      },
-      getConversationState: () => conversation,
-      setConversationState: (cs) => {
-        conversation = cs;
-      },
-      getUnsubscribeConversation: () => unsubscribeConversation,
-      setUnsubscribeConversation: (fn) => {
-        unsubscribeConversation = fn;
-      },
+      bindings,
       opened,
       modelRuntime,
       getState: () => state,
-      update,
       notice,
       fail,
-      getTasks: () => tasks,
-      setTasks: (t) => {
-        tasks = t;
-      },
-      setUnsubscribeTasks: (fn) => {
-        unsubscribeTasks = fn;
-      },
-      closeTasks,
       setActiveModelRef: (ref) => activeEnvState.setActiveModelRef(ref),
       extensionRunner: activeEnvState.extensionRunner,
       dynamicSections: activeEnvState.dynamicSections,
@@ -2112,19 +2224,19 @@ async function openDurable(options = {}) {
       harness,
       subagentPolicyHolder: activeEnvState.subagentPolicyHolder,
       close() {
-        return closing ??= (async () => {
-          unsubscribeConversation();
-          unsubscribeCommits();
-          conversation.dispose();
-          closeTasks();
-          try {
-            await opened.close(runtimeContext);
-            await envs.cleanup(runtimeContext);
+        return closing ??= closeRuntimeResources([
+          () => {
+            listeners.clear();
+            bindings.close();
+          },
+          unsubscribeCommits,
+          () => opened.close(runtimeContext),
+          () => envs.cleanup(runtimeContext),
+          async () => {
             await activeEnvState.cleanup?.();
-          } finally {
-            await location.release();
-          }
-        })();
+          },
+          () => location.release()
+        ]);
       }
     };
   } catch (error) {
@@ -3040,7 +3152,7 @@ function parseCliArgs(argv2) {
 }
 
 // src/runner/session-commands.ts
-import { ROOT_CONVERSATION_ID as ROOT_CONVERSATION_ID3 } from "@earendil-works/pi-durable";
+import { ROOT_CONVERSATION_ID as ROOT_CONVERSATION_ID4 } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT as BACKGROUND_CONTEXT3 } from "@earendil-works/chord/context";
 
 // src/runner/binding-docs.ts
@@ -3049,6 +3161,7 @@ var BindingDoc = defineDoc3({
   kind: "bb.native-child-binding",
   version: 2,
   scope: "conversation",
+  checkpointWhen: () => false,
   history: "latest",
   fork: "initial",
   initial: () => ({ binding: null })
@@ -3057,6 +3170,7 @@ var BindingIndexDoc = defineDoc3({
   kind: "bb.native-child-binding-index",
   version: 1,
   scope: "session",
+  checkpointWhen: () => false,
   initial: () => ({ byIdentity: {}, byThreadId: {} })
 });
 function identityKey(identity) {
@@ -3140,14 +3254,31 @@ async function handleBindingCommand(cmd, durable, responder) {
 }
 
 // src/runner/session-state-commands.ts
-import { ROOT_CONVERSATION_ID as ROOT_CONVERSATION_ID2 } from "@earendil-works/pi-durable";
+import { ROOT_CONVERSATION_ID as ROOT_CONVERSATION_ID3 } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT as BACKGROUND_CONTEXT2 } from "@earendil-works/chord/context";
 import { estimateContextTokens } from "@earendil-works/pi-ai/utils/estimate";
+
+// src/runner/conversation-id.ts
+import { ROOT_CONVERSATION_ID as ROOT_CONVERSATION_ID2 } from "@earendil-works/pi-durable";
+function parseConversationId(id) {
+  if (id === void 0 || id === null) return ROOT_CONVERSATION_ID2;
+  const trimmed = typeof id === "string" ? id.trim() : id;
+  if (trimmed === "") {
+    throw new Error(`Invalid conversationId: ${String(id)}`);
+  }
+  const num = typeof trimmed === "number" ? trimmed : Number(trimmed);
+  if (!Number.isInteger(num) || num <= 0) {
+    throw new Error(`Invalid conversationId: ${String(id)}`);
+  }
+  return num;
+}
+
+// src/runner/session-state-commands.ts
 async function handleSessionStateCommand(cmd, durable, modelRuntime, args2, respond) {
   if (cmd.type === "get_state") {
     const targetId = parseConversationId(cmd.conversationId);
     let agentDoc;
-    if (targetId !== ROOT_CONVERSATION_ID2) {
+    if (targetId !== ROOT_CONVERSATION_ID3) {
       const conv = await durable.harness.conversation(targetId, BACKGROUND_CONTEXT2);
       if (!conv) {
         throw new Error(`Conversation not found: ${cmd.conversationId}`);
@@ -3174,7 +3305,7 @@ async function handleSessionStateCommand(cmd, durable, modelRuntime, args2, resp
   if (cmd.type === "get_session_stats") {
     const targetId = parseConversationId(cmd.conversationId);
     let agentDoc;
-    if (targetId !== ROOT_CONVERSATION_ID2) {
+    if (targetId !== ROOT_CONVERSATION_ID3) {
       const conv = await durable.harness.conversation(targetId, BACKGROUND_CONTEXT2);
       const agentState = conv ? await conv.agent(BACKGROUND_CONTEXT2) : void 0;
       agentDoc = agentState ?? {};
@@ -3212,18 +3343,6 @@ async function handleSessionStateCommand(cmd, durable, modelRuntime, args2, resp
 }
 
 // src/runner/session-commands.ts
-function parseConversationId(id) {
-  if (id === void 0 || id === null) return ROOT_CONVERSATION_ID3;
-  const trimmed = typeof id === "string" ? id.trim() : id;
-  if (trimmed === "") {
-    throw new Error(`Invalid conversationId: ${String(id)}`);
-  }
-  const num = typeof trimmed === "number" ? trimmed : Number(trimmed);
-  if (!Number.isInteger(num) || num <= 0) {
-    throw new Error(`Invalid conversationId: ${String(id)}`);
-  }
-  return num;
-}
 function toDurableInput(message, images) {
   const msg = message ?? "";
   const imgs = Array.isArray(images) ? images : [];
@@ -3248,7 +3367,7 @@ async function handleActiveSessionCommand(cmd, durable, modelRuntime, args2, res
       respond.success(cmd.id, "prompt");
       const behavior = cmd.streamingBehavior || "followUp";
       const targetId = parseConversationId(cmd.conversationId);
-      if (targetId !== ROOT_CONVERSATION_ID3) {
+      if (targetId !== ROOT_CONVERSATION_ID4) {
         const conv = await durable.harness.conversation(targetId, BACKGROUND_CONTEXT3);
         if (!conv) {
           throw new Error(`Conversation not found: ${cmd.conversationId}`);
@@ -3267,7 +3386,7 @@ async function handleActiveSessionCommand(cmd, durable, modelRuntime, args2, res
       }
       respond.success(cmd.id, "steer");
       const targetId = parseConversationId(cmd.conversationId);
-      if (targetId !== ROOT_CONVERSATION_ID3) {
+      if (targetId !== ROOT_CONVERSATION_ID4) {
         const conv = await durable.harness.conversation(targetId, BACKGROUND_CONTEXT3);
         if (!conv) {
           throw new Error(`Conversation not found: ${cmd.conversationId}`);
@@ -3280,7 +3399,7 @@ async function handleActiveSessionCommand(cmd, durable, modelRuntime, args2, res
     }
     case "abort": {
       const targetId = parseConversationId(cmd.conversationId);
-      if (targetId !== ROOT_CONVERSATION_ID3) {
+      if (targetId !== ROOT_CONVERSATION_ID4) {
         const conv = await durable.harness.conversation(targetId, BACKGROUND_CONTEXT3);
         if (conv) {
           await conv.abort(BACKGROUND_CONTEXT3);
@@ -3336,6 +3455,60 @@ async function handleActiveSessionCommand(cmd, durable, modelRuntime, args2, res
   }
 }
 
+// src/contracts/runner-command.ts
+import { z as z3 } from "zod";
+
+// src/contracts/wire-context.ts
+import { z as z2 } from "zod";
+var conversationIdSchema = z2.union([z2.number().int().positive(), z2.string().regex(/^[1-9]\d*$/)]);
+var cumulativeUsageSchema = z2.object({
+  totalTokens: z2.number(),
+  inputTokens: z2.number(),
+  outputTokens: z2.number(),
+  cachedInputTokens: z2.number().optional(),
+  cacheWriteInputTokens: z2.number().optional()
+}).passthrough();
+var wireContextSchema = z2.object({
+  parentRef: z2.string().optional(),
+  conversationId: conversationIdSchema.optional(),
+  providerCheckpointId: z2.string().optional(),
+  cumulativeUsage: cumulativeUsageSchema.optional(),
+  aborted: z2.boolean().optional(),
+  stopReason: z2.string().optional(),
+  errorMessage: z2.string().optional()
+}).passthrough();
+
+// src/contracts/runner-command.ts
+var runnerCommandSchema = z3.object({
+  type: z3.enum(["prompt", "steer", "abort", "compact", "set_subagent_policy", "get_available_models", "set_model", "set_thinking_level", "get_state", "get_session_stats", "register_binding", "get_all_bindings"]),
+  id: z3.string().optional(),
+  message: z3.string().optional(),
+  images: z3.array(z3.object({ type: z3.literal("image"), data: z3.string(), mimeType: z3.string() })).optional(),
+  streamingBehavior: z3.enum(["steer", "followUp"]).optional(),
+  provider: z3.string().optional(),
+  modelId: z3.string().optional(),
+  instructions: z3.string().optional(),
+  level: z3.enum(["off", "minimal", "low", "medium", "high", "xhigh"]).optional(),
+  conversationId: conversationIdSchema.optional(),
+  bbThreadId: z3.string().optional(),
+  parentThreadId: z3.string().optional(),
+  sessionId: z3.string().optional(),
+  policyRecord: z3.unknown().optional()
+}).passthrough();
+var knownCommandTypes = new Set(runnerCommandSchema.shape.type.options);
+var runnerRequestHeaderSchema = z3.object({ type: z3.string().min(1), id: z3.string().optional() }).passthrough();
+function parseRunnerCommand(line) {
+  let value;
+  try {
+    value = JSON.parse(line);
+  } catch (cause) {
+    throw new Error("INVALID_COMMAND_JSON", { cause });
+  }
+  const parsed = runnerCommandSchema.safeParse(value);
+  if (!parsed.success) throw new Error("INVALID_COMMAND", { cause: parsed.error });
+  return parsed.data;
+}
+
 // src/runner/version.ts
 import { existsSync as existsSync2, readFileSync as readFileSync2 } from "node:fs";
 import { createRequire } from "node:module";
@@ -3375,6 +3548,23 @@ function getPiDurableVersion() {
 // src/runner/bridge-channel.ts
 import { Socket } from "node:net";
 import { writeSync } from "node:fs";
+
+// src/contracts/runner-channel.ts
+import { z as z4 } from "zod";
+var runnerChannelSchema = z4.discriminatedUnion("kind", [
+  z4.object({ kind: z4.literal("ready"), ready: z4.boolean().optional() }).passthrough(),
+  z4.object({ kind: z4.literal("model-scope"), scopedModelIds: z4.array(z4.string()).optional(), defaultModelId: z4.string().optional() }).passthrough(),
+  z4.object({ kind: z4.literal("reply"), id: z4.union([z4.string(), z4.number()]), result: z4.unknown().optional(), error: z4.unknown().optional() }).passthrough()
+]);
+var runnerBridgeRequestSchema = z4.object({
+  kind: z4.literal("request"),
+  id: z4.union([z4.string(), z4.number()]),
+  method: z4.string(),
+  params: z4.unknown().optional()
+}).passthrough();
+var knownChannelKinds = new Set(runnerChannelSchema.options.map((schema) => schema.shape.kind.value));
+
+// src/runner/bridge-channel.ts
 var CHILD_TO_BRIDGE_FD = 3;
 var BRIDGE_TO_CHILD_FD = 4;
 function createBridgeSender() {
@@ -3405,7 +3595,10 @@ function initBridgeInboundChannel(modelScope, sendToBridge2) {
       const trimmed = line.trim();
       if (!trimmed) return;
       try {
-        const req = JSON.parse(trimmed);
+        const value = JSON.parse(trimmed);
+        const result = runnerBridgeRequestSchema.safeParse(value);
+        if (!result.success) throw new Error("INVALID_BRIDGE_REQUEST");
+        const req = result.data;
         if (req.kind === "request") {
           if (req.method === "model-scope") {
             sendToBridge2({ kind: "reply", id: req.id, result: modelScope });
@@ -3418,7 +3611,8 @@ function initBridgeInboundChannel(modelScope, sendToBridge2) {
           }
         }
       } catch (err) {
-        console.error("[Runner] Failed to parse or process bridge channel message:", err);
+        console.error(JSON.stringify({ component: "RunnerBridgeChannel", operation: "inbound_request", code: "INVALID_MESSAGE", severity: "error", outcome: "failed" }));
+        bridgeIn.destroy();
       }
     });
   } catch (err) {
@@ -3431,7 +3625,7 @@ function initBridgeInboundChannel(modelScope, sendToBridge2) {
 
 // src/runner/subagent-watcher.ts
 import {
-  ROOT_CONVERSATION_ID as ROOT_CONVERSATION_ID4,
+  ROOT_CONVERSATION_ID as ROOT_CONVERSATION_ID5,
   watchEvents
 } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT as BACKGROUND_CONTEXT4 } from "@earendil-works/chord/context";
@@ -3476,7 +3670,7 @@ async function startSubagentWatcher(harness, adapter, getCurrentView) {
       console.error(`[SubagentWatcher] Failed to attach stream for conversation ${conversationId}:`, err);
     }
   };
-  await attach(ROOT_CONVERSATION_ID4);
+  await attach(ROOT_CONVERSATION_ID5);
   return {
     close: () => {
       for (const stream of activeStreams.values()) {
@@ -3655,7 +3849,436 @@ function startTaskGraphBridge(view, output2, debounceMs = DEFAULT_TASK_GRAPH_DEB
   return { unsubscribe };
 }
 
+// src/runtime-graph/schema.ts
+import { z as z5 } from "zod";
+var MAX_LIVE_NODES = 512;
+var MAX_RECEIPTS = 128;
+var MAX_LABEL_LENGTH = 160;
+var MAX_PREVIEW_LENGTH = 500;
+var MAX_SNAPSHOT_BYTES = 1048576;
+var TASK_OUTCOMES = ["completed", "failed", "aborted", "faulted", "orphaned"];
+var taskOutcomeSchema = z5.enum(TASK_OUTCOMES);
+var LIVE_TASK_STATUSES = ["pending", "running", "waiting", "sleeping", "completing"];
+var liveTaskStatusSchema = z5.enum(LIVE_TASK_STATUSES);
+var BLOCKED_REASONS = ["missing_task", "task_too_old", "migration_failed", "restart_limit"];
+var blockedReasonSchema = z5.enum(BLOCKED_REASONS);
+var graphScopeSchema = z5.object({
+  sessionId: z5.string().min(1).max(256),
+  rootConversationId: z5.string().min(1).max(64),
+  buildId: z5.string().min(1).max(64)
+});
+var graphObservationSchema = z5.object({
+  epoch: z5.string().min(1).max(64),
+  revision: z5.number().int().nonnegative(),
+  observedAt: z5.number().int().positive(),
+  completeness: z5.enum(["complete", "limited"])
+});
+var runtimeTaskStateSchema = z5.discriminatedUnion("status", [
+  z5.object({
+    status: z5.literal("pending"),
+    phase: z5.string().max(64).optional()
+  }),
+  z5.object({
+    status: z5.literal("running"),
+    phase: z5.string().max(64).optional()
+  }),
+  z5.object({
+    status: z5.literal("waiting"),
+    phase: z5.string().max(64).optional(),
+    on: z5.array(z5.number().int().positive()).max(MAX_LIVE_NODES),
+    policy: z5.enum(["failFast", "allSettled", "all", "first"]).optional()
+  }),
+  z5.object({
+    status: z5.literal("sleeping"),
+    phase: z5.string().max(64).optional(),
+    until: z5.number().int().positive()
+  }),
+  z5.object({
+    status: z5.literal("completing"),
+    outcome: taskOutcomeSchema
+  })
+]);
+var runtimeTaskNodeSchema = z5.object({
+  id: z5.number().int().positive(),
+  kind: z5.string().min(1).max(64),
+  conversationId: z5.number().int().positive(),
+  owner: z5.number().int().positive().optional(),
+  background: z5.boolean(),
+  abortRequested: z5.boolean(),
+  state: runtimeTaskStateSchema,
+  blocked: blockedReasonSchema.optional(),
+  label: z5.string().min(1).max(MAX_LABEL_LENGTH),
+  startedAt: z5.number().int().positive().optional(),
+  endedAt: z5.number().int().positive().optional(),
+  durationMs: z5.number().int().nonnegative().optional()
+});
+var runtimeConversationNodeSchema = z5.object({
+  id: z5.number().int().positive(),
+  owner: z5.object({
+    conversationId: z5.number().int().positive(),
+    taskId: z5.number().int().positive()
+  }).optional(),
+  parent: z5.object({
+    conversationId: z5.number().int().positive(),
+    at: z5.number().int().positive()
+  }).optional()
+});
+var runtimeTaskReceiptSchema = z5.object({
+  taskId: z5.number().int().positive(),
+  conversationId: z5.number().int().positive(),
+  kind: z5.string().min(1).max(64),
+  outcome: taskOutcomeSchema,
+  isToolError: z5.boolean().optional(),
+  error: z5.object({
+    message: z5.string().max(1024),
+    code: z5.string().max(64).optional()
+  }).optional(),
+  endedAt: z5.number().int().positive(),
+  durationMs: z5.number().int().nonnegative().optional(),
+  preview: z5.string().max(MAX_PREVIEW_LENGTH).optional()
+});
+var runtimeGraphStatsSchema = z5.object({
+  liveCount: z5.number().int().nonnegative(),
+  terminalCount: z5.number().int().nonnegative(),
+  totalCount: z5.number().int().nonnegative()
+});
+function getUtf8ByteLength(str) {
+  if (typeof Buffer !== "undefined") {
+    return Buffer.byteLength(str, "utf8");
+  }
+  if (typeof TextEncoder !== "undefined") {
+    return new TextEncoder().encode(str).length;
+  }
+  let bytes = 0;
+  for (let i = 0; i < str.length; i++) {
+    const code = str.charCodeAt(i);
+    if (code <= 127) bytes += 1;
+    else if (code <= 2047) bytes += 2;
+    else if (code >= 55296 && code <= 56319) {
+      bytes += 4;
+      i++;
+    } else bytes += 3;
+  }
+  return bytes;
+}
+var runtimeGraphSnapshotSchema = z5.object({
+  version: z5.literal(1),
+  scope: graphScopeSchema,
+  observation: graphObservationSchema,
+  nodes: z5.record(z5.string(), runtimeTaskNodeSchema).refine((nodes) => Object.keys(nodes).length <= MAX_LIVE_NODES, {
+    message: `Live nodes exceed maximum of ${MAX_LIVE_NODES}`
+  }),
+  conversations: z5.record(z5.string(), runtimeConversationNodeSchema),
+  receipts: z5.array(runtimeTaskReceiptSchema).max(MAX_RECEIPTS),
+  stats: runtimeGraphStatsSchema
+}).refine(
+  (snapshot) => {
+    try {
+      const json = JSON.stringify(snapshot);
+      return getUtf8ByteLength(json) <= MAX_SNAPSHOT_BYTES;
+    } catch {
+      return false;
+    }
+  },
+  { message: "Runtime graph snapshot exceeds 1 MiB payload limit" }
+);
+
+// src/runner/runtime-graph-receipts.ts
+var RuntimeGraphReceiptsCollector = class {
+  capacity;
+  receipts = [];
+  knownTaskIds = /* @__PURE__ */ new Set();
+  constructor(capacity = MAX_RECEIPTS) {
+    this.capacity = capacity;
+  }
+  recordTerminal(task, options) {
+    const taskId = Number(task.id);
+    let outcome = "completed";
+    let error;
+    const state = task.state;
+    if (state.status === "terminal") {
+      const taskOutcome = state.outcome;
+      outcome = taskOutcome.status;
+      if ("error" in taskOutcome && taskOutcome.error) {
+        const err = taskOutcome.error;
+        error = {
+          message: String(err.message ?? "Task execution failed"),
+          code: err.code ? String(err.code) : void 0
+        };
+      } else if ("reason" in taskOutcome && taskOutcome.reason) {
+        error = { message: String(taskOutcome.reason) };
+      }
+    } else if (state.status === "completing") {
+      outcome = state.outcome ?? "completed";
+    }
+    let preview = options?.preview;
+    if (preview && preview.length > MAX_PREVIEW_LENGTH) {
+      preview = preview.slice(0, MAX_PREVIEW_LENGTH);
+    }
+    const durationMs = options?.durationMs ?? (task.endedAt && task.startedAt && task.endedAt >= task.startedAt ? task.endedAt - task.startedAt : void 0);
+    const receipt = {
+      taskId,
+      conversationId: Number(task.conversationId),
+      kind: task.kind,
+      outcome,
+      isToolError: options?.isToolError,
+      error,
+      endedAt: task.endedAt ?? Date.now(),
+      durationMs,
+      preview
+    };
+    this.pushReceipt(receipt);
+    return receipt;
+  }
+  hydrateFromScan(tasks) {
+    for (const task of tasks) {
+      if (task.state.status === "terminal") {
+        this.recordTerminal(task);
+      }
+    }
+  }
+  getReceipts() {
+    return [...this.receipts];
+  }
+  hasReceipt(taskId) {
+    return this.knownTaskIds.has(taskId);
+  }
+  pushReceipt(receipt) {
+    const existingIndex = this.receipts.findIndex((r) => r.taskId === receipt.taskId);
+    if (existingIndex !== -1) {
+      this.receipts[existingIndex] = receipt;
+      return;
+    }
+    if (this.receipts.length >= this.capacity) {
+      const evicted = this.receipts.shift();
+      if (evicted) {
+        this.knownTaskIds.delete(evicted.taskId);
+      }
+    }
+    this.receipts.push(receipt);
+    this.knownTaskIds.add(receipt.taskId);
+  }
+};
+
+// src/runner/runtime-graph-conversations.ts
+var RuntimeGraphConversations = class {
+  known = /* @__PURE__ */ new Map();
+  constructor(rootConversationId) {
+    this.known.set(rootConversationId, { id: Number(rootConversationId) });
+  }
+  recordFromLiveNode(convId, id, ownedConversations) {
+    const convStr = String(convId);
+    if (!this.known.has(convStr)) {
+      this.known.set(convStr, { id: convId });
+    }
+    for (const ownedConvId of ownedConversations ?? []) {
+      const cid = Number(ownedConvId);
+      this.known.set(String(cid), {
+        id: cid,
+        owner: { conversationId: convId, taskId: id }
+      });
+    }
+  }
+  recordConversation(conv) {
+    const cid = Number(conv.id);
+    const existing = this.known.get(String(cid)) ?? { id: cid };
+    const owner = conv.owner ? { conversationId: Number(conv.owner.conversationId), taskId: Number(conv.owner.taskId) } : existing.owner;
+    const parent = conv.parent ? { conversationId: Number(conv.parent.conversationId), at: Number(conv.parent.at) } : existing.parent;
+    this.known.set(String(cid), { id: cid, ...owner ? { owner } : {}, ...parent ? { parent } : {} });
+  }
+  snapshot() {
+    return Object.fromEntries(this.known);
+  }
+};
+
+// src/runner/runtime-graph-mapper.ts
+function extractTaskGraph(current) {
+  if (!current || typeof current !== "object") return { tasks: {} };
+  const obj = current;
+  if ("tasks" in obj && obj.tasks && typeof obj.tasks === "object") {
+    const inner = obj.tasks;
+    if ("tasks" in inner && inner.tasks && typeof inner.tasks === "object") {
+      return inner;
+    }
+    return current;
+  }
+  return { tasks: {} };
+}
+function mapTaskGraphNodeState(state) {
+  switch (state.status) {
+    case "pending":
+    case "running":
+      return { status: state.status, phase: state.phase };
+    case "waiting":
+      return {
+        status: "waiting",
+        phase: state.phase,
+        on: state.on ? state.on.map(Number) : [],
+        policy: state.policy
+      };
+    case "sleeping":
+      return { status: "sleeping", phase: state.phase, until: state.until };
+    case "completing":
+      return { status: "completing", outcome: state.outcome };
+  }
+}
+
+// src/runner/runtime-graph-source.ts
+var RuntimeGraphSource = class {
+  viewSource;
+  scope;
+  debounceMs;
+  maxDebounceMs;
+  clock;
+  receipts;
+  harness;
+  names = new TaskNames();
+  listeners = /* @__PURE__ */ new Set();
+  epoch;
+  conversations;
+  revision = 0;
+  previousNodes = /* @__PURE__ */ new Map();
+  lastStructuralJson = "";
+  timer;
+  firstScheduledAt;
+  unsubscribeView;
+  unsubscribeCommits;
+  isDisposed = false;
+  constructor(viewSource, scope, options) {
+    this.viewSource = viewSource;
+    this.scope = scope;
+    this.debounceMs = options?.debounceMs ?? 250;
+    this.maxDebounceMs = options?.maxDebounceMs ?? 1e3;
+    this.clock = options?.clock ?? Date.now;
+    this.receipts = options?.receipts ?? new RuntimeGraphReceiptsCollector();
+    this.harness = options?.harness;
+    this.epoch = `epoch_${this.clock()}_${Math.random().toString(36).slice(2, 7)}`;
+    this.conversations = new RuntimeGraphConversations(this.scope.rootConversationId);
+    if (this.harness?.subscribeCommits) {
+      this.unsubscribeCommits = this.harness.subscribeCommits((pub) => {
+        for (const ch of pub.changes) {
+          if (ch?.type === "task" && (ch.value?.state?.status === "terminal" || ch.value?.state?.status === "completing")) {
+            this.receipts.recordTerminal(ch.value);
+            this.schedule();
+          } else if (ch?.type === "conversation" && ch.value) {
+            this.conversations.recordConversation(ch.value);
+            this.schedule();
+          }
+        }
+      });
+    }
+    this.unsubscribeView = this.viewSource.subscribe(() => this.schedule());
+    this.schedule();
+  }
+  subscribe(listener) {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+  teardown() {
+    if (this.isDisposed) return;
+    this.isDisposed = true;
+    if (this.timer !== void 0) {
+      clearTimeout(this.timer);
+      this.timer = void 0;
+      this.publish();
+    }
+    this.unsubscribeCommits?.();
+    this.unsubscribeView?.();
+    this.listeners.clear();
+  }
+  schedule() {
+    if (this.isDisposed) return;
+    const now = this.clock();
+    if (this.firstScheduledAt === void 0) this.firstScheduledAt = now;
+    const elapsed = now - this.firstScheduledAt;
+    if (elapsed >= this.maxDebounceMs) {
+      clearTimeout(this.timer);
+      this.timer = void 0;
+      this.publish();
+      return;
+    }
+    clearTimeout(this.timer);
+    const delay = Math.min(this.debounceMs, this.maxDebounceMs - elapsed);
+    this.timer = setTimeout(() => {
+      this.timer = void 0;
+      this.publish();
+    }, Math.max(0, delay));
+  }
+  publish() {
+    this.firstScheduledAt = void 0;
+    if (this.isDisposed) return;
+    const current = this.viewSource.current();
+    if (current && "session" in current && "conversation" in current) {
+      this.names.learn(current);
+    }
+    const rawNodes = extractTaskGraph(current).tasks ?? {};
+    const totalLiveCount = Object.keys(rawNodes).length;
+    const liveNodeEntries = Object.entries(rawNodes).slice(0, MAX_LIVE_NODES);
+    const currentLiveIds = /* @__PURE__ */ new Set();
+    const mappedNodes = {};
+    for (const [key, node] of liveNodeEntries) {
+      const id = Number(node.id);
+      currentLiveIds.add(id);
+      const convId = Number(node.conversationId);
+      this.conversations.recordFromLiveNode(convId, id, node.conversations);
+      let label = taskLabel(node, this.names);
+      if (label.length > MAX_LABEL_LENGTH) label = label.slice(0, MAX_LABEL_LENGTH);
+      mappedNodes[key] = {
+        id,
+        kind: node.kind,
+        conversationId: convId,
+        owner: node.owner !== void 0 ? Number(node.owner) : void 0,
+        background: Boolean(node.background),
+        abortRequested: Boolean(node.abortRequested),
+        state: mapTaskGraphNodeState(node.state),
+        blocked: node.blocked,
+        label
+      };
+    }
+    const hasMissingReceipts = this.reconcileDisappearedNodes(currentLiveIds);
+    this.previousNodes = new Map(
+      liveNodeEntries.map(([_, n]) => [Number(n.id), { conversationId: Number(n.conversationId), kind: n.kind }])
+    );
+    const completeness = totalLiveCount > MAX_LIVE_NODES || hasMissingReceipts ? "limited" : "complete";
+    const conversations = this.conversations.snapshot();
+    const receipts = this.receipts.getReceipts();
+    const stats = { liveCount: Object.keys(mappedNodes).length, terminalCount: receipts.length, totalCount: totalLiveCount + receipts.length };
+    const structuralJson = JSON.stringify({ nodes: mappedNodes, conversations, receipts, completeness, stats });
+    if (structuralJson === this.lastStructuralJson) return;
+    this.lastStructuralJson = structuralJson;
+    const snapshot = {
+      version: 1,
+      scope: this.scope,
+      observation: { epoch: this.epoch, revision: ++this.revision, observedAt: this.clock(), completeness },
+      nodes: mappedNodes,
+      conversations,
+      receipts,
+      stats
+    };
+    for (const listener of this.listeners) listener(snapshot);
+  }
+  reconcileDisappearedNodes(currentLiveIds) {
+    let hasMissing = false;
+    for (const [prevId] of this.previousNodes) {
+      if (!currentLiveIds.has(prevId) && !this.receipts.hasReceipt(prevId)) {
+        hasMissing = true;
+        if (this.harness?.getTask) {
+          void this.harness.getTask(prevId).then((task) => {
+            if (task && (task.state?.status === "terminal" || task.state?.status === "completing")) {
+              this.receipts.recordTerminal(task);
+              this.schedule();
+            }
+          }).catch(() => {
+          });
+        }
+      }
+    }
+    return hasMissing;
+  }
+};
+
 // src/runner/index.ts
+import { ROOT_CONVERSATION_ID as ROOT_CONVERSATION_ID6 } from "@earendil-works/pi-durable";
 var argv = process.argv.slice(2);
 if (argv.includes("--version") || argv.includes("-v")) {
   console.log(getPiDurableVersion());
@@ -3670,10 +4293,17 @@ async function main() {
   let activeDurable = null;
   let activeWatcher = null;
   let activeTaskBridge = null;
+  let activeGraphSource = null;
   let isTerminating = false;
   const handleExit = async (signalOrReason) => {
     if (isTerminating) return;
     isTerminating = true;
+    if (activeGraphSource) {
+      try {
+        activeGraphSource.teardown();
+      } catch {
+      }
+    }
     if (activeTaskBridge) {
       try {
         activeTaskBridge.unsubscribe();
@@ -3727,7 +4357,7 @@ async function main() {
     attachJsonlLineReader(process.stdin, (line) => {
       if (!line.trim()) return;
       try {
-        const cmd = JSON.parse(line);
+        const cmd = parseRunnerCommand(line);
         if (cmd.type === "get_available_models") {
           success(cmd.id, "get_available_models", { models: scopedModelList });
         } else if (cmd.type === "get_state") {
@@ -3747,7 +4377,7 @@ async function main() {
           success(cmd.id, cmd.type, {});
         }
       } catch (err) {
-        error(void 0, "unknown", err instanceof Error ? err.message : String(err));
+        error(void 0, "unknown", "INVALID_COMMAND");
       }
     });
     return;
@@ -3781,12 +4411,24 @@ async function main() {
   const watcher = await startSubagentWatcher(durable.harness, adapter, () => durable.view.current());
   activeWatcher = watcher;
   activeTaskBridge = startTaskGraphBridge(durable.view, output);
+  activeGraphSource = new RuntimeGraphSource(
+    durable.view,
+    {
+      sessionId: durable.view.current().session.id,
+      rootConversationId: String(ROOT_CONVERSATION_ID6),
+      buildId: "pi-durable-1.4"
+    },
+    {
+      harness: durable.harness
+    }
+  );
+  activeGraphSource.subscribe((snapshot) => output({ type: "runtime_graph_snapshot", snapshot }));
   attachJsonlLineReader(process.stdin, async (line) => {
     let cmd;
     try {
-      cmd = JSON.parse(line);
+      cmd = parseRunnerCommand(line);
     } catch (e) {
-      error(void 0, "parse", `Invalid JSON: ${e}`);
+      error(void 0, "parse", "INVALID_COMMAND");
       return;
     }
     try {

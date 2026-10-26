@@ -70,7 +70,7 @@ test("PiThreadSession completes child thread when subagent finishes", async () =
 		session.registerThread("thr_child", "2");
 		session.markSubagentActive("2", { task: "Audit", parentToolCallId: "call_sub_1" });
 
-		const agentEndEvent: RunnerEvent = {
+		const agentEndEvent: RunnerEvent = { messages: [],
 			type: "agent_end",
 			conversationId: 2,
 			parentRef: "call_sub_1",
