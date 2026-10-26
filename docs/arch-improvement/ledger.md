@@ -405,6 +405,16 @@
   - Полная карточка восстановимости и handoff: `/Users/vanya/.bb/thread-storage/thr_ct3kk9xne6/local-cutover-confirmation-card.md`.
   - Автономный скрипт cutover (готов, но НЕ запущен): `/Users/vanya/.bb/thread-storage/thr_ct3kk9xne6/cutover-to-local.sh`.
 
+### Continuation Amendment & Scope Consolidation — 2026-10-26 (Execution Receipt)
+- **Основание и решение оператора:** Ваня уточнил директиву: «Ладно, забей. Просто 0.3.* допилим до рабочей версии и всё. Продолжай по плану» (GBrain fact #1703).
+- **Снятие ветки 0.2.x recovery:** Исследования и операции по восстановлению ветки 0.2.x, удалению или перетегированию `v0.2.53` полностью прекращены. Исторический тег `v0.2.53` (`7d0b5b8`) и соответствующий GitHub Release сохранены неизменными.
+- **Статус арх-лупа 0.3.x:** Выпуск v0.3.0 зафиксирован как backend slice. Развитие 0.3.x продолжается до полной рабочей версии.
+- **Инвентарь остаточного scope и статус ворот:**
+  - *Local cutover (U4 / G-LOCAL):* Предоперационный аудит и карточка восстановимости завершены (`local-cutover-confirmation-card.md`). Подготовлен отвязанный скрипт `/Users/vanya/.bb/thread-storage/thr_ct3kk9xne6/cutover-to-local.sh`. Мутации не выполнялись; ожидается согласование окна перезапуска (Cmd+Q) оператором.
+  - *G2 (Public Live BB Event Transport):* Unit/mock контракты верифицированы (510/510 tests pass); сквозной live desktop roundtrip через Electron остаётся открытым швом до запуска v0.3.0 в установленном рантайме.
+  - *G3 (UI Context Segment & Task Graph Renderer):* Primitives `src/ui/runtime-graph/{read,subscription}.ts` протестированы. Выявлено точное архитектурное противоречие: SDK 0.6.79 предоставляет контейнерный слот `experimental_threadContextSegment` и плоские примитивы (`experimental_InfoList`, `experimental_DetailRow`), но не содержит готовых компонентов дерева или инспектора задач. Рендеринг иерархического дерева требует кастомных React-элементов, что подпадает под ограничение `AGENTS.md` («Не изобретать свои UI-компоненты») и ожидает решения оператора (предоставление narrow G-UI exception против плоского списка `experimental_InfoList`).
+- **Installed Provider Status:** **NOT CHANGED** (`0.2.53`, git-кеш `7d0b5b8`).
+
 
 
 
