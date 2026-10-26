@@ -372,6 +372,10 @@
   - В релизе 0.3.0 UI графа и живой сквозной транспорт пользователям **НЕ обещаны и НЕ объявлены**.
 - **Инвариант неприкосновенности тега v0.2.53:**
   - Тег `v0.2.53` (`7d0b5b8`) и GitHub Release `v0.2.53` **НЕ удалены и НЕ перемещены**, сохраняются неизменными.
+- **Опубликованный Release Commit & Receipts:**
+  - Release Commit: `6bad0cd30e8c879d1a3f6560ee1f67f0fecbb0ce` (tag `v0.3.0`, peeled commit `6bad0cd30e8c879d1a3f6560ee1f67f0fecbb0ce`).
+  - Remote Main: `6bad0cd30e8c879d1a3f6560ee1f67f0fecbb0ce` (up to date with `origin/main`).
+  - GitHub Release URL: https://github.com/VanDalkvist/bb-plugin-provider-pi-durable/releases/tag/v0.3.0
 - **Свежая верификация артефактов 0.3.0:**
   - `npx tsc --noEmit`: exit code 0, 0 ошибок.
   - `npm run test:contracts`: exit code 0 (`tsconfig.contract-tests.json` чисто, negative guard подтверждает TS2322).
