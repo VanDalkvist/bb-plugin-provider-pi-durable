@@ -5,6 +5,8 @@ import type { RuntimeGraphSnapshot } from "../../src/runtime-graph/types.ts";
 import { useRuntimeGraphVisible } from "../../src/ui/runtime-graph/use-runtime-graph-visible.ts";
 
 setupDom();
+const { installTestPluginRuntime } = await import("@get-bb/plugin-sdk/testing/app");
+installTestPluginRuntime();
 const { renderHook, act } = await import("@testing-library/react");
 const { useRuntimeGraphState } = await import("../../src/ui/runtime-graph/use-runtime-graph-state.ts");
 
@@ -128,7 +130,7 @@ test("useRuntimeGraphState: manages snapshot, tree items, and status", async () 
 });
 
 test("useRuntimeGraphVisible: checks thread providerId from sidebar threads", () => {
-	// If sidebar threads are not available or empty, defaults to true
+	// If sidebar threads are ready and thread is not found, fails closed (returns false)
 	const visibleDefault = useRuntimeGraphVisible({
 		threadId: "test-thread",
 		projectId: "proj-1",
@@ -139,7 +141,7 @@ test("useRuntimeGraphVisible: checks thread providerId from sidebar threads", ()
 			threads: [],
 		} as any,
 	});
-	assert.equal(visibleDefault, true);
+	assert.equal(visibleDefault, false);
 
 	// If thread is found and provider is foreign, returns false
 	const visibleForeign = useRuntimeGraphVisible({

@@ -61,6 +61,9 @@ export function buildTaskTree(snapshot: RuntimeGraphSnapshot): TaskTreeItem[] {
 
 		if (existing) {
 			existing.receipt = receipt;
+			if (existing.ownerId === undefined && receipt.owner !== undefined) {
+				existing.ownerId = receipt.owner;
+			}
 			if (existing.liveNode?.state.status === "completing") {
 				// Completing state remains until evicted from live nodes
 				existing.isTerminal = false;
@@ -68,7 +71,7 @@ export function buildTaskTree(snapshot: RuntimeGraphSnapshot): TaskTreeItem[] {
 				existing.isTerminal = true;
 			}
 		} else {
-			const ownerId = resolveOwnerId(receipt.conversationId, undefined, conversations);
+			const ownerId = resolveOwnerId(receipt.conversationId, receipt.owner, conversations);
 			const label = receipt.preview
 				? `${receipt.kind} · ${receipt.preview}`
 				: `${receipt.kind} #${id}`;
@@ -89,11 +92,23 @@ export function buildTaskTree(snapshot: RuntimeGraphSnapshot): TaskTreeItem[] {
 	// 3. Assemble ownership hierarchy
 	const rootItems: MutableTreeItem[] = [];
 
+	const wouldCreateCycle = (itemId: number, ownerId: number): boolean => {
+		let curr: number | undefined = ownerId;
+		const seen = new Set<number>();
+		while (curr !== undefined) {
+			if (curr === itemId || seen.has(curr)) return true;
+			seen.add(curr);
+			curr = itemsMap.get(curr)?.ownerId;
+		}
+		return false;
+	};
+
 	for (const item of itemsMap.values()) {
 		if (
 			item.ownerId !== undefined &&
 			item.ownerId !== item.id &&
-			itemsMap.has(item.ownerId)
+			itemsMap.has(item.ownerId) &&
+			!wouldCreateCycle(item.id, item.ownerId)
 		) {
 			itemsMap.get(item.ownerId)!.children.push(item);
 		} else {

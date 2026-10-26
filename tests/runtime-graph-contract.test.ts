@@ -164,3 +164,20 @@ test("runtime-graph-contract: validates snapshot without global Buffer (browser/
 	}
 });
 
+test("runtime-graph-contract: accepts receipt with owner metadata", () => {
+	const receiptWithOwner = {
+		taskId: 20,
+		conversationId: 1,
+		owner: 10,
+		kind: "bash",
+		outcome: "completed",
+		endedAt: 3000,
+	};
+
+	const parsed = runtimeTaskReceiptSchema.safeParse(receiptWithOwner);
+	assert.equal(parsed.success, true);
+	if (parsed.success) {
+		assert.equal(parsed.data.owner, 10);
+	}
+});
+

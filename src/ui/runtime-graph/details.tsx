@@ -23,7 +23,8 @@ export const RuntimeGraphDetails: FC<RuntimeGraphDetailsProps> = ({ selectedItem
 	const projectedLive = liveNode ? projectTaskState(liveNode) : null;
 	const projectedReceipt = receipt ? projectTaskReceipt(receipt) : null;
 
-	const previewText = receipt?.preview ?? receipt?.error?.message;
+	const previewText = receipt?.preview;
+	const errorInfo = receipt?.error;
 	const durationMs = receipt?.durationMs ?? liveNode?.durationMs;
 
 	return (
@@ -116,6 +117,21 @@ export const RuntimeGraphDetails: FC<RuntimeGraphDetailsProps> = ({ selectedItem
 					<pre className="p-2 bg-muted/40 rounded border text-[11px] font-mono whitespace-pre-wrap break-all max-h-40 overflow-y-auto">
 						{previewText}
 					</pre>
+				</InfoSection>
+			) : null}
+
+			{errorInfo ? (
+				<InfoSection label="Диагностика ошибки">
+					<div className="space-y-1.5 p-2 bg-red-500/10 border border-red-500/20 rounded">
+						{errorInfo.code ? (
+							<div className="font-mono text-[10px] text-red-600 dark:text-red-400 font-semibold">
+								Код ошибки: {errorInfo.code}
+							</div>
+						) : null}
+						<pre className="text-[11px] font-mono text-red-600 dark:text-red-400 whitespace-pre-wrap break-all max-h-40 overflow-y-auto">
+							{errorInfo.message}
+						</pre>
+					</div>
 				</InfoSection>
 			) : null}
 		</div>

@@ -8,21 +8,26 @@ export interface ThreadContextSegmentInput {
 
 export function useRuntimeGraphVisible(
 	input: ThreadContextSegmentInput,
-	testEnv?: { sidebarThreads?: { status: string; threads: Array<{ id: string; providerId: string }> } },
+	testEnv?: {
+		sidebarThreads?: { status: string; threads: readonly { id: string; providerId: string }[] };
+		authoritativeProviderId?: string;
+	},
 ): boolean {
-	let sidebar: { status: string; threads: readonly { id: string; providerId: string }[] } | undefined;
-	try {
-		sidebar = testEnv?.sidebarThreads ?? (experimental_useSidebarThreads() as any);
-	} catch {
-		return true;
-	}
+	const sidebar = testEnv?.sidebarThreads ?? (experimental_useSidebarThreads({
+		experimental_lifecycles: ["active", "archived"],
+	}) as any);
 
-	if (sidebar?.status === "ready" && Array.isArray(sidebar.threads) && sidebar.threads.length > 0) {
-		const thread = sidebar.threads.find((t) => t.id === input.threadId);
+	if (sidebar?.status === "ready" && Array.isArray(sidebar.threads)) {
+		const thread = sidebar.threads.find((t: any) => t.id === input.threadId);
 		if (thread) {
 			return thread.providerId === "pi-durable";
 		}
 	}
 
-	return true;
+	if (testEnv?.authoritativeProviderId !== undefined) {
+		return testEnv.authoritativeProviderId === "pi-durable";
+	}
+
+	// Fail closed: never assume unknown foreign threads belong to pi-durable
+	return false;
 }

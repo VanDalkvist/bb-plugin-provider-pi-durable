@@ -1,4 +1,4 @@
-import React, { type FC } from "react";
+import React, { type FC, useState, useEffect, useRef } from "react";
 import type { RuntimeGraphState } from "./types.ts";
 import { useRuntimeGraphState } from "./use-runtime-graph-state.ts";
 import { RuntimeGraphTree } from "./tree.tsx";
@@ -19,8 +19,24 @@ export const RuntimeGraphSegmentDetails: FC<RuntimeGraphSegmentDetailsProps> = (
 	isExpanded,
 	testState,
 }) => {
-	const liveState = useRuntimeGraphState(undefined, threadId);
+	const liveState = useRuntimeGraphState(testState ? null : undefined, threadId);
 	const state = testState ?? liveState;
+
+	const containerRef = useRef<HTMLDivElement>(null);
+	const [isNarrow, setIsNarrow] = useState(false);
+
+	useEffect(() => {
+		const el = containerRef.current;
+		if (!el || typeof ResizeObserver === "undefined") return;
+		const observer = new ResizeObserver((entries) => {
+			for (const entry of entries) {
+				const width = entry.contentRect.width;
+				setIsNarrow(width > 0 && width < 580);
+			}
+		});
+		observer.observe(el);
+		return () => observer.disconnect();
+	}, []);
 
 	if (!isExpanded) {
 		return null;
@@ -45,8 +61,14 @@ export const RuntimeGraphSegmentDetails: FC<RuntimeGraphSegmentDetailsProps> = (
 	}
 
 	return (
-		<div className="border rounded-md bg-background flex flex-row h-80 max-h-96 overflow-hidden text-sm shadow-sm my-1">
-			<div className="flex-1 overflow-y-auto p-2 border-r min-w-0">
+		<div
+			ref={containerRef}
+			data-layout={isNarrow ? "narrow" : "wide"}
+			className={`border rounded-md bg-background flex ${
+				isNarrow ? "flex-col" : "flex-row"
+			} h-80 max-h-96 overflow-hidden text-sm shadow-sm my-1`}
+		>
+			<div className={`flex-1 overflow-y-auto p-2 min-w-0 ${isNarrow ? "border-b min-h-[140px]" : "border-r"}`}>
 				<RuntimeGraphTree
 					tree={tree}
 					selectedTaskId={selectedTaskId}
@@ -56,7 +78,7 @@ export const RuntimeGraphSegmentDetails: FC<RuntimeGraphSegmentDetailsProps> = (
 				/>
 			</div>
 
-			<div className="w-80 flex-shrink-0 overflow-y-auto p-3 bg-muted/10">
+			<div className={`${isNarrow ? "h-36" : "w-80"} flex-shrink-0 overflow-y-auto p-3 bg-muted/10`}>
 				<RuntimeGraphDetails selectedItem={selectedItem} />
 			</div>
 		</div>

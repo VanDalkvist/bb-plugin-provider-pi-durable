@@ -88,6 +88,7 @@ export const runtimeConversationNodeSchema = z.object({
 export const runtimeTaskReceiptSchema = z.object({
 	taskId: z.number().int().positive(),
 	conversationId: z.number().int().positive(),
+	owner: z.number().int().positive().optional(),
 	kind: z.string().min(1).max(64),
 	outcome: taskOutcomeSchema,
 	isToolError: z.boolean().optional(),

@@ -155,3 +155,29 @@ test("runtime-graph-receipts: preserves native Pi Durable orphaned outcome when 
 	assert.deepEqual(receipt.error, { message: "Task definition migration unavailable" });
 });
 
+test("runtime-graph-receipts: preserves task owner on terminal receipt", () => {
+	const collector = new RuntimeGraphReceiptsCollector(128);
+
+	const taskWithOwner: TaskRecord<any, any, any> = {
+		id: 25 as any,
+		conversationId: 1 as any,
+		owner: 10 as any,
+		kind: "bash",
+		version: 1,
+		input: {},
+		background: false,
+		abortRequested: false,
+		startedAt: 1000,
+		endedAt: 2000,
+		state: {
+			status: "terminal",
+			outcome: { status: "completed" },
+		},
+	};
+
+	const receipt = collector.recordTerminal(taskWithOwner);
+	assert.equal(receipt.taskId, 25);
+	assert.equal(receipt.owner, 10);
+});
+
+

@@ -67,69 +67,65 @@ export const RuntimeGraphNodeRow: FC<RuntimeGraphNodeRowProps> = ({
 
 	return (
 		<div
-			role="button"
-			tabIndex={0}
-			onClick={onSelect}
-			onKeyDown={(e) => {
-				if (e.key === "Enter" || e.key === " ") {
-					e.preventDefault();
-					onSelect();
-				}
-			}}
 			style={{ paddingLeft: `${depth * 16 + 6}px` }}
-			className={`group flex items-center gap-1.5 py-1 pr-2 rounded text-xs select-none cursor-pointer transition-colors duration-150 ${
-				isSelected
-					? "bg-accent/15 text-accent-foreground font-medium"
-					: "hover:bg-muted/40 hover:shadow-sm text-foreground"
-			}`}
+			className="group flex items-center gap-1 py-0.5 pr-2 rounded text-xs select-none transition-colors duration-150"
 		>
 			{hasChildren ? (
 				<button
 					type="button"
+					aria-expanded={!isCollapsed}
 					aria-label={isCollapsed ? "Раскрыть" : "Свернуть"}
-					onClick={(e) => {
-						e.stopPropagation();
-						onToggleCollapse();
-					}}
-					className="w-4 h-4 flex items-center justify-center text-muted-foreground hover:text-foreground"
+					onClick={onToggleCollapse}
+					className="w-4 h-4 flex-shrink-0 flex items-center justify-center text-muted-foreground hover:text-foreground cursor-pointer focus:outline-none focus-visible:ring-1 focus-visible:ring-ring rounded"
 				>
 					<Icon name={isCollapsed ? "ChevronRight" : "ChevronDown"} className="w-3.5 h-3.5" />
 				</button>
 			) : (
-				<span className="w-4 h-4" />
+				<span className="w-4 h-4 flex-shrink-0" />
 			)}
 
-			<span title={statusTitle} className={`flex-shrink-0 ${colorClass}`}>
-				<Icon name={icon} className="w-3.5 h-3.5" />
-			</span>
-
-			<span className="truncate max-w-[220px]" title={item.label}>
-				{item.label}
-			</span>
-
-			{item.waitingOn && item.waitingOn.length > 0 ? (
-				<span className="text-[10px] px-1 py-0.2 bg-amber-500/10 text-amber-600 dark:text-amber-400 rounded">
-					ждёт: #{item.waitingOn.join(", #")}
+			<button
+				type="button"
+				onClick={onSelect}
+				aria-pressed={isSelected}
+				className={`flex-1 min-w-0 flex items-center gap-1.5 py-1 px-1.5 text-left rounded text-xs select-none cursor-pointer transition-colors duration-150 focus:outline-none focus-visible:ring-1 focus-visible:ring-ring ${
+					isSelected
+						? "bg-accent/15 text-accent-foreground font-medium"
+						: "hover:bg-muted/40 hover:shadow-sm text-foreground"
+				}`}
+			>
+				<span title={statusTitle} className={`flex-shrink-0 ${colorClass}`}>
+					<Icon name={icon} className="w-3.5 h-3.5" />
 				</span>
-			) : null}
 
-			{hasToolError ? (
-				<span className="text-[10px] px-1 py-0.2 bg-red-500/10 text-red-600 dark:text-red-400 rounded">
-					ошибка инструмента
+				<span className="truncate max-w-[220px]" title={item.label}>
+					{item.label}
 				</span>
-			) : null}
 
-			{item.liveNode?.abortRequested ? (
-				<span className="text-[10px] px-1 py-0.2 bg-muted text-muted-foreground rounded">
-					отмена
-				</span>
-			) : null}
+				{item.waitingOn && item.waitingOn.length > 0 ? (
+					<span className="text-[10px] px-1 py-0.2 bg-amber-500/10 text-amber-600 dark:text-amber-400 rounded">
+						ждёт: #{item.waitingOn.join(", #")}
+					</span>
+				) : null}
 
-			{duration ? (
-				<span className="ml-auto text-[10px] text-muted-foreground pl-1 flex-shrink-0">
-					{duration}
-				</span>
-			) : null}
+				{hasToolError ? (
+					<span className="text-[10px] px-1 py-0.2 bg-red-500/10 text-red-600 dark:text-red-400 rounded">
+						ошибка инструмента
+					</span>
+				) : null}
+
+				{item.liveNode?.abortRequested ? (
+					<span className="text-[10px] px-1 py-0.2 bg-muted text-muted-foreground rounded">
+						отмена
+					</span>
+				) : null}
+
+				{duration ? (
+					<span className="ml-auto text-[10px] text-muted-foreground pl-1 flex-shrink-0">
+						{duration}
+					</span>
+				) : null}
+			</button>
 		</div>
 	);
 };

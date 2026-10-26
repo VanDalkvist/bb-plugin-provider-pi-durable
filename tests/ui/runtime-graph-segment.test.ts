@@ -93,4 +93,28 @@ test("RuntimeGraphSegmentDetails: renders tree and inspector when isExpanded is 
 	assert.ok(container.textContent?.includes("#11"));
 	assert.ok(container.textContent?.includes("Ожидает"));
 	assert.ok(container.textContent?.includes("#42"));
+
+	const layoutEl = container.querySelector("[data-layout]");
+	assert.ok(layoutEl, "Must have data-layout attribute for responsive inspection");
+	assert.ok(layoutEl.getAttribute("data-layout") === "wide" || layoutEl.getAttribute("data-layout") === "narrow");
+});
+
+test("RuntimeGraphSegmentDetails: supports narrow layout responsive mode (D5)", () => {
+	const snapshot = createMockSnapshot();
+	const state: any = {
+		threadId: "thr-1", status: "ok", snapshot, tree: [],
+		selectedTaskId: null, selectedItem: null, collapsedTaskIds: new Set(),
+		selectTask: () => {}, toggleCollapse: () => {},
+	};
+
+	const { container } = render(
+		React.createElement(RuntimeGraphSegmentDetails, {
+			threadId: "thr-1", projectId: "proj-1", environment: null,
+			segments: [], isExpanded: true, onToggle: () => {}, testState: state,
+		}),
+	);
+
+	const layoutEl = container.querySelector("[data-layout]");
+	assert.ok(layoutEl, "Must render layout container");
+	assert.ok(layoutEl.className.includes("overflow-hidden"), "Must contain bounded scroll region");
 });

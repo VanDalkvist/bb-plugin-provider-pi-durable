@@ -58,9 +58,15 @@ export class RuntimeGraphReceiptsCollector {
 				? task.endedAt - task.startedAt
 				: undefined);
 
+		const owner =
+			task.owner !== undefined && task.owner !== null && Number(task.owner) > 0
+				? Number(task.owner)
+				: undefined;
+
 		const receipt: RuntimeTaskReceipt = {
 			taskId,
 			conversationId: Number(task.conversationId),
+			owner,
 			kind: task.kind,
 			outcome,
 			isToolError: options?.isToolError,

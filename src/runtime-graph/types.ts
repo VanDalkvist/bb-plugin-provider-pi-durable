@@ -77,6 +77,7 @@ export interface RuntimeConversationNode {
 export interface RuntimeTaskReceipt {
 	readonly taskId: number;
 	readonly conversationId: number;
+	readonly owner?: number;
 	readonly kind: string;
 	readonly outcome: TaskOutcomeName;
 	readonly isToolError?: boolean;

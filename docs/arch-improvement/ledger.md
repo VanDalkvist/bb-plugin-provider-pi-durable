@@ -522,7 +522,43 @@
 - **Сборка (Build Receipt):**
   - `dist/runner/index.js` собран: `2026-10-26T18:49:58Z`.
   - Публичные API, UI (`app.tsx`, `src/ui/`), версии пакетов и манифест не изменялись.
-- **Файловый артефакт:** `/Users/vanya/.bb/thread-storage/thr_ct3kk9xne6/cold-start-protocol-fix-result.md`.
+### Runtime Task Graph UI Architecture Findings Remediation (Slice G3 Fixes) — 2026-10-26 (Execution Receipt)
+- **Цель и статус:** Закрытие всех архитектурных замечаний независимого аудита `s9-g3-architecture.md` (2 P1 + 6 P2 + P3) при сохранении подтверждённых продуктовых сценариев `s9-g3-product.md`. Тестовый сьют: 553 теста (521 модульный + 32 UI), 100% pass, чистая сборка frontend bundle `dist/app.js` и `dist/app.css`.
+- **Устранённые дефекты и архитектурные решения:**
+  1. *[D1 P1] Terminal Flattening (Целостность дерева владения после завершения):*
+     - Добавлено авторитетное поле `owner?: number` в интерфейс `RuntimeTaskReceipt` (`src/runtime-graph/types.ts`) и схему `runtimeTaskReceiptSchema` (`src/runtime-graph/schema.ts`).
+     - В `RuntimeGraphReceiptsCollector.recordTerminal` (`src/runner/runtime-graph-receipts.ts`) обеспечено извлечение и сохранение `task.owner`.
+     - В `tree-builder.ts` вызов `resolveOwnerId` для терминальных квитанций обновлен с передачей `receipt.owner`. При наличии существующего элемента обновляется `existing.ownerId`.
+     - Добавлен алгоритм защиты от циклов `wouldCreateCycle`: циклические компоненты не исчезают бесследно, а честно выводятся в корень дерева (AP-012, AP-013).
+  2. *[D2 P1] Двойная подписка и расхождение снимков (State Divergence):*
+     - Создан централизованный store `src/ui/runtime-graph/store.ts` с refcounting по `(sdk, threadId)`.
+     - `RuntimeGraphSummary` и `RuntimeGraphSegmentDetails` делят один экземпляр стора: ровно одна подписка на транспорт, единый снимок, сохранение `selectedTaskId` и состояния сворачивания при клике на сводку / закрытии панели.
+     - Интеграция через официальный `useSyncExternalStore` с кэшированием снапшотов. При уходе всех подписчиков транспорт закрывается с grace-периодом.
+  3. *[D3 P2] Маскировка сбоев и недоступности (False Green Checkmark):*
+     - В `summary.tsx` разделены состояния: при `status === "unavailable"` выводится янтарная иконка `AlertTriangle` и текст «Граф недоступен» (при отсутствии снимка) или бейдж `Stale` (при устаревшем снимке).
+     - Зелёная иконка `Check` отображается строго при завершении задач (`counters.active === 0 && counters.terminalCount > 0`).
+     - Исправлено русское склонение активных задач: функция `formatActiveCount` корректно обрабатывает 1 («1 активная»), 2–4 («2 активные»), 5+ («5 активных»), 21 («21 активная»), устраняя опечатку `1 активныа`.
+  4. *[D4 P2] Скрытие текста ошибки за превью выполнения:*
+     - В `details.tsx` разделены секции «Данные выполнения» (`receipt.preview`) и «Диагностика ошибки» (`receipt.error`).
+     - При наличии ошибки всегда отображаются `error.message` и `error.code` в безопасном моноширинном блоке с независимым скроллом без риска маскировки.
+  5. *[D5 P2] Адаптивность инспектора на узких панелях (Narrow Layout):*
+     - В `segment.tsx` добавлен замер ширины контейнера через `ResizeObserver`: при ширине панели < 580px верстка автоматически переключается в вертикальный стек (`flex-col`).
+     - Дерево задач получает полную ширину контейнера и независимый скролл, инспектор переносится вниз с отдельным скроллом, предотвращая сжатие дерева до нечитаемых 164px.
+  6. *[D6 P2] Недопустимая вложенность интерактивных элементов (WAI-ARIA):*
+     - В `node-row.tsx` снят `role="button"` с внешнего контейнера `div`.
+     - Шеврон и узел дерева разделены на соседние управляющие элементы: шеврон как `<button type="button" aria-expanded={!isCollapsed}>` и строка выбора как `<button type="button" aria-pressed={isSelected}>`. Исключена вложенность интерактивных элементов.
+  7. *[D7 P2] Изоляция провайдеров и предотвращение утечки сегмента:*
+     - В `useRuntimeGraphVisible.ts` запрошены обе фазы жизненного цикла: `experimental_lifecycles: ["active", "archived"]`.
+     - Реализован fail-closed принцип: для тредов, не подтверждённых как принадлежащие `pi-durable`, возвращается `false`.
+  8. *[D8 disputed P2] Сосуществование с legacy `planSteps`:*
+     - Подтверждена продуктовая проверка `s9-g3-product.md` (Finding 3): в живом UI Beyond Boundaries IDE дублирования задач нет, старый список в таймлайне не мешает.
+     - Проекция `thread.pendingTodos` оставлена в раннере как безопасный host fallback для внешних CLI/клиентов без поддержки контекстного слота. Дефект квалифицирован как not-reproduced / downgraded to P3.
+  9. *[P3] React Hooks discipline:*
+     - Устранены блоки `try/catch` вокруг хуков React. Ошибки контекста в проде не маскируются.
+- **Line Budgets (AP-019):**
+  - Все файлы строго < 200 строк (максимум `src/ui/runtime-graph/store.ts` — 162 строки, `tree-builder.ts` — 143 строки, `summary.tsx` — 142 строки, `details.tsx` — 139 строк, `node-row.tsx` — 131 строка).
+- **Файловый артефакт:** `/Users/vanya/.bb/thread-storage/thr_ct3kk9xne6/g3-review-fixes-result.md`.
+
 
 
 

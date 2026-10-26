@@ -3929,6 +3929,7 @@ var runtimeConversationNodeSchema = z5.object({
 var runtimeTaskReceiptSchema = z5.object({
   taskId: z5.number().int().positive(),
   conversationId: z5.number().int().positive(),
+  owner: z5.number().int().positive().optional(),
   kind: z5.string().min(1).max(64),
   outcome: taskOutcomeSchema,
   isToolError: z5.boolean().optional(),
@@ -4017,9 +4018,11 @@ var RuntimeGraphReceiptsCollector = class {
       preview = preview.slice(0, MAX_PREVIEW_LENGTH);
     }
     const durationMs = options?.durationMs ?? (task.endedAt && task.startedAt && task.endedAt >= task.startedAt ? task.endedAt - task.startedAt : void 0);
+    const owner = task.owner !== void 0 && task.owner !== null && Number(task.owner) > 0 ? Number(task.owner) : void 0;
     const receipt = {
       taskId,
       conversationId: Number(task.conversationId),
+      owner,
       kind: task.kind,
       outcome,
       isToolError: options?.isToolError,
