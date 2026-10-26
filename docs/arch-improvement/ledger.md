@@ -351,12 +351,38 @@
   - В semver `^0.2.0` раскрывается как `>=0.2.0 <0.3.0-0` (`semver.satisfies("0.3.0", "^0.2.0") === false`). Резолвер `satisfyingGitSemverTags` в BB Core вернёт `outcome: "current"` и не увидит 0.3.0 как допустимый апдейт.
   - По `assertInstallRegistrationAvailable` в BB Core параллельная установка поверх другого диапазона блокируется (`plugin id "..." is already installed from ...; remove it first`).
   - Для перехода установленного плагина на 0.3.0 потребуется отдельная процедура смены селектора (re-install / source change с пре-дренажем и согласованным перезапуском).
-- **Статус ворот и релиза на текущий момент:**
+- **Статус ворот и релиза на момент поправки:**
   - G3 UI exception — **PENDING** (не получено).
   - G2 live roundtrip — **BLOCKED / unproven** (не подтверждено в живом Electron-рантайме).
   - Ворота НЕ отмечаются закрытыми.
-  - Никакого реального релиза сейчас: `package.json` остаётся 0.2.53, коммит `0.3.0` будет создан строго из будущего финального состояния после прохождения G2/G3 ворот.
   - Исторические факты и отчёты о релизе `0.2.53` сохраняются без изменений.
+
+### Backend Release Slice 0.3.0 — 2026-10-26 (Execution Receipt)
+- **Основание и полномочия оператора:** Ваня явно поручил выпустить текущий проверенный backend как 0.3.0 сейчас, а незавершённый арх-луп продолжать после выпуска. Все действия и добавления ведутся в рамках одного арх-лупа и фиксируются в общем плане/ledger. Новые запросы дополняют работу, а не отменяют предыдущий scope.
+- **Scope релиза 0.3.0 (Проверенная функциональность):**
+  - **Pi 1.4 Foundation:** точные пины 1.4.0 (`@earendil-works/pi-durable`, `@earendil-works/pi-coding-agent`, `@earendil-works/pi-codemode`, `@earendil-works/chord`, `@earendil-works/pi-ai`), SDK 0.6.79, Zod 4.6.6, Undici 8.12.2.
+  - **Runtime Graph Backend (G1):** read-only модель `src/runtime-graph/`, `src/runner/runtime-graph-*.ts`, дебаунсированные снимки, фильтрация областей видимости (scope filtering) для root и дочерних бесед, квитанции завершения (receipts) с ограничением до 128 записей.
+  - **Session Admission Coordinator & Single Writer:** мьютекс сессий `src/host/session-admission.ts`, защита от гонок создания сессий и конфликтов SQLite lock, точечная отмена ожидающих участников без обрыва активной работы.
+  - **BB Identity Contract:** легитимный alias `providerThreadId` для дочерних субтредов, строгий запрет подмены составных идентификаторов (foreign composite root) и враждебной смены сессий на том же треде.
+  - **Native Edit Single-File Patch:** канонический unified git diff, единая карточка файла на вызов edit.
+  - **Subagent Model Policy v1:** централизованное управление политикой (`inherit` / `configured`) через KV.
+- **Честные границы — открытый scope арх-лупа:**
+  - **G2 (Public Live BB Event Transport): BLOCKED / unproven live roundtrip** (трансляция дельт и событий протестирована в unit/mock; живой сквозной roundtrip через Electron десктоп остаётся непроверенным live seam).
+  - **G3 (UI Context Segment & Permission): PENDING** (разрешение оператора на UI-компоненты ещё не выдано; прототипы в `src/ui/runtime-graph/` ожидают согласования).
+  - В релизе 0.3.0 UI графа и живой сквозной транспорт пользователям **НЕ обещаны и НЕ объявлены**.
+- **Инвариант неприкосновенности тега v0.2.53:**
+  - Тег `v0.2.53` (`7d0b5b8`) и GitHub Release `v0.2.53` **НЕ удалены и НЕ перемещены**, сохраняются неизменными.
+- **Свежая верификация артефактов 0.3.0:**
+  - `npx tsc --noEmit`: exit code 0, 0 ошибок.
+  - `npm run test:contracts`: exit code 0 (`tsconfig.contract-tests.json` чисто, negative guard подтверждает TS2322).
+  - `npm test`: **510 тестов, 26 сьютов: 510 pass, 0 fail** (501 node:test + 9 UI tsx).
+  - Import AST SCC: `node scripts/verify-import-graph.mjs && node --test tests/import-graph.test.ts` — 123 файла, **0 циклов (Tarjan SCC)**.
+  - AP-019 File Line Budgets: **0 нарушений** во всех `.ts`/`.tsx` файлах `src/` и `tests/` (включая обновлённый `tests/provider-installation.test.ts` — 189 строк).
+  - Dependency Security: `npm audit` — **0 vulnerabilities**.
+  - Dist build: `npm run build` — exit code 0 (`dist/runner/index.js`, `dist/server.js`, `dist/app.js`, `dist/host.js`, `dist/*.meta.json` актуализированы на версию 0.3.0).
+  - Известные примечания: vendor trailing whitespace в bundled `dist/server.js` (от сторонних библиотек esbuild) и известный placement advisory SDK в `dependencies` (SawyerHood review blocker для изолированных воркеров).
+- **Installed Status:** **NOT CHANGED** (установленный плагин остаётся на 0.2.53; смена селектора и локальное переключение — следующие шаги цикла).
+- **Следующие срезы текущего арх-лупа:** Local cutover / installation migration, marketplace PR, G2 live roundtrip verification, G3 UI renderer.
 
 
 

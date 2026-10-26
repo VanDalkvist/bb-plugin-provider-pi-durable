@@ -7,15 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [Unreleased]
+## [0.3.0] - 2026-10-26
 
 ### Added
-- **Live Task Graph in BB's Plan Panel**: The runner forwards `harness.taskGraph()` to BB as `planSteps`, so the composer shows the chain of live tasks (`N/M complete`, in-progress first) instead of nothing. Rows follow creation order with children nested under their owner, and identical snapshots are dropped before they reach the wire.
-- **Named Steps**: A step says what its task is doing rather than only what kind it is: a tool task takes the name of the call it runs (`#12 bash: echo alpha`, `#13 read: src/runner/index.ts`), and the harness tasks read as `assistant turn` and `compacting context`. A node carries no checkpoint payload (spec §9.5), so a tool task is named from its call's own start event, which names the task it belongs to. Names are clipped to one bounded line; an unnamed task still shows its kind and phase.
+- **Pi 1.4 Foundation Upgrade**: Upgraded core Pi engine to 1.4.0 (`@earendil-works/pi-durable`, `@earendil-works/pi-coding-agent`, `@earendil-works/pi-codemode`, `@earendil-works/chord`, `@earendil-works/pi-ai`), with SDK 0.6.79, Zod 4.6.6, and Undici 8.12.2.
+- **Runtime Task Graph Backend Projection (G1)**: Structured read-only projection model (`src/runtime-graph/`, `src/runner/runtime-graph-*.ts`) exposing live task lifecycle states (pending, running, waiting, sleeping, completing), dependency edges, debounced snapshots, scope filtering for root and child conversations, and bounded terminal task receipts (128 entries).
+- **Session Admission Coordination & Single Writer Guarantee**: Introduced `SessionAdmissionCoordinator` with session-level mutex coordination. Concurrent `thread/start` and `turn/start` requests coalesce into a single execution, preventing SQLite lock contention crashes (`Session is already open in another process`). Implemented participant-level cancellation so stopping a waiting child does not kill active root work.
+- **BB Identity Contract Hardening**: Enforced legitimate child alias resolution (`providerThreadId`), prevented foreign composite root attachment (`validateChildAttachment`), and blocked hostile same-thread identity replacement.
+- **Comprehensive Boundary Remediation (R0–R5)**: Added typed contract compiler tests (`tsconfig.contract-tests.json`), negative contract compiler guard (`scripts/check-negative-contracts.mjs`), eliminated Tarjan import SCC cycles across 123 source files, and split touched modules to strictly satisfy AP-019 (<200 LOC per file).
+
+### Note on Scope
+- **Live Desktop Transport (G2) & Context Segment Renderer (G3)**: Public desktop Electron event transport and UI context segment renderer remain unproven/pending in the ongoing architecture loop and are not included or promised in this release.
+
+---
+
+## [0.2.53] - 2026-10-25
+
+### Added
+- **Subagent Model Policy v1**: Centralized subagent model and thinking level management (`inherit` or `configured`) via BB settings and namespaced KV store (`subagent.policy.v1`).
 
 ### Fixed
-- **Runner Resolution Against a Foreign Install (Issue #18)**: bb runs this plugin's host bundle from `<dataDir>/plugin-host-artifacts/<pluginId>/<digest>/host.mjs`, with no runner beside it and without `BB_DATA_DIR`, so resolving the runner by guessing the data dir let an unrelated `~/.bb` checkout answer for the plugin bb had actually activated: the plugin ran older code while still reporting the new version. The data dir is now read back out of the bundle's own deployed path, and the search order is that installation, its `bb.db` row, its caches, then the legacy `~/.bb`. A caller that names its own db or cache paths gets only what it named.
-- **Deterministic Discovery and Readiness Tests**: `resolveRunnerPath` no longer consults the machine's ambient installs when a caller passed explicit paths, so `runner-discovery` asserts a genuine "not found" error instead of failing on any machine that has the plugin installed. The catalogue-readiness test now allows the 12.1s a real runner needs to enumerate the configured providers (it was 10s) and clears its timer on success, so the budget stays a fail-fast ceiling rather than a hidden delay.
+- **Native Edit Unified File-Change**: Resolved duplicate file-change rows for multi-region edits: produces one file entry per edit call with canonical unified git patch.
+- **Runner Bundle Externalization**: Externalized Zod from the runner bundle, keeping runner size under 20KB.
 
 ---
 

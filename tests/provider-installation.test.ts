@@ -51,26 +51,13 @@ const providerInstallationCommandSchema = z.object({
 
 const providerInstallationVerificationSchema = z.discriminatedUnion("kind", [
 	z.object({ kind: z.literal("installed") }).passthrough(),
-	z.object({
-		kind: z.literal("version_changed"),
-		previousVersion: z.string().min(1),
-	}).passthrough(),
-	z.object({
-		kind: z.literal("version_at_least"),
-		version: z.string().min(1),
-	}).passthrough(),
+	z.object({ kind: z.literal("version_changed"), previousVersion: z.string().min(1) }).passthrough(),
+	z.object({ kind: z.literal("version_at_least"), version: z.string().min(1) }).passthrough(),
 ]);
 
 const providerInstallationRunResultSchema = z.discriminatedUnion("available", [
-	z.object({
-		available: z.literal(false),
-		message: z.string().min(1),
-	}).passthrough(),
-	z.object({
-		available: z.literal(true),
-		command: providerInstallationCommandSchema,
-		verification: providerInstallationVerificationSchema,
-	}).passthrough(),
+	z.object({ available: z.literal(false), message: z.string().min(1) }).passthrough(),
+	z.object({ available: z.literal(true), command: providerInstallationCommandSchema, verification: providerInstallationVerificationSchema }).passthrough(),
 ]);
 
 const mockCatalog: ModelCatalog = {
@@ -176,9 +163,9 @@ describe("Native Provider Installation Lifecycle (Cycle 76)", () => {
 	it("getProviderInstallationStatus sets needsUpdate: true when remote version is higher", async () => {
 		const { resetPluginVersionCacheForTesting } = await import("../src/host/installation-manager.ts");
 		resetPluginVersionCacheForTesting();
-		const mockFetch: typeof fetch = async () => new Response(JSON.stringify([{ name: "v0.3.0" }]), { status: 200 });
+		const mockFetch: typeof fetch = async () => new Response(JSON.stringify([{ name: "v1.0.0" }]), { status: 200 });
 		const status = await getProviderInstallationStatus({ checkUpdates: true, fetchFn: mockFetch });
-		assert.equal(status.latestVersion, "0.3.0");
+		assert.equal(status.latestVersion, "1.0.0");
 		assert.equal(status.needsUpdate, true);
 	});
 
