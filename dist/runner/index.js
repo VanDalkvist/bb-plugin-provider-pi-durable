@@ -4282,6 +4282,73 @@ var RuntimeGraphSource = class {
 
 // src/runner/index.ts
 import { ROOT_CONVERSATION_ID as ROOT_CONVERSATION_ID6 } from "@earendil-works/pi-durable";
+
+// src/runner/stdout-guard.ts
+import { getPackageDir } from "@earendil-works/pi-coding-agent";
+import { join as join3 } from "node:path";
+import { pathToFileURL } from "node:url";
+var activeGuard = null;
+var originalStdoutWrite = null;
+function createFallbackGuard() {
+  const rawStdout = process.stdout.write.bind(process.stdout);
+  let isGuarded = false;
+  return {
+    takeOverStdout: () => {
+      if (isGuarded) return;
+      originalStdoutWrite = process.stdout.write;
+      process.stdout.write = ((chunk, encoding, cb) => {
+        return process.stderr.write(chunk, encoding, cb);
+      });
+      isGuarded = true;
+    },
+    restoreStdout: () => {
+      if (!isGuarded) return;
+      if (originalStdoutWrite) {
+        process.stdout.write = originalStdoutWrite;
+        originalStdoutWrite = null;
+      }
+      isGuarded = false;
+    },
+    isStdoutTakenOver: () => isGuarded,
+    writeRawStdout: (text) => {
+      rawStdout(text);
+    },
+    flushRawStdout: async () => {
+    }
+  };
+}
+async function loadUpstreamGuard() {
+  if (activeGuard) return activeGuard;
+  try {
+    const pkgDir = getPackageDir();
+    const guardPath = join3(pkgDir, "dist", "core", "output-guard.js");
+    const mod = await import(pathToFileURL(guardPath).href);
+    activeGuard = mod;
+    return mod;
+  } catch (err) {
+    console.warn(`[StdoutGuard] Failed to load upstream output-guard: ${err instanceof Error ? err.message : String(err)}`);
+    activeGuard = createFallbackGuard();
+    return activeGuard;
+  }
+}
+async function setupRunnerStdoutGuard() {
+  const guard = await loadUpstreamGuard();
+  guard.takeOverStdout();
+}
+function writeWireStdout(text) {
+  if (activeGuard) {
+    activeGuard.writeRawStdout(text);
+  } else {
+    process.stdout.write(text);
+  }
+}
+async function flushWireStdout() {
+  if (activeGuard?.flushRawStdout) {
+    await activeGuard.flushRawStdout();
+  }
+}
+
+// src/runner/index.ts
 var argv = process.argv.slice(2);
 if (argv.includes("--version") || argv.includes("-v")) {
   console.log(getPiDurableVersion());
@@ -4289,10 +4356,11 @@ if (argv.includes("--version") || argv.includes("-v")) {
 }
 var args = parseCliArgs(argv);
 function output(data) {
-  process.stdout.write(serializeJsonLine(data));
+  writeWireStdout(serializeJsonLine(data));
 }
 var sendToBridge = createBridgeSender();
 async function main() {
+  await setupRunnerStdoutGuard();
   let activeDurable = null;
   let activeWatcher = null;
   let activeTaskBridge = null;
@@ -4327,6 +4395,10 @@ async function main() {
       } catch (err) {
         console.error(`[Runner] Error releasing durable lock on ${signalOrReason}:`, err);
       }
+    }
+    try {
+      await flushWireStdout();
+    } catch {
     }
     process.exit(0);
   };

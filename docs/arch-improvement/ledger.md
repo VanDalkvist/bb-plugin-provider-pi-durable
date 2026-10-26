@@ -481,6 +481,51 @@
 - **Live Runtime Gate:** **BLOCKED** (`0.2.53` resident в BB). Прогон `node scripts/verify-live-g2-transport.mjs --readiness` возвращает честный `BLOCKED (installed_version_outdated)` с exit code 2. Сессии и живой рантайм не мутировались.
 - **Файловый артефакт:** `/Users/vanya/.bb/thread-storage/thr_ct3kk9xne6/g2-transport-verifier-fixes-result.md`.
 
+### Cold-Start Stdout Protocol Fault Remediation (D-22) Slice Plan — 2026-10-26
+- **Цель и контекст:** Устранение подтверждённого cold-start сбоя протокола первого запуска (finding 3.2 в `post-restart-g2-live-result.md`), при котором `npm install`, запущенный `DefaultResourceLoader`/`DefaultPackageManager` в свежем worktree без `node_modules`, выводит текстовые строки (`added 105 packages...`) в FD 1 (stdout) раннера, вызывая `Runner protocol fault: MALFORMED_JSON` в `RunnerRpcChannel` хоста.
+- **Архитектурный скоуп:**
+  1. Исследование первоисточников в `@earendil-works/pi-coding-agent`:
+     - `DefaultPackageManager.spawnCommand` использует селектор `stdio: isStdoutTakenOver() ? ["ignore", 2, 2] : "inherit"`.
+     - При активном `takeOverStdout()` из `dist/core/output-guard.js`:
+       * `isStdoutTakenOver()` возвращает `true`, что заставляет `spawnCommand` перенаправлять `stdout` дочернего процесса в FD 2 (`stderr`).
+       * `process.stdout.write` раннера перехватывается в `process.stderr.write`, изолируя любые непреднамеренные логи библиотек или расширений.
+       * Вызовы `writeRawStdout(...)` направляют чистые JSON-RPC фреймы в дескриптор 1 (`stdout`).
+  2. Реализация thin adapter:
+     - Модуль `src/runner/stdout-guard.ts` (< 200 строк по AP-019), динамически загружающий `output-guard.js` по пути из публичной функции `getPackageDir()`.
+     - Вызов `setupRunnerStdoutGuard()` в `src/runner/index.ts` до запуска `setupRunnerModels` и `openDurable`.
+     - Маршрутизация wire-сообщений раннера через `writeWireStdout(...)`.
+- **План TDD:**
+  - *Фаза RED:* поведенческий тест `tests/runner-cold-start-protocol.test.ts` с изолированным временным workspace, где сконфигурирован `npmCommand` с текстовым выводом установки (`added 105 packages...`). На незащищённом раннере тест ловит реальный `MALFORMED_JSON`.
+  - *Фаза GREEN:* подключение `stdout-guard` в раннер, пересборка бандла раннера `dist/runner/index.js`, повторный прогон теста: установка происходит без утечки в stdout, диагностика установки доступна в stderr, ready и первые RPC (`get_available_models`, `get_state`) проходят без retry.
+  - *Фаза VERIFY:* проверка лимитов строк AP-019 (< 200 LOC), полный прогон контрактов `npm run test:contracts` и всего тестового сьюта `npm test`.
+
+### Cold-Start Stdout Protocol Fault Remediation (D-22) — 2026-10-26 (Execution Receipt)
+- **Цель и статус:** Подтверждённый дефект cold-start первого запуска (D-22 / finding 3.2 в `post-restart-g2-live-result.md`) полностью устранён по строгому циклу TDD. Статус: **PASS (VERIFIED)**.
+- **Устранённый дефект и первоисточник:**
+  1. *Коренная причина:* В свежем worktree без зависимостей `DefaultResourceLoader.reload()` инициировал установку пакетов через `DefaultPackageManager`. Поскольку раннер не вызывал канонический `takeOverStdout()` из `@earendil-works/pi-coding-agent/dist/core/output-guard.js`, флаг `isStdoutTakenOver()` был равен `false`. `DefaultPackageManager.spawnCommand` запускал `npm` с `stdio: "inherit"`, из-за чего строка `added 105 packages, and audited 108 packages in 3s` попадала прямо в FD 1 (stdout) раннера и вызывала `Runner protocol fault: MALFORMED_JSON` в `RunnerRpcChannel` хоста Beyond Boundaries.
+  2. *Upstream Seam:* Использован официальный механизм Pi — вызов `takeOverStdout()` при инициализации RPC раннера. Он выставляет `isStdoutTakenOver() = true`, переключает дочерние команды менеджера пакетов на `stdio: ["ignore", 2, 2]` (изоляция в stderr), перехватывает console.log в пользу stderr и обеспечивает чистоту вывода протокола через `writeRawStdout(...)`.
+- **Реализация (Thin Adapter):**
+  - `src/runner/stdout-guard.ts`: 89 строк (< 200). Динамическое обнаружение и загрузка `output-guard.js` по пути из публичной функции `getPackageDir()`. Экспорт функций `setupRunnerStdoutGuard()`, `writeWireStdout()`, `flushWireStdout()`, `isStdoutGuarded()`, `restoreRunnerStdout()`.
+  - `src/runner/index.ts`: 195 строк (< 200). Вызов `await setupRunnerStdoutGuard()` в первой строке `main()`, замена прямого вывода `process.stdout.write(...)` на `writeWireStdout(...)`, корректный flush при завершении раннера.
+- **TDD и доказательная база:**
+  - `tests/runner-cold-start-protocol.test.ts`: 134 строки (< 200).
+    * *Фаза RED:* на незащищённом раннере подтверждён реальный сбой `Runner protocol fault: MALFORMED_JSON` (`Unexpected token 'a', "added 105 "... is not valid JSON`).
+    * *Фаза GREEN:* на защищённом раннере подтверждено: текстовый вывод установки (`added 105 packages...`) направляется строго в stderr (`[RunnerProcess:stderr]`), stdout остаётся 100% чистым JSON-RPC, ready и первые RPC-запросы (`get_available_models`, `get_state`) успешно отрабатывают с первого раза без retry.
+    * *Unit-тест:* подтверждена активация guard, перехват `process.stdout.write` в stderr и корректное восстановление при `restoreRunnerStdout()`.
+  - Общий сьют: **542 теста, 26 сьютов: 542 pass, 0 fail** (было 540 pass, добавлено 2 новых теста).
+  - Контракты: `npm run test:contracts` (Negative contract guard: TS2322 rejection, pass).
+  - Типизация: `npx tsc --noEmit` (0 errors).
+- **Line Budgets (AP-019):**
+  - `src/runner/stdout-guard.ts`: 89 строк (< 200)
+  - `src/runner/index.ts`: 195 строк (< 200)
+  - `tests/runner-cold-start-protocol.test.ts`: 134 строки (< 200)
+- **Сборка (Build Receipt):**
+  - `dist/runner/index.js` собран: `2026-10-26T18:49:58Z`.
+  - Публичные API, UI (`app.tsx`, `src/ui/`), версии пакетов и манифест не изменялись.
+- **Файловый артефакт:** `/Users/vanya/.bb/thread-storage/thr_ct3kk9xne6/cold-start-protocol-fix-result.md`.
+
+
+
 
 
 

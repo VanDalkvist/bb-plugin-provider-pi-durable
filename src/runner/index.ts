@@ -13,6 +13,7 @@ import { startSubagentWatcher, type SubagentWatcherController } from "./subagent
 import { startTaskGraphBridge, type TaskGraphBridgeController } from "./task-graph-bridge.ts";
 import { RuntimeGraphSource } from "./runtime-graph-source.ts";
 import { ROOT_CONVERSATION_ID } from "@earendil-works/pi-durable";
+import { setupRunnerStdoutGuard, writeWireStdout, flushWireStdout } from "./stdout-guard.ts";
 
 const argv = process.argv.slice(2);
 
@@ -25,12 +26,14 @@ if (argv.includes("--version") || argv.includes("-v")) {
 const args = parseCliArgs(argv);
 
 function output(data: unknown): void {
-	process.stdout.write(serializeJsonLine(data));
+	writeWireStdout(serializeJsonLine(data));
 }
 
 const sendToBridge = createBridgeSender();
 
 async function main() {
+	await setupRunnerStdoutGuard();
+
 	let activeDurable: OpenDurableResult | null = null;
 	let activeWatcher: SubagentWatcherController | null = null;
 	let activeTaskBridge: TaskGraphBridgeController | null = null;
@@ -44,26 +47,21 @@ async function main() {
 			try { activeGraphSource.teardown(); } catch {}
 		}
 		if (activeTaskBridge) {
-			try {
-				activeTaskBridge.unsubscribe();
-			} catch (err) {
+			try { activeTaskBridge.unsubscribe(); } catch (err) {
 				console.warn(`[Runner] Error unsubscribing task graph bridge on ${signalOrReason}: ${err instanceof Error ? err.message : String(err)}`);
 			}
 		}
 		if (activeWatcher) {
-			try {
-				activeWatcher.close();
-			} catch (err) {
+			try { activeWatcher.close(); } catch (err) {
 				console.warn(`[Runner] Error closing subagent watcher on ${signalOrReason}: ${err instanceof Error ? err.message : String(err)}`);
 			}
 		}
 		if (activeDurable) {
-			try {
-				await activeDurable.close();
-			} catch (err) {
+			try { await activeDurable.close(); } catch (err) {
 				console.error(`[Runner] Error releasing durable lock on ${signalOrReason}:`, err);
 			}
 		}
+		try { await flushWireStdout(); } catch {}
 		process.exit(0);
 	};
 

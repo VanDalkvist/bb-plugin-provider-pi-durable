@@ -306,3 +306,20 @@ STAGE 2: РАСШИРЕННЫЕ ВОЗМОЖНОСТИ ДВИЖКА И ПОЛН�
   3. Написать детерминированные тесты в `tests/provider-installation.test.ts`.
 - **Файлы:** `src/host/discovery-handler.ts`, `src/host/installation-manager.ts`, `tests/provider-installation.test.ts`.
 
+---
+
+### Cycle 77: Runner Cold-Start Stdout Protocol Protection & Isolation (D-22)
+- **Цель:** Устранить подтверждённый сбой протокола первого запуска (cold-start stdout protocol fault) при старте в свежих worktree без установленных зависимостей/пакетов.
+- **Архитектурный анализ первоисточников:**
+  1. В `post-restart-g2-live-result.md` (секция 3.2) зафиксирован дефект: при старте в свежем worktree без `node_modules` `DefaultResourceLoader` из `@earendil-works/pi-coding-agent` запускает установку недостающих пакетов через `DefaultPackageManager`.
+  2. В `DefaultPackageManager.spawnCommand` запуск дочерних процессов (`npm`, `git`) выполняется с опцией `stdio: isStdoutTakenOver() ? ["ignore", 2, 2] : "inherit"`.
+  3. В каноническом Pi CLI (`src/modes/rpc/rpc-mode.ts` и `src/main.ts`) при работе в неинтерактивном/RPC режиме в обязательном порядке вызывается `takeOverStdout()` из `src/core/output-guard.ts`. Эта функция перехватывает `process.stdout.write` в пользу `process.stderr.write` и выставляет внутренний флаг `isStdoutTakenOver() = true`, в результате чего весь текстовый вывод установки дочерних процессов безопасно направляется в файловый дескриптор 2 (`stderr`), а фреймы JSON wire пишутся строго через `writeRawStdout(...)` в дескриптор 1 (`stdout`).
+  4. В раннере `src/runner/index.ts` вызов `takeOverStdout()` отсутствовал, из-за чего `isStdoutTakenOver()` оставался `false`, и `npm install` наследовал stdout напрямую. Вывод (`added 105 packages...`) попадал в поток stdout, зарезервированный под JSON-RPC протокол, вызывая у `RunnerRpcChannel` ошибку `Runner protocol fault: MALFORMED_JSON` и срыв первого запуска сессии.
+- **Решение:**
+  1. Реализовать модуль `src/runner/stdout-guard.ts` (< 200 строк по AP-019), динамически загружающий официальный модуль `output-guard.js` из `@earendil-works/pi-coding-agent` (через путь от публичной функции `getPackageDir()`).
+  2. Инициализировать `setupRunnerStdoutGuard()` в `src/runner/index.ts` до вызова `setupRunnerModels` и `openDurable`.
+  3. Маршрутизировать вывод JSON-RPC сообщений раннера через `writeWireStdout(...)` (вызывающий `writeRawStdout`).
+  4. Написать детерминированный поведенческий тест `tests/runner-cold-start-protocol.test.ts`, подтверждающий изоляцию вывода установки в stderr и чистоту потока JSON-RPC на первом запуске без retry.
+- **Файлы:** `src/runner/stdout-guard.ts`, `src/runner/index.ts`, `tests/runner-cold-start-protocol.test.ts`, `docs/arch-improvement/ledger.md`.
+
+
