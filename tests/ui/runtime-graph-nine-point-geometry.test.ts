@@ -47,7 +47,7 @@ test("R4: 0..5 vs 6 boundary and terminal ancestor with active child", () => {
 			tree: tasks, selectedTaskId: null, collapsedTaskIds: new Set(),
 			onSelectTask: () => {}, onToggleCollapse: () => {},
 		}));
-		assert.equal(container.querySelector("button[data-history-toggle='true']"), null);
+		assert.equal(container.querySelector("button[data-history-toggle='true']") === null, true);
 		assert.equal(container.querySelectorAll("[data-task-id]").length, count);
 	}
 
@@ -59,7 +59,7 @@ test("R4: 0..5 vs 6 boundary and terminal ancestor with active child", () => {
 		onSelectTask: () => {}, onToggleCollapse: () => {},
 	}));
 	assert.ok(c6.querySelector("button[data-history-toggle='true']"));
-	assert.ok(c6.textContent?.includes("See more (6)"));
+	assert.ok(c6.textContent?.includes("See more (1 completed)"));
 
 	// Terminal parent with active child stays active and is NOT folded
 	cleanup();
@@ -72,10 +72,14 @@ test("R4: 0..5 vs 6 boundary and terminal ancestor with active child", () => {
 		tree: [terminalParent, ...finishedSiblings], selectedTaskId: null,
 		collapsedTaskIds: new Set(), onSelectTask: () => {}, onToggleCollapse: () => {},
 	}));
-	// Parent #100 has active child, so it's not folded; finished siblings (4 <= 5) show all
-	assert.equal(cNested.querySelector("button[data-history-toggle='true']"), null);
+	// Parent #100 has active child (2 active), finished siblings has 4 (total 6 > 5); preview shows 2 active + 3 finished = 5 rows, 1 hidden
+	assert.ok(cNested.querySelector("button[data-history-toggle='true']"));
+	assert.ok(cNested.textContent?.includes("See more (1 completed)"));
 	assert.ok(cNested.querySelector("[data-task-id='100']"));
 	assert.ok(cNested.querySelector("[data-task-id='101']"));
+	assert.ok(cNested.querySelector("[data-task-id='1']"));
+	assert.ok(cNested.querySelector("[data-task-id='3']"));
+	assert.equal(cNested.querySelector("[data-task-id='4']") === null, true);
 });
 
 test("R7 & R8: Inspector header remains fixed, only body scrolls, and X supports keyboard", () => {

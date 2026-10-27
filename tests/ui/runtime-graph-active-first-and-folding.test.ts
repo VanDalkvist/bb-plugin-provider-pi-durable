@@ -78,23 +78,24 @@ test("Finished-only siblings fold behind English See more and toggle with See le
 	}));
 
 	assert.ok(container.textContent?.includes("Task #1"));
-	// When folded by default (6 finished items > FOLD_THRESHOLD 5), finished items are hidden and "See more (6)" button is present
+	// When folded by default (1 active + 6 finished), preview fills to 5 (active + 4 finished), remaining 2 go under See more (2 completed)
 	const seeMoreBtn = container.querySelector("button[data-history-toggle='true']");
 	assert.ok(seeMoreBtn, "See more control should be rendered for finished siblings");
-	assert.ok(seeMoreBtn?.textContent?.includes("See more (6)"));
-	assert.ok(!container.textContent?.includes("Task #2"));
+	assert.ok(seeMoreBtn?.textContent?.includes("See more (2 completed)"));
+	assert.ok(container.textContent?.includes("Task #2"));
+	assert.ok(!container.textContent?.includes("Task #6"));
 
 	// Click to expand
 	fireEvent.click(seeMoreBtn!);
-	assert.ok(container.textContent?.includes("Task #2"));
-	assert.ok(container.textContent?.includes("Task #3"));
+	assert.ok(container.textContent?.includes("Task #6"));
+	assert.ok(container.textContent?.includes("Task #7"));
 	assert.ok(container.textContent?.includes("See less"));
 
 	// Click See less to collapse again
 	const seeLessBtn = container.querySelector("button[data-history-toggle='true']");
 	fireEvent.click(seeLessBtn!);
-	assert.ok(!container.textContent?.includes("Task #2"));
-	assert.ok(container.textContent?.includes("See more (6)"));
+	assert.ok(!container.textContent?.includes("Task #6"));
+	assert.ok(container.textContent?.includes("See more (2 completed)"));
 });
 
 test("Folded history honestly reports terminal failures and tool errors", () => {
@@ -113,7 +114,7 @@ test("Folded history honestly reports terminal failures and tool errors", () => 
 
 	const toggle = container.querySelector("button[data-history-toggle='true']");
 	assert.ok(toggle, "See more control should exist");
-	assert.ok(toggle?.textContent?.includes("See more (6 · 1 failed)"));
+	assert.ok(toggle?.textContent?.includes("See more (1 completed · 1 failed)"));
 	assert.equal(toggle?.getAttribute("data-has-failure"), "true");
 });
 

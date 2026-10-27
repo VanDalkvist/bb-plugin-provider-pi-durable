@@ -110,7 +110,7 @@ test("Manual scroll preservation: does not steal scroll and Follow active is rem
 
 	// After manual scroll, Follow active button is completely removed per Requirement 6
 	const followBtn = container.querySelector("button[aria-label='Follow active']");
-	assert.equal(followBtn, null, "Follow active button is removed per feedback requirement 6");
+	assert.equal(followBtn === null, true, "Follow active button is removed per feedback requirement 6");
 });
 
 test("Live metadata rendering: inspector shows toolName, targetHint, model, thinkingLevel, startedAt", () => {

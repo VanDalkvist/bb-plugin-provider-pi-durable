@@ -37,7 +37,7 @@ test("Conditional Inspector: inspector is NOT mounted when selectedTaskId is nul
 	}));
 	assert.ok(container.textContent?.includes("Running Tool"));
 	assert.ok(!container.textContent?.includes("Task ID"));
-	assert.equal(container.querySelector("[data-testid='runtime-graph-inspector']"), null);
+	assert.equal(container.querySelector("[data-testid='runtime-graph-inspector']") === null, true);
 });
 
 test("Conditional Inspector: inspector mounts on explicit selection and can be closed", () => {
@@ -145,7 +145,7 @@ test("Conditional Inspector: selectedItem missing from tree unmounts inspector",
 	);
 
 	const inspector = container.querySelector("[data-testid='runtime-graph-inspector']");
-	assert.equal(inspector, null, "Inspector must NOT be mounted when selectedItem is null");
+	assert.equal(inspector === null, true, "Inspector must NOT be mounted when selectedItem is null");
 });
 
 test("Conditional Inspector: keyboard Enter and Space selects task", () => {

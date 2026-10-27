@@ -68,8 +68,8 @@ test("Finding 1 RED: Clicking node-row button or container calls onSelect exactl
 	assert.equal(selectCount, 0, "Chevron click must NOT call onSelect");
 });
 
-test("Finding 2 RED: Nested 1 root + 5 children (total 6) folds behind See more (6)", () => {
-	// 1 finished root with 5 finished children = 6 total finished task nodes
+test("Finding 2 RED: Nested 1 root + 5 children (total 6) folds behind See more (1 completed)", () => {
+	// 1 finished root with 5 finished children = 6 total finished task nodes; preview fills to 5, 1 hidden
 	const children = [2, 3, 4, 5, 6].map((id) => makeTask(id, true));
 	const tree = [makeTask(1, true, children)];
 
@@ -80,14 +80,13 @@ test("Finding 2 RED: Nested 1 root + 5 children (total 6) folds behind See more 
 		}),
 	);
 
-	console.log("DEBUG HTML:", container.innerHTML);
 	const toggleBtn = container.querySelector("button[data-history-toggle='true']");
 	assert.ok(toggleBtn, "Group with 6 total finished nodes (1 root + 5 children) MUST fold");
-	assert.ok(toggleBtn.textContent?.includes("See more (6)"), `Button must report total count 6, got: ${toggleBtn.textContent}`);
+	assert.ok(toggleBtn.textContent?.includes("See more (1 completed)"), `Button must report disjoint hidden count, got: ${toggleBtn.textContent}`);
 });
 
-test("Finding 2 RED: 2 roots with 2 children each (total 6) folds behind See more (6)", () => {
-	// 2 roots * (1 root + 2 children) = 6 total finished nodes
+test("Finding 2 RED: 2 roots with 2 children each (total 6) folds behind See more (1 completed)", () => {
+	// 2 roots * (1 root + 2 children) = 6 total finished nodes; preview fills to 5, 1 hidden
 	const tree = [
 		makeTask(1, true, [makeTask(2, true), makeTask(3, true)]),
 		makeTask(4, true, [makeTask(5, true), makeTask(6, true)]),
@@ -102,7 +101,7 @@ test("Finding 2 RED: 2 roots with 2 children each (total 6) folds behind See mor
 
 	const toggleBtn = container.querySelector("button[data-history-toggle='true']");
 	assert.ok(toggleBtn, "Group with 6 total finished nodes (2 roots + 4 children) MUST fold");
-	assert.ok(toggleBtn.textContent?.includes("See more (6)"), `Button must report total count 6, got: ${toggleBtn.textContent}`);
+	assert.ok(toggleBtn.textContent?.includes("See more (1 completed)"), `Button must report disjoint hidden count, got: ${toggleBtn.textContent}`);
 });
 
 test("Finding 2 RED: Hierarchy with <= 5 total finished nodes stays unfolded with no disclosure button", () => {
@@ -118,7 +117,7 @@ test("Finding 2 RED: Hierarchy with <= 5 total finished nodes stays unfolded wit
 	);
 
 	const toggleBtn = container.querySelector("button[data-history-toggle='true']");
-	assert.equal(toggleBtn, null, "5 total finished nodes must NOT have See more button");
+	assert.equal(toggleBtn === null, true, "5 total finished nodes must NOT have See more button");
 	assert.equal(container.querySelectorAll("[data-task-id]").length, 5, "All 5 nodes must be directly visible");
 });
 
@@ -138,5 +137,5 @@ test("Finding 2 RED: Terminal ancestor with live child remains visible in active
 	assert.ok(rootNode, "Terminal ancestor with active child must be visible");
 	const childNode = container.querySelector("[data-task-id='2']");
 	assert.ok(childNode, "Active child must be visible");
-	assert.equal(container.querySelector("button[data-history-toggle='true']"), null, "No folding button");
+	assert.equal(container.querySelector("button[data-history-toggle='true']") === null, true, "No folding button");
 });

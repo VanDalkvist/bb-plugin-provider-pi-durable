@@ -50,13 +50,13 @@ test("Requirement 1 RED: See less collapses history branch even when selected te
 	assert.ok(seeMoreBtn, "Should have See more button for 7 items");
 	fireEvent.click(seeMoreBtn);
 
-	// Select task #3
-	const task3Row = container.querySelector("[data-task-id='3']");
-	assert.ok(task3Row, "Task 3 row must be visible");
-	fireEvent.click(task3Row);
-	assert.equal(selectedId, 3, "Task 3 must be selected");
+	// Select task #7 (a task genuinely hidden in history beyond preview of 5)
+	const task7Row = container.querySelector("[data-task-id='7']");
+	assert.ok(task7Row, "Task 7 row must be visible");
+	fireEvent.click(task7Row);
+	assert.equal(selectedId, 7, "Task 7 must be selected");
 
-	// Now click See less while task #3 is selected
+	// Now click See less while task #7 is selected
 	const seeLessBtn = container.querySelector("button[data-history-toggle='true']");
 	assert.ok(seeLessBtn?.textContent?.includes("See less"), "Button must now be See less");
 	fireEvent.click(seeLessBtn!);
@@ -64,7 +64,7 @@ test("Requirement 1 RED: See less collapses history branch even when selected te
 	// Crucial check: See less MUST collapse the branch!
 	const seeMoreAfter = container.querySelector("button[data-history-toggle='true']");
 	assert.ok(seeMoreAfter?.textContent?.includes("See more"), "Branch must collapse back to See more even when selected");
-	assert.equal(container.querySelector("[data-task-id='3']"), null, "Task 3 row must be folded away");
+	assert.equal(container.querySelector("[data-task-id='7']") === null, true, "Task 7 row must be folded away");
 });
 
 test("Requirement 2 RED: History disclosure stays neutral chevron even when group has failures", () => {
@@ -121,7 +121,7 @@ test("Requirement 4 RED: Subtree/history group with <= 5 nodes shows all with no
 		tree: fiveTasks, selectedTaskId: null, collapsedTaskIds: new Set(),
 		onSelectTask: () => {}, onToggleCollapse: () => {},
 	}));
-	assert.equal(c5.querySelector("button[data-history-toggle='true']"), null, "5 tasks should NOT have See more/less");
+	assert.equal(c5.querySelector("button[data-history-toggle='true']") === null, true, "5 tasks should NOT have See more/less");
 	assert.equal(c5.querySelectorAll("[data-task-id]").length, 5, "All 5 tasks should be visible directly");
 
 	// 6 nodes: MUST have See more
@@ -145,7 +145,7 @@ test("Requirement 6 RED: Follow active button is completely removed", () => {
 	const { container } = render(React.createElement(RuntimeGraphSegmentDetails, {
 		threadId: "thr-1", projectId: "p-1", environment: null, segments: [], isExpanded: true, onToggle: () => {}, testState: state,
 	}));
-	assert.equal(container.querySelector("button[aria-label='Follow active']"), null, "Follow active button must not exist");
+	assert.equal(container.querySelector("button[aria-label='Follow active']") === null, true, "Follow active button must not exist");
 });
 
 test("Requirement 7-9 RED: Inspector has fixed header, X button, and wraps long target commands", () => {

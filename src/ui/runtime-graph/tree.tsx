@@ -1,12 +1,9 @@
-import React, { type FC, useState, useEffect } from "react";
+import React, { type FC, useState, useEffect, useMemo } from "react";
 import { experimental_Icon } from "@get-bb/plugin-sdk/app";
 import type { TaskTreeItem } from "./types.ts";
 import { RuntimeGraphNodeRow } from "./node-row.tsx";
-import {
-	hasActiveWork,
-	hasDescendantId,
-	getFoldedHistorySummary,
-} from "./tree-order.ts";
+import { hasActiveWork, hasDescendantId } from "./tree-order.ts";
+import { computePreviewFinishedIds, getHiddenBreakdown } from "./tree-preview.ts";
 
 export interface RuntimeGraphTreeProps {
 	readonly tree: readonly TaskTreeItem[];
@@ -19,6 +16,32 @@ export interface RuntimeGraphTreeProps {
 
 const FOLD_THRESHOLD = 5;
 
+const HistoryToggle: FC<{
+	readonly depth: number;
+	readonly label: string;
+	readonly isExpanded: boolean;
+	readonly hasFailure?: boolean;
+	readonly onToggle: () => void;
+}> = ({ depth, label, isExpanded, hasFailure, onToggle }) => {
+	const Icon = experimental_Icon;
+	return (
+		<div style={{ paddingLeft: `${depth * 16 + 24}px` }} className="py-0.5 pr-2">
+			<button
+				type="button"
+				data-history-toggle="true"
+				data-has-failure={hasFailure ? "true" : undefined}
+				onClick={onToggle}
+				className="flex items-center gap-1.5 py-0.5 px-1.5 rounded text-xs select-none transition-colors duration-150 text-muted-foreground hover:bg-state-hover hover:text-foreground cursor-pointer focus:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+			>
+				<span className="w-3.5 h-3.5 flex items-center justify-center text-muted-foreground">
+					<Icon name={isExpanded ? "ChevronUp" : "ChevronDown"} className="w-3.5 h-3.5" />
+				</span>
+				<span>{label}</span>
+			</button>
+		</div>
+	);
+};
+
 export const RuntimeGraphTree: FC<RuntimeGraphTreeProps> = ({
 	tree,
 	selectedTaskId,
@@ -27,15 +50,17 @@ export const RuntimeGraphTree: FC<RuntimeGraphTreeProps> = ({
 	onSelectTask,
 	onToggleCollapse,
 }) => {
-	const Icon = experimental_Icon;
 	const [expandedHistory, setExpandedHistory] = useState<ReadonlySet<string>>(() => new Set());
 	const [lastRevealedId, setLastRevealedId] = useState<number | null>(null);
 
+	const previewFinishedIds = useMemo(
+		() => computePreviewFinishedIds(tree, FOLD_THRESHOLD),
+		[tree],
+	);
+
 	useEffect(() => {
 		if (selectedTaskId === null) {
-			if (lastRevealedId !== null) {
-				setLastRevealedId(null);
-			}
+			if (lastRevealedId !== null) setLastRevealedId(null);
 			return;
 		}
 		if (selectedTaskId !== lastRevealedId) {
@@ -43,14 +68,12 @@ export const RuntimeGraphTree: FC<RuntimeGraphTreeProps> = ({
 			const toExpand: string[] = [];
 			const findBranches = (items: readonly TaskTreeItem[], key: string) => {
 				const finished = items.filter((it) => !hasActiveWork(it));
-				const summary = getFoldedHistorySummary(finished);
-				if (summary.total > FOLD_THRESHOLD && finished.some((it) => hasDescendantId(it, selectedTaskId))) {
+				const breakdown = getHiddenBreakdown(finished, previewFinishedIds);
+				if (breakdown.total > 0 && finished.some((it) => hasDescendantId(it, selectedTaskId))) {
 					toExpand.push(key);
 				}
 				for (const it of items) {
-					if (it.children.length > 0) {
-						findBranches(it.children, `branch-${it.id}`);
-					}
+					if (it.children.length > 0) findBranches(it.children, `branch-${it.id}`);
 				}
 			};
 			findBranches(tree, "root");
@@ -62,7 +85,7 @@ export const RuntimeGraphTree: FC<RuntimeGraphTreeProps> = ({
 				});
 			}
 		}
-	}, [selectedTaskId, lastRevealedId, tree]);
+	}, [selectedTaskId, lastRevealedId, tree, previewFinishedIds]);
 
 	if (tree.length === 0) {
 		return (
@@ -75,112 +98,73 @@ export const RuntimeGraphTree: FC<RuntimeGraphTreeProps> = ({
 	const toggleHistory = (branchKey: string) => {
 		setExpandedHistory((prev) => {
 			const next = new Set(prev);
-			if (next.has(branchKey)) {
-				next.delete(branchKey);
-			} else {
-				next.add(branchKey);
-			}
+			if (next.has(branchKey)) next.delete(branchKey);
+			else next.add(branchKey);
 			return next;
 		});
 	};
 
-	const renderBranch = (items: readonly TaskTreeItem[], depth: number, branchKey: string): React.ReactNode => {
+	const renderBranch = (
+		items: readonly TaskTreeItem[],
+		depth: number,
+		branchKey: string,
+	): React.ReactNode => {
 		const active: TaskTreeItem[] = [];
 		const finished: TaskTreeItem[] = [];
 
 		for (const item of items) {
-			if (hasActiveWork(item)) {
-				active.push(item);
-			} else {
-				finished.push(item);
-			}
+			if (hasActiveWork(item)) active.push(item);
+			else finished.push(item);
 		}
-
 		active.sort((a, b) => a.id - b.id);
 		finished.sort((a, b) => a.id - b.id);
 
-		const finishedSummary = getFoldedHistorySummary(finished);
-		const shouldFold = finishedSummary.total > FOLD_THRESHOLD;
-		const isHistoryExpanded = !shouldFold || expandedHistory.has(branchKey);
+		const hiddenBreakdown = getHiddenBreakdown(finished, previewFinishedIds);
+		const shouldFold = hiddenBreakdown.total > 0;
+		const isHistoryExpanded = expandedHistory.has(branchKey);
 
-		const renderItemNode = (item: TaskTreeItem) => {
-			const isSelected = selectedTaskId === item.id;
-			const isCollapsed = collapsedTaskIds.has(item.id);
-			const childBranchKey = `branch-${item.id}`;
-
-			return (
-				<React.Fragment key={`task-node-${item.id}`}>
-					<RuntimeGraphNodeRow
-						item={item}
-						depth={depth}
-						isSelected={isSelected}
-						isCollapsed={isCollapsed}
-						now={now}
-						onSelect={() => onSelectTask(item.id)}
-						onToggleCollapse={() => onToggleCollapse(item.id)}
-					/>
-					{!isCollapsed && item.children.length > 0
-						? renderBranch(item.children, depth + 1, childBranchKey)
-						: null}
-				</React.Fragment>
-			);
-		};
+		const renderItemNode = (item: TaskTreeItem) => (
+			<React.Fragment key={`task-node-${item.id}`}>
+				<RuntimeGraphNodeRow
+					item={item}
+					depth={depth}
+					isSelected={selectedTaskId === item.id}
+					isCollapsed={collapsedTaskIds.has(item.id)}
+					now={now}
+					onSelect={() => onSelectTask(item.id)}
+					onToggleCollapse={() => onToggleCollapse(item.id)}
+				/>
+				{!collapsedTaskIds.has(item.id) && item.children.length > 0
+					? renderBranch(item.children, depth + 1, `branch-${item.id}`)
+					: null}
+			</React.Fragment>
+		);
 
 		return (
 			<React.Fragment key={branchKey}>
 				{active.map(renderItemNode)}
-
 				{!shouldFold ? finished.map(renderItemNode) : null}
-
-				{shouldFold && !isHistoryExpanded ? (() => {
-					const { total, failed, toolError } = finishedSummary;
-					const hasFailure = failed > 0 || toolError > 0;
-					const labelText = failed > 0
-						? `See more (${total} · ${failed} failed)`
-						: (toolError > 0 ? `See more (${total} · ${toolError} tool error)` : `See more (${total})`);
-
-					return (
-						<div
-							key={`${branchKey}-see-more`}
-							style={{ paddingLeft: `${depth * 16 + 24}px` }}
-							className="py-0.5 pr-2"
-						>
-							<button
-								type="button"
-								data-history-toggle="true"
-								data-has-failure={hasFailure ? "true" : undefined}
-								onClick={() => toggleHistory(branchKey)}
-								className="flex items-center gap-1.5 py-0.5 px-1.5 rounded text-xs select-none transition-colors duration-150 text-muted-foreground hover:bg-state-hover hover:text-foreground cursor-pointer focus:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-							>
-								<span className="w-3.5 h-3.5 flex items-center justify-center text-muted-foreground">
-									<Icon name="ChevronDown" className="w-3.5 h-3.5" />
-								</span>
-								<span>{labelText}</span>
-							</button>
-						</div>
-					);
-				})() : null}
-
+				{shouldFold && !isHistoryExpanded ? (
+					<>
+						{finished.filter((it) => previewFinishedIds.has(it.id)).map(renderItemNode)}
+						<HistoryToggle
+							depth={depth}
+							label={hiddenBreakdown.label}
+							isExpanded={false}
+							hasFailure={hiddenBreakdown.hasFailure}
+							onToggle={() => toggleHistory(branchKey)}
+						/>
+					</>
+				) : null}
 				{shouldFold && isHistoryExpanded ? (
 					<>
 						{finished.map(renderItemNode)}
-						<div
-							key={`${branchKey}-see-less`}
-							style={{ paddingLeft: `${depth * 16 + 24}px` }}
-							className="py-0.5 pr-2"
-						>
-							<button
-								type="button"
-								data-history-toggle="true"
-								onClick={() => toggleHistory(branchKey)}
-								className="flex items-center gap-1.5 py-0.5 px-1.5 rounded text-xs select-none transition-colors duration-150 text-muted-foreground hover:bg-state-hover hover:text-foreground cursor-pointer focus:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-							>
-								<span className="w-3.5 h-3.5 flex items-center justify-center text-muted-foreground">
-									<Icon name="ChevronUp" className="w-3.5 h-3.5" />
-								</span>
-								<span>See less</span>
-							</button>
-						</div>
+						<HistoryToggle
+							depth={depth}
+							label="See less"
+							isExpanded={true}
+							onToggle={() => toggleHistory(branchKey)}
+						/>
 					</>
 				) : null}
 			</React.Fragment>

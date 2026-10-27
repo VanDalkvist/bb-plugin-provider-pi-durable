@@ -169,7 +169,7 @@ test("D6 RED: node row does not nest button inside role=button and provides aria
 	const roleButton = container.querySelector('[role="button"]');
 	if (roleButton) {
 		const nestedBtn = roleButton.querySelector("button");
-		assert.equal(nestedBtn, null, "MUST NOT nest button inside role=button container");
+		assert.equal(nestedBtn === null, true, "MUST NOT nest button inside role=button container");
 	}
 
 	// Chevron button must have aria-expanded

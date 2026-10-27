@@ -114,7 +114,7 @@ export const RuntimeGraphSummary: FC<RuntimeGraphSummaryProps> = ({
 			type="button"
 			onClick={onToggle}
 			aria-expanded={isExpanded}
-			className="h-6 px-2 py-1 flex items-center gap-2 text-xs select-none rounded hover:bg-state-hover transition-colors duration-150 cursor-pointer"
+			className="h-6 px-2 py-1 flex items-center gap-1.5 text-xs select-none rounded hover:bg-state-hover transition-colors duration-150 cursor-pointer"
 		>
 			<span className={`flex items-center justify-center ${iconColor}`}>
 				<Icon name={iconName} className="w-3.5 h-3.5" />
