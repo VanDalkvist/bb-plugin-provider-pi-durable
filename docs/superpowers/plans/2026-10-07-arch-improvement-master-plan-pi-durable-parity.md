@@ -335,5 +335,17 @@ STAGE 2: РАСШИРЕННЫЕ ВОЗМОЖНОСТИ ДВИЖКА И ПОЛН�
   - Следующий пользовательский срез UI (английская локализация контролов, правдивое отображение активных задач и скрытие инспектора до выбора узла) запланирован в документе [`docs/superpowers/plans/2026-10-27-runtime-graph-live-truth-and-english-ui.md`](./2026-10-27-runtime-graph-live-truth-and-english-ui.md) под управлением выделенного UI writer.
 - **Файлы:** `src/runner/stdout-guard.ts`, `src/runner/runtime-graph-receipts.ts`, `src/runner/runtime-graph-source.ts`, `tests/runner-cold-start-protocol.test.ts`, `tests/runtime-graph-completing.test.ts`, `dist/runner/index.js`.
 
+---
+
+### Cycle 80: Truthful Live Graph Metadata & Sanitized Attributes (v0.3.2) [✅ COMPLETED]
+- **Цель:** Устранить подтверждённые первопричины исчезновения и обезличивания активных/быстрых задач в Runtime Task Graph (`runtime-graph-live-truth-investigation.md`):
+  1. *[Имена быстрых инструментов]:* Сохранение реальных `toolName`, `targetHint`, `preview`, `startedAt`, `durationMs` в `RuntimeTaskReceipt` при завершении до 250 мс дебаунса.
+  2. *[Санитизация targetHint]:* Безопасная очистка аргументов от Bearer токенов, ghp_ ключей, паролей и секретов.
+  3. *[Реальные метаданные generation]:* Извлечение `model: { provider, modelId }` и `thinkingLevel` из чекпоинта `GenerationTask` / `pi.agent` doc / `bb.subagents` doc без глобальных дефолтов и догадок.
+  4. *[Настоящее время старта]:* Привязка к Session-stamped `TaskRecord.startedAt` без подмены проспективным временем наблюдения.
+  5. *[Связывание логического владения субагентами]:* Авторитетный маппинг дочерних бесед по `ownerTaskId` из `bb.subagents`.
+- **Файлы:** `src/runtime-graph/types.ts`, `src/runtime-graph/schema.ts`, `src/runner/task-labels.ts`, `src/runner/runtime-graph-mapper.ts`, `src/runner/runtime-graph-receipts.ts`, `src/runner/runtime-graph-conversations.ts`, `src/runner/runtime-graph-source.ts`, `tests/runtime-graph-live-metadata.test.ts`, `dist/runner/index.js`.
+
+
 
 

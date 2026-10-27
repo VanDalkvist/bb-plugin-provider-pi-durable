@@ -37,6 +37,15 @@ export class RuntimeGraphConversations {
 		this.known.set(String(cid), { id: cid, ...(owner ? { owner } : {}), ...(parent ? { parent } : {}) });
 	}
 
+	recordLogicalOwner(childId: number, parentConversationId: number, ownerTaskId: number): void {
+		const cidStr = String(childId);
+		const existing = this.known.get(cidStr) ?? { id: childId };
+		this.known.set(cidStr, {
+			...existing,
+			owner: { conversationId: parentConversationId, taskId: ownerTaskId },
+		});
+	}
+
 	snapshot(): Record<string, RuntimeConversationNode> {
 		return Object.fromEntries(this.known);
 	}

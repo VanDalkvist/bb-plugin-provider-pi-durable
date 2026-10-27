@@ -11,6 +11,12 @@ const KIND_NAMES: Record<string, string> = {
 	"pi.compaction": "compacting context",
 };
 
+export interface TaskCallDetails {
+	readonly toolName?: string;
+	readonly targetHint?: string;
+	readonly preview?: string;
+}
+
 /** Argument fields worth showing, in the order that reads best for the tool. */
 const ARG_KEYS = ["command", "task", "path", "file_path", "pattern", "query", "url", "prompt"];
 
@@ -19,12 +25,20 @@ function clip(text: string): string {
 	return oneLine.length <= MAX_NAME ? oneLine : `${oneLine.slice(0, MAX_NAME - 1)}…`;
 }
 
+export function sanitizeTargetHint(raw: string): string {
+	let s = raw.replace(/\s+/g, " ").trim();
+	s = s.replace(/bearer\s+[a-zA-Z0-9_\-\.]+/gi, "Bearer [redacted]");
+	s = s.replace(/(ghp|gho|ghu|ghs|ghr|sec)_[a-zA-Z0-9]+/g, "[redacted]");
+	s = s.replace(/(api[_-]?key|token|secret|password|passwd|auth)\s*[:=]\s*[^\s&]+/gi, "$1=[redacted]");
+	return clip(s);
+}
+
 function argumentHint(args: unknown): string | undefined {
 	if (typeof args !== "object" || args === null) return undefined;
 	const record = args as Record<string, unknown>;
 	for (const key of ARG_KEYS) {
 		const value = record[key];
-		if (typeof value === "string" && value.trim() !== "") return clip(value);
+		if (typeof value === "string" && value.trim() !== "") return sanitizeTargetHint(value);
 	}
 	return undefined;
 }
@@ -46,6 +60,7 @@ function isNested(slot: ToolSlot | NestedToolSlot): slot is NestedToolSlot {
  */
 export class TaskNames {
 	private readonly names = new Map<string, string>();
+	private readonly details = new Map<string, TaskCallDetails>();
 
 	public learn(view: DurableView): void {
 		const live = liveOf(view);
@@ -56,20 +71,27 @@ export class TaskNames {
 			// A nested slot carries the arguments it runs with; a model-issued call's are in its assistant entry.
 			const args = isNested(slot) ? slot.arguments : resolveToolCallArgs(slot.callId, view);
 			const hint = argumentHint(args);
-			this.names.set(key, clip(hint === undefined ? slot.name : `${slot.name}: ${hint}`));
+			const toolName = slot.name ? clip(slot.name) : undefined;
+			const preview = clip(hint === undefined ? slot.name : `${slot.name}: ${hint}`);
+			this.names.set(key, preview);
+			this.details.set(key, { toolName, targetHint: hint, preview });
 		}
 	}
 
 	public get(taskId: string): string | undefined {
 		return this.names.get(taskId);
 	}
+
+	public getDetails(taskId: string): TaskCallDetails | undefined {
+		return this.details.get(taskId);
+	}
 }
 
 /** How the plan panel names one task: the call it is running, otherwise its kind in plain words. */
-export function taskLabel(node: TaskGraphNode, names?: TaskNames): string {
+export function taskLabel(node: TaskGraphNode, names?: TaskNames, modelLabel?: string): string {
 	const state = node.state;
 	const call = names?.get(String(node.id));
-	const plain = KIND_NAMES[node.kind];
+	const plain = (node.kind === "pi.generation" && modelLabel) ? modelLabel : KIND_NAMES[node.kind];
 	const kind = call ?? plain ?? (node.kind.startsWith("pi.") ? node.kind.slice(3) : node.kind);
 	if (state.status === "waiting") return `${kind} · waiting on ${state.on.length}`;
 	if (state.status === "completing") {

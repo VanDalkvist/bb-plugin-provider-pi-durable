@@ -9,6 +9,9 @@ export interface TerminalOptions {
 	readonly isToolError?: boolean;
 	readonly durationMs?: number;
 	readonly preview?: string;
+	readonly toolName?: string;
+	readonly targetHint?: string;
+	readonly startedAt?: number;
 }
 
 /**
@@ -64,14 +67,29 @@ export class RuntimeGraphReceiptsCollector {
 		}
 
 		let preview = options?.preview;
+		let toolName = options?.toolName;
+		let targetHint = options?.targetHint;
 		if (preview && preview.length > MAX_PREVIEW_LENGTH) {
 			preview = preview.slice(0, MAX_PREVIEW_LENGTH);
 		}
+		if (toolName && toolName.length > 64) {
+			toolName = toolName.slice(0, 64);
+		}
+		if (targetHint && targetHint.length > 128) {
+			targetHint = targetHint.slice(0, 128);
+		}
+		if (!preview && toolName) {
+			preview = targetHint ? `${toolName}: ${targetHint}` : toolName;
+		}
+
+		const startedAt =
+			options?.startedAt ??
+			(task.startedAt !== undefined && task.startedAt !== null ? Number(task.startedAt) : undefined);
 
 		const durationMs =
 			options?.durationMs ??
-			(task.endedAt && task.startedAt && task.endedAt >= task.startedAt
-				? task.endedAt - task.startedAt
+			(task.endedAt && startedAt && task.endedAt >= startedAt
+				? task.endedAt - startedAt
 				: undefined);
 
 		const owner =
@@ -88,8 +106,11 @@ export class RuntimeGraphReceiptsCollector {
 			isToolError: options?.isToolError,
 			error,
 			endedAt: task.endedAt ?? Date.now(),
+			startedAt,
 			durationMs,
 			preview,
+			toolName,
+			targetHint,
 		};
 
 		this.pushReceipt(receipt);

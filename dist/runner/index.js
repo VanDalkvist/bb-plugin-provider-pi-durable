@@ -389,8 +389,13 @@ function createSubagentExtension(getPolicy) {
               }
               const existingConv = (await tx.scanConversations({ ownerTaskId: api.taskId }, 1)).items[0];
               let childId = existingConv?.id;
+              let anchorId;
               if (childId === void 0) {
-                const created = await tx.createConversation({ ownership: { kind: "task", taskId: api.taskId } });
+                if (isBackground) {
+                  anchorId = await tx.createTask(Anchor, null, BACKGROUND);
+                }
+                const ownership = isBackground && anchorId !== void 0 ? { kind: "task", taskId: anchorId } : { kind: "task", taskId: api.taskId };
+                const created = await tx.createConversation({ ownership });
                 await configure(tx, created.id, {
                   model: resolved.model,
                   thinkingLevel: resolved.thinkingLevel,
@@ -405,6 +410,7 @@ function createSubagentExtension(getPolicy) {
                 task: args2.task,
                 role: "worker",
                 ownerTaskId: api.taskId,
+                anchorTaskId: anchorId,
                 background: isBackground,
                 actualModel: resolved.model,
                 thinkingLevel: resolved.thinkingLevel,
@@ -3697,12 +3703,19 @@ function clip(text) {
   const oneLine = text.replace(/\s+/g, " ").trim();
   return oneLine.length <= MAX_NAME ? oneLine : `${oneLine.slice(0, MAX_NAME - 1)}\u2026`;
 }
+function sanitizeTargetHint(raw) {
+  let s = raw.replace(/\s+/g, " ").trim();
+  s = s.replace(/bearer\s+[a-zA-Z0-9_\-\.]+/gi, "Bearer [redacted]");
+  s = s.replace(/(ghp|gho|ghu|ghs|ghr|sec)_[a-zA-Z0-9]+/g, "[redacted]");
+  s = s.replace(/(api[_-]?key|token|secret|password|passwd|auth)\s*[:=]\s*[^\s&]+/gi, "$1=[redacted]");
+  return clip(s);
+}
 function argumentHint(args2) {
   if (typeof args2 !== "object" || args2 === null) return void 0;
   const record = args2;
   for (const key of ARG_KEYS) {
     const value = record[key];
-    if (typeof value === "string" && value.trim() !== "") return clip(value);
+    if (typeof value === "string" && value.trim() !== "") return sanitizeTargetHint(value);
   }
   return void 0;
 }
@@ -3715,6 +3728,7 @@ function isNested(slot) {
 }
 var TaskNames = class {
   names = /* @__PURE__ */ new Map();
+  details = /* @__PURE__ */ new Map();
   learn(view) {
     const live = liveOf(view);
     for (const slot of [...live.tools ?? [], ...live.nestedTools ?? []]) {
@@ -3723,17 +3737,23 @@ var TaskNames = class {
       if (this.names.has(key)) continue;
       const args2 = isNested(slot) ? slot.arguments : resolveToolCallArgs(slot.callId, view);
       const hint = argumentHint(args2);
-      this.names.set(key, clip(hint === void 0 ? slot.name : `${slot.name}: ${hint}`));
+      const toolName = slot.name ? clip(slot.name) : void 0;
+      const preview = clip(hint === void 0 ? slot.name : `${slot.name}: ${hint}`);
+      this.names.set(key, preview);
+      this.details.set(key, { toolName, targetHint: hint, preview });
     }
   }
   get(taskId) {
     return this.names.get(taskId);
   }
+  getDetails(taskId) {
+    return this.details.get(taskId);
+  }
 };
-function taskLabel(node, names) {
+function taskLabel(node, names, modelLabel) {
   const state = node.state;
   const call = names?.get(String(node.id));
-  const plain = KIND_NAMES[node.kind];
+  const plain = node.kind === "pi.generation" && modelLabel ? modelLabel : KIND_NAMES[node.kind];
   const kind = call ?? plain ?? (node.kind.startsWith("pi.") ? node.kind.slice(3) : node.kind);
   if (state.status === "waiting") return `${kind} \xB7 waiting on ${state.on.length}`;
   if (state.status === "completing") {
@@ -3913,7 +3933,14 @@ var runtimeTaskNodeSchema = z5.object({
   label: z5.string().min(1).max(MAX_LABEL_LENGTH),
   startedAt: z5.number().int().positive().optional(),
   endedAt: z5.number().int().positive().optional(),
-  durationMs: z5.number().int().nonnegative().optional()
+  durationMs: z5.number().int().nonnegative().optional(),
+  toolName: z5.string().max(64).optional(),
+  targetHint: z5.string().max(128).optional(),
+  model: z5.object({
+    provider: z5.string().max(64),
+    modelId: z5.string().max(128)
+  }).optional(),
+  thinkingLevel: z5.string().max(32).optional()
 });
 var runtimeConversationNodeSchema = z5.object({
   id: z5.number().int().positive(),
@@ -3939,7 +3966,10 @@ var runtimeTaskReceiptSchema = z5.object({
   }).optional(),
   endedAt: z5.number().int().positive(),
   durationMs: z5.number().int().nonnegative().optional(),
-  preview: z5.string().max(MAX_PREVIEW_LENGTH).optional()
+  preview: z5.string().max(MAX_PREVIEW_LENGTH).optional(),
+  toolName: z5.string().max(64).optional(),
+  targetHint: z5.string().max(128).optional(),
+  startedAt: z5.number().int().positive().optional()
 });
 var runtimeGraphStatsSchema = z5.object({
   liveCount: z5.number().int().nonnegative(),
@@ -4028,10 +4058,22 @@ var RuntimeGraphReceiptsCollector = class {
       };
     }
     let preview = options?.preview;
+    let toolName = options?.toolName;
+    let targetHint = options?.targetHint;
     if (preview && preview.length > MAX_PREVIEW_LENGTH) {
       preview = preview.slice(0, MAX_PREVIEW_LENGTH);
     }
-    const durationMs = options?.durationMs ?? (task.endedAt && task.startedAt && task.endedAt >= task.startedAt ? task.endedAt - task.startedAt : void 0);
+    if (toolName && toolName.length > 64) {
+      toolName = toolName.slice(0, 64);
+    }
+    if (targetHint && targetHint.length > 128) {
+      targetHint = targetHint.slice(0, 128);
+    }
+    if (!preview && toolName) {
+      preview = targetHint ? `${toolName}: ${targetHint}` : toolName;
+    }
+    const startedAt = options?.startedAt ?? (task.startedAt !== void 0 && task.startedAt !== null ? Number(task.startedAt) : void 0);
+    const durationMs = options?.durationMs ?? (task.endedAt && startedAt && task.endedAt >= startedAt ? task.endedAt - startedAt : void 0);
     const owner = task.owner !== void 0 && task.owner !== null && Number(task.owner) > 0 ? Number(task.owner) : void 0;
     const receipt = {
       taskId,
@@ -4042,8 +4084,11 @@ var RuntimeGraphReceiptsCollector = class {
       isToolError: options?.isToolError,
       error,
       endedAt: task.endedAt ?? Date.now(),
+      startedAt,
       durationMs,
-      preview
+      preview,
+      toolName,
+      targetHint
     };
     this.pushReceipt(receipt);
     return receipt;
@@ -4104,12 +4149,109 @@ var RuntimeGraphConversations = class {
     const parent = conv.parent ? { conversationId: Number(conv.parent.conversationId), at: Number(conv.parent.at) } : existing.parent;
     this.known.set(String(cid), { id: cid, ...owner ? { owner } : {}, ...parent ? { parent } : {} });
   }
+  recordLogicalOwner(childId, parentConversationId, ownerTaskId) {
+    const cidStr = String(childId);
+    const existing = this.known.get(cidStr) ?? { id: childId };
+    this.known.set(cidStr, {
+      ...existing,
+      owner: { conversationId: parentConversationId, taskId: ownerTaskId }
+    });
+  }
   snapshot() {
     return Object.fromEntries(this.known);
   }
 };
 
 // src/runner/runtime-graph-mapper.ts
+function extractTaskModelMeta(node, current, rootConvId) {
+  if (node.kind !== "pi.generation") return {};
+  const cp = node.state?.checkpoint ?? node.checkpoint;
+  let provider;
+  let modelId;
+  let thinkingLevel;
+  if (cp && typeof cp === "object" && cp.model && typeof cp.model === "object") {
+    if (cp.model.provider && (cp.model.modelId || cp.model.id)) {
+      provider = String(cp.model.provider);
+      modelId = String(cp.model.modelId ?? cp.model.id);
+    }
+    if (cp.thinkingLevel !== void 0 && cp.thinkingLevel !== null) {
+      thinkingLevel = String(cp.thinkingLevel);
+    }
+  }
+  if (!provider || !modelId) {
+    const convId = Number(node.conversationId);
+    if (convId === rootConvId) {
+      const agentDoc = current?.conversation?.docs?.["pi.agent"];
+      if (agentDoc?.model?.provider && (agentDoc.model.modelId || agentDoc.model.id)) {
+        provider = String(agentDoc.model.provider);
+        modelId = String(agentDoc.model.modelId ?? agentDoc.model.id);
+      }
+      if (agentDoc?.thinkingLevel !== void 0 && agentDoc.thinkingLevel !== null) {
+        thinkingLevel = String(agentDoc.thinkingLevel);
+      }
+    } else {
+      const subagentsDoc = current?.conversation?.docs?.["bb.subagents"];
+      const subRec = subagentsDoc?.agents ? Object.values(subagentsDoc.agents).find((a) => Number(a?.conversationId) === convId) : void 0;
+      if (subRec?.actualModel?.provider && (subRec.actualModel.modelId || subRec.actualModel.id)) {
+        provider = String(subRec.actualModel.provider);
+        modelId = String(subRec.actualModel.modelId ?? subRec.actualModel.id);
+      }
+      if (subRec?.thinkingLevel !== void 0 && subRec.thinkingLevel !== null) {
+        thinkingLevel = String(subRec.thinkingLevel);
+      }
+    }
+  }
+  if (!provider || !modelId) return {};
+  const model = { provider, modelId };
+  const modelLabel = thinkingLevel && thinkingLevel !== "off" ? `assistant turn \xB7 ${modelId} (${thinkingLevel})` : `assistant turn \xB7 ${modelId}`;
+  return { model, thinkingLevel, modelLabel };
+}
+function recordSubagentOwnership(conversations, current, rootConvId) {
+  const doc = current?.conversation?.docs?.["bb.subagents"];
+  if (!doc?.agents) return;
+  for (const a of Object.values(doc.agents)) {
+    if (a?.conversationId && a?.ownerTaskId) {
+      conversations.recordLogicalOwner(Number(a.conversationId), Number(rootConvId), Number(a.ownerTaskId));
+    }
+  }
+}
+function buildMappedNode(node, current, rootConvId, names, nativeStartedAt, clock) {
+  const id = Number(node.id);
+  const convId = Number(node.conversationId);
+  const meta = extractTaskModelMeta(node, current, rootConvId);
+  let label = taskLabel(node, names, meta.modelLabel);
+  if (label.length > MAX_LABEL_LENGTH) label = label.slice(0, MAX_LABEL_LENGTH);
+  const callDetails = names.getDetails(String(id));
+  const startedAt = node.startedAt !== void 0 && node.startedAt !== null ? Number(node.startedAt) : nativeStartedAt.get(id);
+  const durationMs = startedAt !== void 0 ? Math.max(0, clock() - startedAt) : void 0;
+  return {
+    id,
+    kind: node.kind,
+    conversationId: convId,
+    owner: node.owner !== void 0 ? Number(node.owner) : void 0,
+    background: Boolean(node.background),
+    abortRequested: Boolean(node.abortRequested),
+    state: mapTaskGraphNodeState(node.state),
+    blocked: node.blocked,
+    label,
+    startedAt,
+    durationMs,
+    toolName: callDetails?.toolName,
+    targetHint: callDetails?.targetHint,
+    model: meta.model,
+    thinkingLevel: meta.thinkingLevel
+  };
+}
+function recordTerminalWithDetails(receipts, task, names, nativeStartedAt) {
+  const id = Number(task.id);
+  const details = names.getDetails(String(id));
+  receipts.recordTerminal(task, {
+    preview: details?.preview ?? names.get(String(id)),
+    toolName: details?.toolName,
+    targetHint: details?.targetHint,
+    startedAt: nativeStartedAt.get(id)
+  });
+}
 function extractTaskGraph(current) {
   if (!current || typeof current !== "object") return { tasks: {} };
   const obj = current;
@@ -4156,6 +4298,7 @@ var RuntimeGraphSource = class {
   listeners = /* @__PURE__ */ new Set();
   epoch;
   conversations;
+  nativeStartedAt = /* @__PURE__ */ new Map();
   revision = 0;
   previousNodes = /* @__PURE__ */ new Map();
   lastStructuralJson = "";
@@ -4178,8 +4321,12 @@ var RuntimeGraphSource = class {
       this.unsubscribeCommits = this.harness.subscribeCommits((pub) => {
         for (const ch of pub.changes) {
           if (ch?.type === "task") {
-            if (ch.value?.state?.status === "terminal") {
-              this.receipts.recordTerminal(ch.value);
+            const taskVal = ch.value;
+            const idNum = Number(taskVal?.id);
+            if (taskVal?.startedAt) this.nativeStartedAt.set(idNum, Number(taskVal.startedAt));
+            if (taskVal?.state?.status === "terminal") {
+              this.learnNames();
+              recordTerminalWithDetails(this.receipts, taskVal, this.names, this.nativeStartedAt);
             }
             this.schedule();
           } else if (ch?.type === "conversation" && ch.value) {
@@ -4230,32 +4377,17 @@ var RuntimeGraphSource = class {
     this.firstScheduledAt = void 0;
     if (this.isDisposed) return;
     const current = this.viewSource.current();
-    if (current && "session" in current && "conversation" in current) {
-      this.names.learn(current);
-    }
+    this.learnNames(current);
     const rawNodes = extractTaskGraph(current).tasks ?? {};
     const totalLiveCount = Object.keys(rawNodes).length;
     const liveNodeEntries = Object.entries(rawNodes).slice(0, MAX_LIVE_NODES);
     const currentLiveIds = /* @__PURE__ */ new Set();
     const mappedNodes = {};
+    const rootConvId = Number(this.scope.rootConversationId);
     for (const [key, node] of liveNodeEntries) {
-      const id = Number(node.id);
-      currentLiveIds.add(id);
-      const convId = Number(node.conversationId);
-      this.conversations.recordFromLiveNode(convId, id, node.conversations);
-      let label = taskLabel(node, this.names);
-      if (label.length > MAX_LABEL_LENGTH) label = label.slice(0, MAX_LABEL_LENGTH);
-      mappedNodes[key] = {
-        id,
-        kind: node.kind,
-        conversationId: convId,
-        owner: node.owner !== void 0 ? Number(node.owner) : void 0,
-        background: Boolean(node.background),
-        abortRequested: Boolean(node.abortRequested),
-        state: mapTaskGraphNodeState(node.state),
-        blocked: node.blocked,
-        label
-      };
+      currentLiveIds.add(Number(node.id));
+      this.conversations.recordFromLiveNode(Number(node.conversationId), Number(node.id), node.conversations);
+      mappedNodes[key] = buildMappedNode(node, current, rootConvId, this.names, this.nativeStartedAt, this.clock);
     }
     const hasMissingReceipts = this.reconcileDisappearedNodes(currentLiveIds);
     this.previousNodes = new Map(
@@ -4282,6 +4414,13 @@ var RuntimeGraphSource = class {
     };
     for (const listener of this.listeners) listener(snapshot);
   }
+  learnNames(current) {
+    const cur = current ?? this.viewSource.current();
+    if (cur && typeof cur === "object" && "session" in cur && "conversation" in cur) {
+      this.names.learn(cur);
+    }
+    recordSubagentOwnership(this.conversations, cur, this.scope.rootConversationId);
+  }
   reconcileDisappearedNodes(currentLiveIds) {
     let hasMissing = false;
     for (const [prevId] of this.previousNodes) {
@@ -4290,7 +4429,8 @@ var RuntimeGraphSource = class {
         if (this.harness?.getTask) {
           void this.harness.getTask(prevId).then((task) => {
             if (task && task.state?.status === "terminal") {
-              this.receipts.recordTerminal(task);
+              this.learnNames();
+              recordTerminalWithDetails(this.receipts, task, this.names, this.nativeStartedAt);
               this.schedule();
             }
           }).catch(() => {
