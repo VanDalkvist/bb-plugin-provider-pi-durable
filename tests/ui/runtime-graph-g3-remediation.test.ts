@@ -90,14 +90,14 @@ test("D3 RED: summary displays unavailable warning, NOT false green checkmark", 
 		}),
 	);
 
-	assert.ok(!container.textContent?.includes("Нет активных задач"), "Must not mask unavailable as 'no active tasks'");
-	assert.ok(container.textContent?.includes("недоступен") || container.textContent?.includes("Сбой"), "Must show unavailable warning");
+	assert.ok(!container.textContent?.includes("No active tasks"), "Must not mask unavailable as 'no active tasks'");
+	assert.ok(container.textContent?.includes("Task graph unavailable") || container.textContent?.includes("unavailable"), "Must show unavailable warning");
 	// Icon must not be Check
 	const svgIcons = container.querySelectorAll("[data-icon-name]");
 	assert.ok(!Array.from(svgIcons).some((i) => i.getAttribute("data-icon-name") === "Check"), "Checkmark must not be shown on unavailable");
 });
 
-test("D3 RED: summary uses grammatically correct Russian plural for active tasks", () => {
+test("D3 RED: summary uses grammatically correct singular and plural for active tasks", () => {
 	const makeActiveState = (activeCount: number): any => {
 		const nodes: any = {};
 		for (let i = 1; i <= activeCount; i++) {
@@ -121,8 +121,16 @@ test("D3 RED: summary uses grammatically correct Russian plural for active tasks
 			segments: [], isExpanded: false, onToggle: () => {}, testState: makeActiveState(1),
 		}),
 	);
-	assert.ok(c1.textContent?.includes("1 активная"), `Expected '1 активная', got ${c1.textContent}`);
-	assert.ok(!c1.textContent?.includes("активныа"), "Must not contain typo 'активныа'");
+	assert.ok(c1.textContent?.includes("1 active task"), `Expected '1 active task', got ${c1.textContent}`);
+	assert.ok(!c1.textContent?.includes("активн"), "Must not contain Russian word 'активн'");
+
+	const { container: c2 } = render(
+		React.createElement(RuntimeGraphSummary, {
+			threadId: "thr-1", projectId: "p-1", environment: null,
+			segments: [], isExpanded: false, onToggle: () => {}, testState: makeActiveState(2),
+		}),
+	);
+	assert.ok(c2.textContent?.includes("2 active tasks"), `Expected '2 active tasks', got ${c2.textContent}`);
 });
 
 test("D4 RED: inspector displays both preview and error diagnostics when task failed", () => {

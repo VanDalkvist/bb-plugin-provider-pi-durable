@@ -69,7 +69,7 @@ test("UI behavior: loads policy, inherit mode disables picker and saves without 
 
 	// Inherit explanation text must be present
 	assert.ok(
-		slot.container.textContent?.includes("Субагент запускается с той же моделью"),
+		slot.container.textContent?.includes("Subagents run with the same model"),
 		"Inherit explanation must be visible",
 	);
 
@@ -91,9 +91,9 @@ test("UI behavior: loads policy, inherit mode disables picker and saves without 
 	});
 
 	// Save button should be present
-	const saveBtn = Array.from(slot.container.querySelectorAll("button")).find((b) => b.textContent?.includes("Сохранить"));
+	const saveBtn = Array.from(slot.container.querySelectorAll("button")).find((b) => b.textContent?.includes("Save"));
 	assert.ok(saveBtn);
-	assert.equal(saveBtn?.textContent?.trim(), "Сохранить");
+	assert.equal(saveBtn?.textContent?.trim(), "Save");
 
 	slot.unmount();
 });
@@ -138,7 +138,7 @@ test("UI behavior: configured mode validates model availability and displays war
 
 	// Warning about missing model must be visible
 	assert.ok(
-		slot.container.textContent?.includes("недоступна в текущем контексте"),
+		slot.container.textContent?.includes("unavailable in the current context"),
 		"Warning for missing model must be displayed",
 	);
 
@@ -149,7 +149,7 @@ test("UI behavior: configured mode validates model availability and displays war
 	);
 
 	// Save button should be disabled because model is not available
-	const saveBtn = Array.from(slot.container.querySelectorAll("button")).find((b) => b.textContent?.includes("Сохранить"));
+	const saveBtn = Array.from(slot.container.querySelectorAll("button")).find((b) => b.textContent?.includes("Save"));
 	assert.ok(saveBtn);
 	assert.equal(saveBtn?.disabled, true, "Save button must be disabled when configured model is unavailable");
 

@@ -9,13 +9,13 @@ import {
 export default definePluginApp((app) => {
 	app.slots.settingsSection({
 		id: "subagent-model-policy",
-		title: "Субагенты",
+		title: "Subagents",
 		component: SubagentSettingsSection,
 	});
 
 	app.slots.experimental_threadContextSegment({
 		id: "runtime-graph",
-		title: "Ход выполнения",
+		title: "Execution Progress",
 		group: "2_runtime",
 		summary: RuntimeGraphSummary,
 		details: RuntimeGraphSegmentDetails,

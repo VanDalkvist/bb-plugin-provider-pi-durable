@@ -19,34 +19,34 @@ export const RoutingSelector: FC<RoutingSelectorProps> = ({
 	return (
 		<div className="space-y-2">
 			<label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-				Контекст предпросмотра
+				Preview context
 			</label>
 			<div className="flex gap-2 items-center">
 				{hosts.length > 0 && (
 					<select
-						aria-label="Выбор хоста для предпросмотра"
+						aria-label="Select host for preview"
 						className="border rounded px-2 py-1 bg-background text-foreground text-xs"
 						value={routing?.kind === "host" ? routing.hostId : ""}
 						onChange={(e) => setRouting({ kind: "host", hostId: e.target.value })}
 					>
 						{hosts.map((h) => (
 							<option key={h.id} value={h.id}>
-								Хост: {h.name || h.id}
+								Host: {h.name || h.id}
 							</option>
 						))}
 					</select>
 				)}
 				{environments.length > 0 && (
 					<select
-						aria-label="Выбор окружения для предпросмотра"
+						aria-label="Select environment for preview"
 						className="border rounded px-2 py-1 bg-background text-foreground text-xs"
 						value={routing?.kind === "environment" ? routing.environmentId : ""}
 						onChange={(e) => setRouting({ kind: "environment", environmentId: e.target.value })}
 					>
-						<option value="" disabled>Выберите окружение</option>
+						<option value="" disabled>Select environment</option>
 						{environments.map((env) => (
 							<option key={env.id} value={env.id}>
-								Окружение: {env.name || env.id}
+								Environment: {env.name || env.id}
 							</option>
 						))}
 					</select>

@@ -20,7 +20,7 @@ export const RuntimeGraphTree: FC<RuntimeGraphTreeProps> = ({
 	if (tree.length === 0) {
 		return (
 			<div className="flex items-center justify-center h-full p-4 text-xs text-muted-foreground">
-				Нет задач в графе
+				No tasks in graph
 			</div>
 		);
 	}

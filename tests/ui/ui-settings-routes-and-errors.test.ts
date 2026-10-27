@@ -75,7 +75,7 @@ test("UI routes & errors: conflict preserves user draft and updates expectedRevi
 	});
 
 	// Attempt 1: Save triggers conflict
-	const saveBtn = Array.from(slot.container.querySelectorAll("button")).find((b) => b.textContent?.includes("Сохранить"))!;
+	const saveBtn = Array.from(slot.container.querySelectorAll("button")).find((b) => b.textContent?.includes("Save"))!;
 	await act(async () => {
 		fireEvent.click(saveBtn);
 		await new Promise((r) => setTimeout(r, 50));
@@ -83,7 +83,7 @@ test("UI routes & errors: conflict preserves user draft and updates expectedRevi
 
 	assert.equal(attempts, 1);
 	// Conflict message displayed
-	assert.ok(slot.container.textContent?.includes("Конфликт изменений"), "Conflict message must be visible");
+	assert.ok(slot.container.textContent?.includes("Conflict: settings were updated"), "Conflict message must be visible");
 	// User draft is preserved (still configured mode!)
 	assert.equal(configuredRadio.checked, true, "Configured radio must remain checked after conflict");
 
@@ -138,7 +138,7 @@ test("UI routes & errors: handles modelLoadError and offline catalog without cra
 	});
 
 	// Switch preview routing to h2
-	const hostSelect = slot.container.querySelector('select[aria-label="Выбор хоста для предпросмотра"]') as HTMLSelectElement;
+	const hostSelect = slot.container.querySelector('select[aria-label="Select host for preview"]') as HTMLSelectElement;
 	assert.ok(hostSelect, "Host select must exist");
 
 	await act(async () => {

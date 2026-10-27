@@ -5,18 +5,15 @@ import type { TaskTreeItem } from "./types.ts";
 
 export interface RuntimeGraphDetailsProps {
 	readonly selectedItem: TaskTreeItem | null;
+	readonly onClose?: () => void;
 }
 
-export const RuntimeGraphDetails: FC<RuntimeGraphDetailsProps> = ({ selectedItem }) => {
+export const RuntimeGraphDetails: FC<RuntimeGraphDetailsProps> = ({ selectedItem, onClose }) => {
 	const DetailRow = experimental_DetailRow;
 	const InfoSection = experimental_InfoSection;
 
 	if (!selectedItem) {
-		return (
-			<div className="flex items-center justify-center h-full p-4 text-xs text-muted-foreground text-center">
-				Выберите узел в дереве для просмотра параметров и результатов
-			</div>
-		);
+		return null;
 	}
 
 	const { id, kind, conversationId, ownerId, liveNode, receipt } = selectedItem;
@@ -25,41 +22,86 @@ export const RuntimeGraphDetails: FC<RuntimeGraphDetailsProps> = ({ selectedItem
 
 	const previewText = receipt?.preview;
 	const errorInfo = receipt?.error;
-	const durationMs = receipt?.durationMs ?? liveNode?.durationMs;
+	const liveElapsed = liveNode?.durationMs ?? (
+		liveNode?.startedAt && liveNode.startedAt > 0
+			? Math.max(0, Date.now() - liveNode.startedAt)
+			: undefined
+	);
+	const durationMs = receipt?.durationMs ?? liveElapsed;
 
 	return (
 		<div className="space-y-4 text-xs">
-			<InfoSection label={`Задача #${id}`}>
-				<DetailRow label="ID задачи">
+			<div className="flex items-center justify-between pb-1 border-b">
+				<span className="font-semibold text-xs text-foreground">Task Details</span>
+				{onClose ? (
+					<button
+						type="button"
+						onClick={onClose}
+						aria-label="Close inspector"
+						className="text-xs text-muted-foreground hover:text-foreground px-1.5 py-0.5 rounded hover:bg-muted/60 transition-colors cursor-pointer"
+					>
+						Close
+					</button>
+				) : null}
+			</div>
+
+			<InfoSection label={`Task #${id}`}>
+				<DetailRow label="Task ID">
 					<span className="font-mono">#{id}</span>
 				</DetailRow>
 
-				<DetailRow label="Тип задачи">
+				<DetailRow label="Task type">
 					<span className="font-mono">{kind}</span>
 				</DetailRow>
 
-				<DetailRow label="Беседа">
+				<DetailRow label="Conversation">
 					<span className="font-mono">#{conversationId}</span>
 				</DetailRow>
 
-				<DetailRow label="Владелец">
-					<span className="font-mono">{ownerId !== undefined ? `#${ownerId}` : "— (корневая)"}</span>
+				<DetailRow label="Owner">
+					<span className="font-mono">{ownerId !== undefined ? `#${ownerId}` : "— (root)"}</span>
 				</DetailRow>
+
+				{liveNode?.toolName || receipt?.toolName ? (
+					<DetailRow label="Tool">
+						<span className="font-mono">{liveNode?.toolName ?? receipt?.toolName}</span>
+					</DetailRow>
+				) : null}
+
+				{liveNode?.targetHint || receipt?.targetHint ? (
+					<DetailRow label="Target">
+						<span className="font-mono truncate max-w-[200px]" title={liveNode?.targetHint ?? receipt?.targetHint}>
+							{liveNode?.targetHint ?? receipt?.targetHint}
+						</span>
+					</DetailRow>
+				) : null}
+
+				{liveNode?.model ? (
+					<DetailRow label="Model">
+						<span className="font-mono">{liveNode.model.provider}/{liveNode.model.modelId}</span>
+					</DetailRow>
+				) : null}
+
+				{liveNode?.thinkingLevel ? (
+					<DetailRow label="Thinking">
+						<span className="font-mono">{liveNode.thinkingLevel}</span>
+					</DetailRow>
+				) : null}
 
 				{projectedLive ? (
 					<>
-						<DetailRow label="Статус рантайма">
+						<DetailRow label="Runtime status">
 							<span className="font-medium text-blue-500">{projectedLive.label}</span>
 						</DetailRow>
 
 						{liveNode?.state && "phase" in liveNode.state && liveNode.state.phase ? (
-							<DetailRow label="Фаза выполнения">
+							<DetailRow label="Execution phase">
 								<span className="font-mono">{liveNode.state.phase}</span>
 							</DetailRow>
 						) : null}
 
 						{projectedLive.waitingOn && projectedLive.waitingOn.length > 0 ? (
-							<DetailRow label="Ожидает задач">
+							<DetailRow label="Waiting on tasks">
 								<span className="font-mono">
 									#{projectedLive.waitingOn.join(", #")}
 									{liveNode?.state.status === "waiting" && liveNode.state.policy
@@ -70,13 +112,13 @@ export const RuntimeGraphDetails: FC<RuntimeGraphDetailsProps> = ({ selectedItem
 						) : null}
 
 						{projectedLive.sleepUntil ? (
-							<DetailRow label="Таймер до">
+							<DetailRow label="Timer until">
 								<span>{new Date(projectedLive.sleepUntil).toLocaleTimeString()}</span>
 							</DetailRow>
 						) : null}
 
 						{projectedLive.blockedReason ? (
-							<DetailRow label="Блокировка">
+							<DetailRow label="Blocked">
 								<span className="text-amber-500">{projectedLive.blockedReason}</span>
 							</DetailRow>
 						) : null}
@@ -85,7 +127,7 @@ export const RuntimeGraphDetails: FC<RuntimeGraphDetailsProps> = ({ selectedItem
 
 				{projectedReceipt ? (
 					<>
-						<DetailRow label="Итог выполнения">
+						<DetailRow label="Outcome">
 							<span
 								className={`font-medium ${
 									projectedReceipt.outcome === "completed"
@@ -98,22 +140,28 @@ export const RuntimeGraphDetails: FC<RuntimeGraphDetailsProps> = ({ selectedItem
 						</DetailRow>
 
 						{projectedReceipt.hasToolError ? (
-							<DetailRow label="Статус инструмента">
-								<span className="text-red-500 font-medium">Ошибка инструмента</span>
+							<DetailRow label="Tool status">
+								<span className="text-red-500 font-medium">Tool error</span>
 							</DetailRow>
 						) : null}
 					</>
 				) : null}
 
 				{durationMs !== undefined ? (
-					<DetailRow label="Длительность">
-						<span>{Math.round(durationMs)} мс</span>
+					<DetailRow label="Duration">
+						<span>{durationMs < 1000 ? `${Math.round(durationMs)} ms` : `${(durationMs / 1000).toFixed(1)} s`}</span>
+					</DetailRow>
+				) : null}
+
+				{liveNode?.startedAt || receipt?.startedAt ? (
+					<DetailRow label="Started at">
+						<span>{new Date(liveNode?.startedAt ?? receipt!.startedAt!).toLocaleTimeString()}</span>
 					</DetailRow>
 				) : null}
 			</InfoSection>
 
 			{previewText ? (
-				<InfoSection label="Данные выполнения">
+				<InfoSection label="Execution output">
 					<pre className="p-2 bg-muted/40 rounded border text-[11px] font-mono whitespace-pre-wrap break-all max-h-40 overflow-y-auto">
 						{previewText}
 					</pre>
@@ -121,11 +169,11 @@ export const RuntimeGraphDetails: FC<RuntimeGraphDetailsProps> = ({ selectedItem
 			) : null}
 
 			{errorInfo ? (
-				<InfoSection label="Диагностика ошибки">
+				<InfoSection label="Error diagnostics">
 					<div className="space-y-1.5 p-2 bg-red-500/10 border border-red-500/20 rounded">
 						{errorInfo.code ? (
 							<div className="font-mono text-[10px] text-red-600 dark:text-red-400 font-semibold">
-								Код ошибки: {errorInfo.code}
+								Error code: {errorInfo.code}
 							</div>
 						) : null}
 						<pre className="text-[11px] font-mono text-red-600 dark:text-red-400 whitespace-pre-wrap break-all max-h-40 overflow-y-auto">

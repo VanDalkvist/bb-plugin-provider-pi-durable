@@ -91,7 +91,7 @@ test("RuntimeGraphSegmentDetails: renders tree and inspector when isExpanded is 
 	assert.ok(container.textContent?.includes("Root Generation"));
 	assert.ok(container.textContent?.includes("bash: npm test"));
 	assert.ok(container.textContent?.includes("#11"));
-	assert.ok(container.textContent?.includes("Ожидает"));
+	assert.ok(container.textContent?.includes("Waiting") || container.textContent?.includes("waits: #42"));
 	assert.ok(container.textContent?.includes("#42"));
 
 	const layoutEl = container.querySelector("[data-layout]");

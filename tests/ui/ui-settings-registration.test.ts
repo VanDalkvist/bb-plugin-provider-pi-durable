@@ -22,7 +22,7 @@ test("UI manifest and slot registration: defines bb.app and registers subagent-m
 	assert.equal(captured.settingsSections.length, 1);
 	const section = captured.settingsSections[0];
 	assert.equal(section.id, "subagent-model-policy");
-	assert.equal(section.title, "Субагенты");
+	assert.equal(section.title, "Subagents");
 	assert.equal(typeof section.component, "function");
 
 	// 4. Verify no old Doctor view is registered

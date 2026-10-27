@@ -20,7 +20,7 @@ export function projectTaskState(input: {
 		case "completing":
 			return {
 				rawStatus: "completing",
-				label: "Завершает дочернюю работу",
+				label: "Completing child work",
 				isFinal: false,
 				isCompleting: true,
 				abortRequested: Boolean(abortRequested),
@@ -29,7 +29,7 @@ export function projectTaskState(input: {
 		case "running":
 			return {
 				rawStatus: "running",
-				label: label ?? "Выполняется",
+				label: label ?? "Running",
 				isFinal: false,
 				abortRequested: Boolean(abortRequested),
 				blockedReason: blocked,
@@ -37,7 +37,7 @@ export function projectTaskState(input: {
 		case "waiting":
 			return {
 				rawStatus: "waiting",
-				label: label ?? "Ожидает завершения зависимостей",
+				label: label ?? "Waiting on dependencies",
 				isFinal: false,
 				waitingOn: state.on,
 				abortRequested: Boolean(abortRequested),
@@ -46,7 +46,7 @@ export function projectTaskState(input: {
 		case "sleeping":
 			return {
 				rawStatus: "sleeping",
-				label: label ?? "Ожидает таймер",
+				label: label ?? "Waiting for timer",
 				isFinal: false,
 				sleepUntil: state.until,
 				abortRequested: Boolean(abortRequested),
@@ -55,7 +55,7 @@ export function projectTaskState(input: {
 		case "pending":
 			return {
 				rawStatus: "pending",
-				label: label ?? "В очереди",
+				label: label ?? "Queued",
 				isFinal: false,
 				abortRequested: Boolean(abortRequested),
 				blockedReason: blocked,
@@ -73,19 +73,19 @@ export function projectTaskReceipt(receipt: RuntimeTaskReceipt): ProjectedReceip
 	let label: string;
 	switch (receipt.outcome) {
 		case "completed":
-			label = hasToolError ? "Завершено с ошибкой инструмента" : "Успешно завершено";
+			label = hasToolError ? "Completed with tool error" : "Completed successfully";
 			break;
 		case "failed":
-			label = "Ошибка задачи";
+			label = "Task failed";
 			break;
 		case "aborted":
-			label = "Прервано";
+			label = "Aborted";
 			break;
 		case "faulted":
-			label = "Аварийный сбой рантайма";
+			label = "Runtime fault";
 			break;
 		case "orphaned":
-			label = "Осиротевшая задача";
+			label = "Orphaned task";
 			break;
 		default: {
 			const _exhaustive: never = receipt.outcome;

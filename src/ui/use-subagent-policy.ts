@@ -68,7 +68,7 @@ export function useSubagentPolicy(): UseSubagentPolicyResult {
 			const msg = err instanceof Error ? err.message : String(err);
 			if (code === "conflict" || msg.toLowerCase().includes("conflict")) {
 				setIsConflict(true);
-				setError("Конфликт изменений: настройки были обновлены в другой сессии. Ваш черновик сохранён — нажмите «Сохранить» ещё раз для применения.");
+				setError("Conflict: settings were updated in another session. Your draft is preserved — click \"Save\" again to apply.");
 				try {
 					const latest = await rpc.call("subagent_policy_get", {});
 					setSavedRecord(latest.record);
@@ -76,7 +76,7 @@ export function useSubagentPolicy(): UseSubagentPolicyResult {
 					// retain current savedRecord if refetch fails
 				}
 			} else {
-				setError(`Ошибка сохранения: ${msg}`);
+				setError(`Save failed: ${msg}`);
 			}
 			return false;
 		} finally {

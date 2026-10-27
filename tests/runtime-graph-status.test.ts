@@ -27,7 +27,7 @@ test("runtime-graph-status: completing status is NOT final success", () => {
 	assert.equal(projected.rawStatus, "completing");
 	assert.equal(projected.isFinal, false);
 	assert.equal(projected.isCompleting, true);
-	assert.equal(projected.label, "Завершает дочернюю работу");
+	assert.equal(projected.label, "Completing child work");
 });
 
 test("runtime-graph-status: abortRequested does NOT rewrite status to aborted", () => {

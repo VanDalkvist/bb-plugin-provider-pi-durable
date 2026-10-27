@@ -47,7 +47,7 @@ test("UI fixes: radio inputs are disabled while isSaving is true (Finding 3)", a
 
 		await act(async () => { fireEvent.click(inheritRadio); });
 
-		const saveBtn = Array.from(slot.container.querySelectorAll("button")).find((b: any) => b.textContent?.includes("Сохранить")) as HTMLButtonElement;
+		const saveBtn = Array.from(slot.container.querySelectorAll("button")).find((b: any) => b.textContent?.includes("Save")) as HTMLButtonElement;
 		assert.ok(saveBtn);
 		assert.equal(saveBtn.disabled, false, "Save must be enabled with changes");
 
@@ -102,7 +102,7 @@ test("UI fixes: AbortController aborts in-flight catalog query on route change a
 		const firstSignal = signals[0];
 		assert.equal(firstSignal.aborted, false, "First signal not aborted yet");
 
-		const hostSelect = slot.container.querySelector('select[aria-label="Выбор хоста для предпросмотра"]') as HTMLSelectElement;
+		const hostSelect = slot.container.querySelector('select[aria-label="Select host for preview"]') as HTMLSelectElement;
 		assert.ok(hostSelect);
 
 		await act(async () => {
@@ -154,7 +154,7 @@ test("UI fixes: empty hosts and null primaryHostId sets routing to null without 
 		});
 
 		assert.equal(queriedHostId, undefined, "No models query should be made to fake 'default' host");
-		assert.ok(slot.container.textContent?.includes("Нет доступных хостов"), "Empty context message should be shown");
+		assert.ok(slot.container.textContent?.includes("No available hosts or environments to preview models."), "Empty context message should be shown");
 	} finally {
 		slot?.unmount();
 	}
@@ -186,7 +186,7 @@ test("UI fixes: canSaveConfigured is blocked when modelLoadError is present", as
 		await act(async () => { await new Promise((r) => setTimeout(r, 60)); });
 		const configuredRadio = slot.container.querySelector('input[value="configured"]') as HTMLInputElement;
 		await act(async () => { fireEvent.click(configuredRadio); });
-		const saveBtn = Array.from(slot.container.querySelectorAll("button")).find((b: any) => b.textContent?.includes("Сохранить")) as HTMLButtonElement;
+		const saveBtn = Array.from(slot.container.querySelectorAll("button")).find((b: any) => b.textContent?.includes("Save")) as HTMLButtonElement;
 		assert.ok(saveBtn);
 		assert.equal(saveBtn.disabled, true, "Save button must be disabled when modelLoadError is present");
 	} finally {

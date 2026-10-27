@@ -14,12 +14,7 @@ export interface RuntimeGraphSummaryProps {
 }
 
 function formatActiveCount(count: number): string {
-	const mod10 = count % 10;
-	const mod100 = count % 100;
-	if (mod100 >= 11 && mod100 <= 19) return `${count} активных`;
-	if (mod10 === 1) return `${count} активная`;
-	if (mod10 >= 2 && mod10 <= 4) return `${count} активные`;
-	return `${count} активных`;
+	return count === 1 ? "1 active task" : `${count} active tasks`;
 }
 
 export const RuntimeGraphSummary: FC<RuntimeGraphSummaryProps> = ({
@@ -74,30 +69,30 @@ export const RuntimeGraphSummary: FC<RuntimeGraphSummaryProps> = ({
 	if (status === "unavailable" && !snapshot) {
 		iconName = "AlertTriangle";
 		iconColor = "text-amber-500";
-		summaryContent = <span className="text-amber-600 dark:text-amber-400">Граф недоступен</span>;
+		summaryContent = <span className="text-amber-600 dark:text-amber-400">Task graph unavailable</span>;
 	} else if (status === "loading" && !snapshot) {
 		iconName = "Clock";
 		iconColor = "text-muted-foreground";
-		summaryContent = <span className="text-muted-foreground">Загрузка...</span>;
+		summaryContent = <span className="text-muted-foreground">Loading...</span>;
 	} else if (!counters || (counters.active === 0 && counters.terminalCount === 0)) {
 		iconName = "Circle";
 		iconColor = "text-muted-foreground";
-		summaryContent = <span className="text-muted-foreground">Нет активных задач</span>;
+		summaryContent = <span className="text-muted-foreground">No active tasks</span>;
 	} else if (counters.active > 0) {
 		iconName = isStale ? "AlertTriangle" : "Play";
 		iconColor = isStale ? "text-amber-500" : "text-blue-500";
 		const parts: string[] = [];
 		parts.push(formatActiveCount(counters.active));
-		if (counters.waiting > 0) parts.push(`${counters.waiting} ожидает`);
-		if (counters.sleeping > 0) parts.push(`${counters.sleeping} на таймере`);
-		if (counters.completing > 0) parts.push(`${counters.completing} завершается`);
+		if (counters.waiting > 0) parts.push(`${counters.waiting} waiting`);
+		if (counters.sleeping > 0) parts.push(`${counters.sleeping} sleeping`);
+		if (counters.completing > 0) parts.push(`${counters.completing} completing`);
 		summaryContent = <span className="font-medium text-foreground">{parts.join(" · ")}</span>;
 	} else {
 		iconName = isStale ? "AlertTriangle" : "Check";
 		iconColor = isStale ? "text-amber-500" : "text-green-500";
 		summaryContent = (
 			<span className="text-muted-foreground">
-				Завершено ({counters.terminalCount})
+				Completed ({counters.terminalCount})
 			</span>
 		);
 	}
@@ -112,7 +107,7 @@ export const RuntimeGraphSummary: FC<RuntimeGraphSummaryProps> = ({
 				<Icon name={iconName} className="w-3.5 h-3.5" />
 			</span>
 
-			<span className="font-semibold text-foreground">Ход выполнения</span>
+			<span className="font-semibold text-foreground">Execution Progress</span>
 			<span className="text-muted-foreground">·</span>
 			{summaryContent}
 
@@ -124,13 +119,13 @@ export const RuntimeGraphSummary: FC<RuntimeGraphSummaryProps> = ({
 
 			{counters?.hasToolError ? (
 				<span className="text-[10px] px-1 py-0.2 bg-red-500/10 text-red-600 dark:text-red-400 rounded">
-					ошибка
+					tool error
 				</span>
 			) : null}
 
 			{counters?.isLimited ? (
 				<span className="text-[10px] px-1 py-0.2 bg-amber-500/10 text-amber-600 dark:text-amber-400 rounded">
-					Лимит
+					Limited
 				</span>
 			) : null}
 
