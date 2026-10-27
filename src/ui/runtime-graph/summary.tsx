@@ -14,7 +14,7 @@ export interface RuntimeGraphSummaryProps {
 }
 
 function formatActiveCount(count: number): string {
-	return count === 1 ? "1 active task" : `${count} active tasks`;
+	return `${count} active`;
 }
 
 export const RuntimeGraphSummary: FC<RuntimeGraphSummaryProps> = ({
@@ -77,7 +77,7 @@ export const RuntimeGraphSummary: FC<RuntimeGraphSummaryProps> = ({
 	} else if (!counters || (counters.active === 0 && counters.terminalCount === 0)) {
 		iconName = "Circle";
 		iconColor = "text-muted-foreground";
-		summaryContent = <span className="text-muted-foreground">No active tasks</span>;
+		summaryContent = <span className="text-muted-foreground">0 active</span>;
 	} else if (counters.active > 0) {
 		iconName = isStale ? "AlertTriangle" : "Play";
 		iconColor = isStale ? "text-amber-500" : "text-blue-500";
@@ -101,13 +101,13 @@ export const RuntimeGraphSummary: FC<RuntimeGraphSummaryProps> = ({
 		<button
 			type="button"
 			onClick={onToggle}
-			className="flex items-center gap-2 px-2 py-1 text-xs select-none rounded hover:bg-muted/40 hover:shadow-sm transition-colors duration-150 cursor-pointer"
+			className="h-6 px-2 py-1 flex items-center gap-2 text-xs select-none rounded hover:bg-state-hover transition-colors duration-150 cursor-pointer"
 		>
 			<span className={`flex items-center justify-center ${iconColor}`}>
 				<Icon name={iconName} className="w-3.5 h-3.5" />
 			</span>
 
-			<span className="font-semibold text-foreground">Execution Progress</span>
+			<span className="font-semibold text-foreground">Task graph</span>
 			<span className="text-muted-foreground">·</span>
 			{summaryContent}
 

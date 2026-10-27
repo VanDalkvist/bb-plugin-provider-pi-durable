@@ -121,7 +121,7 @@ test("D3 RED: summary uses grammatically correct singular and plural for active 
 			segments: [], isExpanded: false, onToggle: () => {}, testState: makeActiveState(1),
 		}),
 	);
-	assert.ok(c1.textContent?.includes("1 active task"), `Expected '1 active task', got ${c1.textContent}`);
+	assert.ok(c1.textContent?.includes("1 active"), `Expected '1 active', got ${c1.textContent}`);
 	assert.ok(!c1.textContent?.includes("активн"), "Must not contain Russian word 'активн'");
 
 	const { container: c2 } = render(
@@ -130,7 +130,7 @@ test("D3 RED: summary uses grammatically correct singular and plural for active 
 			segments: [], isExpanded: false, onToggle: () => {}, testState: makeActiveState(2),
 		}),
 	);
-	assert.ok(c2.textContent?.includes("2 active tasks"), `Expected '2 active tasks', got ${c2.textContent}`);
+	assert.ok(c2.textContent?.includes("2 active"), `Expected '2 active', got ${c2.textContent}`);
 });
 
 test("D4 RED: inspector displays both preview and error diagnostics when task failed", () => {

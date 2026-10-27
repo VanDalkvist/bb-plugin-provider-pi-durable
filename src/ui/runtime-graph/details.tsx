@@ -5,10 +5,11 @@ import type { TaskTreeItem } from "./types.ts";
 
 export interface RuntimeGraphDetailsProps {
 	readonly selectedItem: TaskTreeItem | null;
+	readonly now?: number;
 	readonly onClose?: () => void;
 }
 
-export const RuntimeGraphDetails: FC<RuntimeGraphDetailsProps> = ({ selectedItem, onClose }) => {
+export const RuntimeGraphDetails: FC<RuntimeGraphDetailsProps> = ({ selectedItem, now, onClose }) => {
 	const DetailRow = experimental_DetailRow;
 	const InfoSection = experimental_InfoSection;
 
@@ -24,7 +25,7 @@ export const RuntimeGraphDetails: FC<RuntimeGraphDetailsProps> = ({ selectedItem
 	const errorInfo = receipt?.error;
 	const liveElapsed = liveNode?.durationMs ?? (
 		liveNode?.startedAt && liveNode.startedAt > 0
-			? Math.max(0, Date.now() - liveNode.startedAt)
+			? Math.max(0, (now ?? Date.now()) - liveNode.startedAt)
 			: undefined
 	);
 	const durationMs = receipt?.durationMs ?? liveElapsed;

@@ -3,6 +3,8 @@ import type { RuntimeGraphState, TaskTreeItem } from "./types.ts";
 import { useRuntimeGraphState } from "./use-runtime-graph-state.ts";
 import { RuntimeGraphTree } from "./tree.tsx";
 import { RuntimeGraphDetails } from "./details.tsx";
+import { findBestActiveTaskId } from "./tree-order.ts";
+import { useViewClock } from "./use-view-clock.ts";
 
 export interface RuntimeGraphSegmentDetailsProps {
 	readonly threadId: string;
@@ -14,20 +16,15 @@ export interface RuntimeGraphSegmentDetailsProps {
 	readonly testState?: RuntimeGraphState;
 }
 
-function findLatestActiveTaskId(tree: readonly TaskTreeItem[]): number | null {
-	let latest: number | null = null;
-	const walk = (items: readonly TaskTreeItem[]) => {
-		for (const item of items) {
-			if (!item.isTerminal) {
-				latest = item.id;
-			}
-			if (item.children.length > 0) {
-				walk(item.children);
-			}
+function findAncestorIds(tree: readonly TaskTreeItem[], targetId: number, trail: number[] = []): number[] | null {
+	for (const item of tree) {
+		if (item.id === targetId) return trail;
+		if (item.children.length > 0) {
+			const res = findAncestorIds(item.children, targetId, [...trail, item.id]);
+			if (res !== null) return res;
 		}
-	};
-	walk(tree);
-	return latest;
+	}
+	return null;
 }
 
 export const RuntimeGraphSegmentDetails: FC<RuntimeGraphSegmentDetailsProps> = ({
@@ -58,16 +55,28 @@ export const RuntimeGraphSegmentDetails: FC<RuntimeGraphSegmentDetailsProps> = (
 	}, []);
 
 	const { status, snapshot, tree, selectedTaskId, selectedItem, collapsedTaskIds, selectTask, toggleCollapse } = state;
-	const latestActiveId = findLatestActiveTaskId(tree);
+	const latestActiveId = findBestActiveTaskId(tree);
+	const now = useViewClock(latestActiveId !== null);
 
 	const scrollToActive = useCallback(() => {
+		if (latestActiveId === null) return;
+		const ancestors = findAncestorIds(tree, latestActiveId);
+		if (ancestors) {
+			for (const ancId of ancestors) {
+				if (collapsedTaskIds.has(ancId)) {
+					toggleCollapse(ancId);
+				}
+			}
+		}
+
 		const container = treeScrollRef.current;
 		if (!container) return;
-		const activeEl = container.querySelector('[data-active="true"]:last-of-type') ?? container.querySelector('[data-active="true"]');
+		const activeEl = container.querySelector(`[data-task-id="${latestActiveId}"]`) ??
+			container.querySelector('[data-active="true"]');
 		if (activeEl && typeof activeEl.scrollIntoView === "function") {
 			activeEl.scrollIntoView({ block: "nearest" });
 		}
-	}, []);
+	}, [latestActiveId, tree, collapsedTaskIds, toggleCollapse]);
 
 	useEffect(() => {
 		if (!isExpanded || latestActiveId === null) return;
@@ -80,7 +89,7 @@ export const RuntimeGraphSegmentDetails: FC<RuntimeGraphSegmentDetailsProps> = (
 	const handleScroll = useCallback(() => {
 		const container = treeScrollRef.current;
 		if (!container || latestActiveId === null) return;
-		const isAtBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 40;
+		const isAtBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 30;
 		if (!isAtBottom && isFollowingActive) {
 			setIsFollowingActive(false);
 		}
@@ -97,7 +106,7 @@ export const RuntimeGraphSegmentDetails: FC<RuntimeGraphSegmentDetailsProps> = (
 
 	if (status === "loading" && !snapshot) {
 		return (
-			<div className="flex items-center justify-center p-6 border rounded-md bg-background text-xs text-muted-foreground">
+			<div className="flex items-center justify-center p-4 bg-transparent text-xs text-muted-foreground">
 				Loading task graph...
 			</div>
 		);
@@ -105,7 +114,7 @@ export const RuntimeGraphSegmentDetails: FC<RuntimeGraphSegmentDetailsProps> = (
 
 	if (status === "unavailable" && !snapshot) {
 		return (
-			<div className="flex items-center justify-center p-6 border rounded-md bg-background text-xs text-muted-foreground">
+			<div className="flex items-center justify-center p-4 bg-transparent text-xs text-muted-foreground">
 				Task graph unavailable
 			</div>
 		);
@@ -117,36 +126,37 @@ export const RuntimeGraphSegmentDetails: FC<RuntimeGraphSegmentDetailsProps> = (
 		<div
 			ref={containerRef}
 			data-layout={isNarrow ? "narrow" : "wide"}
-			className={`border rounded-md bg-background flex ${
+			className={`flex ${
 				isNarrow ? "flex-col" : "flex-row"
-			} h-80 max-h-96 overflow-hidden text-sm shadow-sm my-1`}
+			} w-full bg-transparent overflow-hidden text-xs ${hasSelection ? "max-h-72" : "max-h-60"}`}
 		>
 			<div
 				className={`flex-1 relative flex flex-col min-w-0 ${
-					hasSelection ? (isNarrow ? "border-b min-h-[140px]" : "border-r") : ""
+					hasSelection ? (isNarrow ? "border-b border-border min-h-[120px]" : "border-r border-border") : ""
 				}`}
 			>
 				<div
 					ref={treeScrollRef}
 					onScroll={handleScroll}
-					className="flex-1 overflow-y-auto p-2 min-w-0"
+					className="flex-1 overflow-y-auto px-2 py-1 min-w-0"
 				>
 					<RuntimeGraphTree
 						tree={tree}
 						selectedTaskId={selectedTaskId}
 						collapsedTaskIds={collapsedTaskIds}
+						now={now}
 						onSelectTask={selectTask}
 						onToggleCollapse={toggleCollapse}
 					/>
 				</div>
 
 				{latestActiveId !== null && !isFollowingActive ? (
-					<div className="absolute bottom-2 right-4 z-10">
+					<div className="absolute bottom-1 right-3 z-10">
 						<button
 							type="button"
 							onClick={handleFollowActive}
 							aria-label="Follow active"
-							className="px-2 py-0.5 text-[11px] font-medium bg-blue-500 text-white hover:bg-blue-600 rounded shadow-md cursor-pointer transition-colors"
+							className="px-2 py-0.5 text-[11px] font-medium bg-blue-500 text-white hover:bg-blue-600 rounded shadow cursor-pointer transition-colors"
 						>
 							Follow active
 						</button>
@@ -157,10 +167,11 @@ export const RuntimeGraphSegmentDetails: FC<RuntimeGraphSegmentDetailsProps> = (
 			{hasSelection ? (
 				<div
 					data-testid="runtime-graph-inspector"
-					className={`${isNarrow ? "h-36" : "w-80"} flex-shrink-0 overflow-y-auto p-3 bg-muted/10`}
+					className={`${isNarrow ? "h-36" : "w-80"} flex-shrink-0 overflow-y-auto p-2.5 bg-muted/5`}
 				>
 					<RuntimeGraphDetails
 						selectedItem={selectedItem}
+						now={now}
 						onClose={() => selectTask(null)}
 					/>
 				</div>

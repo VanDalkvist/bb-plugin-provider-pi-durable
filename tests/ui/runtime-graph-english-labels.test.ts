@@ -37,8 +37,8 @@ test("English UI: Summary displays English title, states, and singular/plural co
 			segments: [], isExpanded: false, onToggle: () => {}, testState: makeState(1),
 		}),
 	);
-	assert.ok(c1.textContent?.includes("Execution Progress"), "Summary title must be in English");
-	assert.ok(c1.textContent?.includes("1 active task"), `Expected '1 active task', got ${c1.textContent}`);
+	assert.ok(c1.textContent?.includes("Task graph"), "Summary title must be in English");
+	assert.ok(c1.textContent?.includes("1 active"), `Expected '1 active', got ${c1.textContent}`);
 	assert.ok(!c1.textContent?.includes("активн"), "Must not contain Russian word 'активн'");
 
 	// Test 2 active tasks (plural)
@@ -48,7 +48,7 @@ test("English UI: Summary displays English title, states, and singular/plural co
 			segments: [], isExpanded: false, onToggle: () => {}, testState: makeState(2, 1),
 		}),
 	);
-	assert.ok(c2.textContent?.includes("2 active tasks"), `Expected '2 active tasks', got ${c2.textContent}`);
+	assert.ok(c2.textContent?.includes("2 active"), `Expected '2 active', got ${c2.textContent}`);
 	assert.ok(c2.textContent?.includes("1 waiting"), `Expected '1 waiting', got ${c2.textContent}`);
 
 	// Test empty state
@@ -63,7 +63,7 @@ test("English UI: Summary displays English title, states, and singular/plural co
 			segments: [], isExpanded: false, onToggle: () => {}, testState: emptyState,
 		}),
 	);
-	assert.ok(cEmpty.textContent?.includes("No active tasks"), "Empty state must be in English");
+	assert.ok(cEmpty.textContent?.includes("0 active"), "Empty state must display 0 active");
 
 	// Test unavailable state
 	const unavailState: any = { ...emptyState, status: "unavailable" };

@@ -84,3 +84,36 @@
    - Focused UI tests run and pass without regressions.
    - No runner files or runner dist touched.
    - Changes committed and pushed to `origin/main` using precise git adds.
+
+---
+
+## 4. Amendment 2: Active-First Ordering, Folded History, Native Density, and Bounded View Clock
+
+**Approved user design specifications:**
+1. **Title and Active Counter Labels:**
+   - Title: `Task graph` (exact case, replacing `Execution Progress`).
+   - Active count counters: `${count} active` (e.g. `1 active`, `6 active`, `0 active`), replacing `${count} active tasks`.
+   - Applied in `app.tsx`, `summary.tsx`, and all associated UI tests/ARIA labels.
+2. **Active-First Recursive Ordering:**
+   - At every level of the hierarchy (root tasks, child tasks, subagents), unfinished tasks come first, finished tasks below.
+   - Stable numeric ID order within active and finished groups (no mixed timestamp arithmetic).
+   - A terminal parent with a live descendant remains visible as an active branch (`hasActiveWork(item) === true`).
+2. **Folded Finished History:**
+   - Finished-only sibling branches are collapsed behind an English bounded control: `See more (N...)`.
+   - Honest error reporting: if any hidden task has a failed/faulted outcome or tool error, the control reflects it (`See more (N · M failed)`), never falsely presenting green success.
+   - Bounded control toggles to expand finished history and offers `See less` to re-fold.
+   - Selection preservation: selecting a retained finished task keeps it inspectable; selection is never cleared due to task termination or branch folding.
+3. **Native BB Density & Elimination of Nested Popover:**
+   - The BB host disclosure slot already provides `border`, `rounded-lg`, and `bg-surface-raised-solid`.
+   - `segment.tsx` removes its redundant `border`, `rounded-md`, `my-1`, and `shadow-sm`, rendering as `w-full bg-transparent overflow-hidden`.
+   - Replaces fixed `h-80 max-h-96` with dynamic content-driven height capped at compact `max-h-60` (unselected) and `max-h-72` (selected with inspector).
+   - Replaces arbitrary hover shadows on rows and summary with native `hover:bg-state-hover` and `bg-state-active`.
+4. **Bounded View Clock (1Hz Tick):**
+   - Single 1Hz timer in mounted segment active only when active tasks exist.
+   - Stops and cleans up interval on unmount or when all tasks are terminal.
+   - Increments elapsed duration for live nodes using native `startedAt`; never invents synthetic start. Terminal duration remains fixed.
+5. **Follow Active Prioritization:**
+   - Prioritizes genuine `running` work over waiting ancestors or sleeping courier tasks.
+   - Uncollapses collapsed ancestor branches when following active.
+   - Respects manual scrolling: suspends auto-scroll when user inspects history and provides `Follow active` control.
+

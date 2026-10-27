@@ -7,6 +7,7 @@ export interface RuntimeGraphNodeRowProps {
 	readonly depth: number;
 	readonly isSelected: boolean;
 	readonly isCollapsed: boolean;
+	readonly now?: number;
 	readonly onSelect: () => void;
 	readonly onToggleCollapse: () => void;
 }
@@ -65,16 +66,17 @@ export const RuntimeGraphNodeRow: FC<RuntimeGraphNodeRowProps> = ({
 	depth,
 	isSelected,
 	isCollapsed,
+	now,
 	onSelect,
 	onToggleCollapse,
 }) => {
 	const Icon = experimental_Icon;
 	const { icon, colorClass, title: statusTitle } = resolveStatusIcon(item);
 	const hasChildren = item.children.length > 0;
-	const liveElapsed = item.liveNode?.durationMs ?? (
+	const liveElapsed = (
 		item.liveNode?.startedAt && item.liveNode.startedAt > 0
-			? Math.max(0, Date.now() - item.liveNode.startedAt)
-			: undefined
+			? Math.max(0, (now ?? Date.now()) - item.liveNode.startedAt)
+			: item.liveNode?.durationMs
 	);
 	const duration = formatDuration(item.receipt?.durationMs ?? liveElapsed);
 	const hasToolError = Boolean(item.receipt?.isToolError);
@@ -93,7 +95,7 @@ export const RuntimeGraphNodeRow: FC<RuntimeGraphNodeRowProps> = ({
 					aria-expanded={!isCollapsed}
 					aria-label={isCollapsed ? "Expand" : "Collapse"}
 					onClick={onToggleCollapse}
-					className="w-4 h-4 flex-shrink-0 flex items-center justify-center text-muted-foreground hover:text-foreground cursor-pointer focus:outline-none focus-visible:ring-1 focus-visible:ring-ring rounded"
+					className="w-4 h-4 flex-shrink-0 flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-state-hover cursor-pointer focus:outline-none focus-visible:ring-1 focus-visible:ring-ring rounded"
 				>
 					<Icon name={isCollapsed ? "ChevronRight" : "ChevronDown"} className="w-3.5 h-3.5" />
 				</button>
@@ -111,10 +113,10 @@ export const RuntimeGraphNodeRow: FC<RuntimeGraphNodeRowProps> = ({
 					}
 				}}
 				aria-pressed={isSelected}
-				className={`flex-1 min-w-0 flex items-center gap-1.5 py-1 px-1.5 text-left rounded text-xs select-none cursor-pointer transition-colors duration-150 focus:outline-none focus-visible:ring-1 focus-visible:ring-ring ${
+				className={`flex-1 min-w-0 flex items-center gap-1.5 py-0.5 px-1.5 text-left rounded text-xs select-none cursor-pointer transition-colors duration-150 focus:outline-none focus-visible:ring-1 focus-visible:ring-ring ${
 					isSelected
-						? "bg-accent/15 text-accent-foreground font-medium"
-						: "hover:bg-muted/40 hover:shadow-sm text-foreground"
+						? "bg-state-active text-foreground font-medium"
+						: "hover:bg-state-hover text-foreground"
 				}`}
 			>
 				<span title={statusTitle} className={`flex-shrink-0 ${colorClass}`}>

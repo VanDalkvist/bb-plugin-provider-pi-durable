@@ -46,7 +46,7 @@ test("app.tsx registers experimental_threadContextSegment slot with runtime-grap
 	assert.equal(captured.threadContextSegments.length, 1);
 	const segment = captured.threadContextSegments[0];
 	assert.equal(segment.id, "runtime-graph");
-	assert.equal(segment.title, "Execution Progress");
+	assert.equal(segment.title, "Task graph");
 	assert.equal(segment.group, "2_runtime");
 	assert.equal(typeof segment.summary, "function");
 	assert.equal(typeof segment.details, "function");
@@ -70,8 +70,8 @@ test("RuntimeGraphSummary: renders status, counters, and handles onToggle", () =
 		}),
 	);
 
-	assert.ok(container.textContent?.includes("Execution Progress"));
-	assert.ok(container.textContent?.includes("2 active tasks"));
+	assert.ok(container.textContent?.includes("Task graph"));
+	assert.ok(container.textContent?.includes("2 active"));
 	assert.ok(container.textContent?.includes("1 waiting"));
 
 	const btn = container.querySelector("button");

@@ -15,7 +15,7 @@ export default definePluginApp((app) => {
 
 	app.slots.experimental_threadContextSegment({
 		id: "runtime-graph",
-		title: "Execution Progress",
+		title: "Task graph",
 		group: "2_runtime",
 		summary: RuntimeGraphSummary,
 		details: RuntimeGraphSegmentDetails,
