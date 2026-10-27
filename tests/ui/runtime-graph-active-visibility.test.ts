@@ -5,11 +5,15 @@ import { setupDom } from "../setup-dom.ts";
 import type { TaskTreeItem } from "../../src/ui/runtime-graph/types.ts";
 
 setupDom();
-const { render, fireEvent } = await import("@testing-library/react");
+const { render, fireEvent, cleanup } = await import("@testing-library/react");
 const { installTestPluginRuntime } = await import("@get-bb/plugin-sdk/testing/app");
 installTestPluginRuntime();
 const { RuntimeGraphSegmentDetails } = await import("../../src/ui/runtime-graph/segment.tsx");
 const { RuntimeGraphDetails } = await import("../../src/ui/runtime-graph/details.tsx");
+
+test.afterEach(() => {
+	cleanup();
+});
 
 test("Active task visibility: with 100+ history tasks, active node is marked and scrolled into view", () => {
 	const historyItems: TaskTreeItem[] = [];

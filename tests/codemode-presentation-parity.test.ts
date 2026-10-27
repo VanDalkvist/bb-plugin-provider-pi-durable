@@ -67,7 +67,7 @@ describe("Codemode built-in provider presentation parity", () => {
 		}, "/tmp");
 		assert.equal(delta.item.type, "delegation");
 		assert.deepEqual(delta.presentation, {
-			label: { pending: "Running subagent", completed: "Subagent completed" },
+			label: { pending: "Starting background subagent", completed: "Started background subagent" },
 			icon: { glyph: "Bot" },
 			title: "Review the patch",
 		});
