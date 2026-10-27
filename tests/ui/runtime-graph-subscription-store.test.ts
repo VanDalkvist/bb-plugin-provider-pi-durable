@@ -40,13 +40,13 @@ test("D2 RED: shared store refcounts and creates exactly ONE transport subscript
 				},
 			},
 		},
-		realtime: {
-			subscribe: (args: any) => {
+		subscribe: (args: any) => {
+			if (args.event === "thread:changed") {
 				realtimeCallback = args.callback;
-				return () => {
-					unsubscribeCalls++;
-				};
-			},
+			}
+			return () => {
+				unsubscribeCalls++;
+			};
 		},
 	};
 

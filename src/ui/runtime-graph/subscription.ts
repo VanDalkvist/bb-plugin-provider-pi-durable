@@ -1,15 +1,8 @@
+import type { PluginBrowserBbSdk } from "@get-bb/plugin-sdk/app";
 import type { RuntimeGraphSnapshot } from "../../runtime-graph/types.ts";
-import { readRuntimeGraphSnapshot, type RuntimeGraphEventsClient } from "./read.ts";
+import { readRuntimeGraphSnapshot } from "./read.ts";
 
-export interface RuntimeGraphRealtimeClient extends RuntimeGraphEventsClient {
-	readonly realtime?: {
-		subscribe(args: {
-			readonly event: string;
-			readonly threadId: string;
-			readonly callback: (event: unknown) => void;
-		}): () => void;
-	};
-}
+export type RuntimeGraphRealtimeClient = Pick<PluginBrowserBbSdk, "subscribe" | "threads">;
 
 export interface SubscribeRuntimeGraphOptions {
 	readonly threadId: string;
@@ -25,6 +18,11 @@ export function subscribeRuntimeGraph(
 ): () => void {
 	const { threadId, conversationId, onSnapshot, onStatusChange } = options;
 	const debounceMs = options.debounceMs ?? 100;
+
+	if (typeof sdk?.subscribe !== "function") {
+		onStatusChange?.("unavailable");
+		return () => {};
+	}
 
 	let isDisposed = false;
 	let timer: ReturnType<typeof setTimeout> | undefined;
@@ -73,7 +71,7 @@ export function subscribeRuntimeGraph(
 
 	void fetchLatest();
 
-	const realtimeUnsub = sdk.realtime?.subscribe({
+	const realtimeUnsub = sdk.subscribe({
 		event: "thread:changed",
 		threadId,
 		callback: () => scheduleFetch(),

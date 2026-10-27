@@ -52,7 +52,8 @@ export async function verifyLiveG2Transport(options = {}) {
 			});
 		}, timeoutMs);
 
-		unsubscribeRealtime = client.realtime?.subscribe({
+		const subscribeFn = typeof client.subscribe === "function" ? client.subscribe : client.realtime?.subscribe;
+		unsubscribeRealtime = subscribeFn?.({
 			event: "thread:changed", threadId,
 			callback: () => {
 				if (!baselineReady) return;

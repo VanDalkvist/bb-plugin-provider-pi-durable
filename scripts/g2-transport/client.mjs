@@ -63,6 +63,38 @@ export function createLiveTransportClient(options = {}) {
 		return socket;
 	}
 
+	const subscribe = (args) => {
+		const { event, threadId, callback } = args;
+		const listener = { event, threadId, callback };
+		activeListeners.add(listener);
+
+		const ws = ensureSocket();
+		if (ws?.readyState === 1) {
+			ws.send(JSON.stringify({
+				type: "subscribe",
+				target: { kind: "thread-detail", threadId },
+			}));
+		}
+
+		return () => {
+			activeListeners.delete(listener);
+			if (socket?.readyState === 1) {
+				try {
+					socket.send(JSON.stringify({
+						type: "unsubscribe",
+						target: { kind: "thread-detail", threadId },
+					}));
+				} catch {
+					// Socket may be closing
+				}
+			}
+			if (activeListeners.size === 0 && socket) {
+				socket.close();
+				socket = null;
+			}
+		};
+	};
+
 	const client = {
 		threads: {
 			events: {
@@ -85,38 +117,9 @@ export function createLiveTransportClient(options = {}) {
 				},
 			},
 		},
+		subscribe,
 		realtime: {
-			subscribe(args) {
-				const { event, threadId, callback } = args;
-				const listener = { event, threadId, callback };
-				activeListeners.add(listener);
-
-				const ws = ensureSocket();
-				if (ws?.readyState === 1) {
-					ws.send(JSON.stringify({
-						type: "subscribe",
-						target: { kind: "thread-detail", threadId },
-					}));
-				}
-
-				return () => {
-					activeListeners.delete(listener);
-					if (socket?.readyState === 1) {
-						try {
-							socket.send(JSON.stringify({
-								type: "unsubscribe",
-								target: { kind: "thread-detail", threadId },
-							}));
-						} catch {
-							// Socket may be closing
-						}
-					}
-					if (activeListeners.size === 0 && socket) {
-						socket.close();
-						socket = null;
-					}
-				};
-			},
+			subscribe,
 		},
 		close() {
 			isClosed = true;

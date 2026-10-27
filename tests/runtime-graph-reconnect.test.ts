@@ -29,13 +29,13 @@ function createRealtimeMockSdk(eventsSequence: any[]) {
 				},
 			},
 		},
-		realtime: {
-			subscribe: (args: { event: string; threadId: string; callback: (e: any) => void }) => {
+		subscribe: (args: { event: string; threadId: string; callback: (e: any) => void }) => {
+			if (args.event === "thread:changed") {
 				realtimeCallback = args.callback;
-				return () => {
-					unsubscribeCalled = true;
-				};
-			},
+			}
+			return () => {
+				unsubscribeCalled = true;
+			};
 		},
 		triggerRealtime: (nextIndex: number) => {
 			eventIndex = nextIndex;

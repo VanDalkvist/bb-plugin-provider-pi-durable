@@ -27,7 +27,7 @@ function getEmptyState(threadId?: string): RuntimeGraphState {
 }
 
 function useAppSdk(): RuntimeGraphRealtimeClient {
-	return useSdk() as unknown as RuntimeGraphRealtimeClient;
+	return useSdk() as RuntimeGraphRealtimeClient;
 }
 
 export function useRuntimeGraphState(

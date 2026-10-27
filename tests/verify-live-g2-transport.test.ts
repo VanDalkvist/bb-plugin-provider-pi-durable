@@ -32,16 +32,19 @@ function createDynamicMockLiveClient(initialEvents: any[] = []) {
 	let unsubscribed = false;
 	let closed = false;
 
+	const subscribe = (args: { event: string; threadId: string; callback: (e: any) => void }) => {
+		realtimeCallbacks.add(args.callback);
+		return () => {
+			realtimeCallbacks.delete(args.callback);
+			unsubscribed = true;
+		};
+	};
+
 	return {
 		threads: { events: { list: async () => events } },
+		subscribe,
 		realtime: {
-			subscribe: (args: { event: string; threadId: string; callback: (e: any) => void }) => {
-				realtimeCallbacks.add(args.callback);
-				return () => {
-					realtimeCallbacks.delete(args.callback);
-					unsubscribed = true;
-				};
-			},
+			subscribe,
 		},
 		appendEvent: (event: any) => {
 			events.unshift(event);
