@@ -57,37 +57,28 @@ test("runner cold start in workspace requiring package install preserves wire pu
 		runner = new RunnerProcess({
 			cwd: workspaceDir,
 			args: ["--no-session"],
-			onProtocolError: (err) => {
-				protocolError = err;
-			},
+			onProtocolError: (err) => { protocolError = err; },
 		});
 
-		// Capture child process stderr to verify diagnostics destination
 		(runner as any).child.stderr?.on("data", (chunk: Buffer) => {
 			stderrChunks.push(chunk.toString("utf8"));
 		});
 
-		// Request available models over the JSON-RPC channel on first run
 		const modelsRes = await runner.requestOk({ type: "get_available_models" }, 8000);
 		assert.ok(modelsRes, "First RPC request must return a valid response");
 		assert.ok(Array.isArray(modelsRes.models), "models array must be present in response");
 
-		// Request runner state over the JSON-RPC channel on first run
 		const stateRes = await runner.requestOk({ type: "get_state" }, 8000);
 		assert.ok(stateRes, "Second RPC request must return state");
 		assert.equal(stateRes.sessionId, "catalog", "Session ID in no-session mode must be catalog");
-
-		// Verify no protocol faults occurred
 		assert.equal(protocolError, null, "No MALFORMED_JSON or protocol fault must occur on cold start");
 
-		// Verify installation output was captured in stderr diagnostics
 		const combinedStderr = stderrChunks.join("");
 		assert.ok(
 			combinedStderr.includes("added 105 packages"),
 			`Installation diagnostics must be redirected to stderr. Received: ${combinedStderr}`,
 		);
 
-		// Verify package was actually installed in the workspace
 		const installedPkgJson = join(workspaceDir, ".pi", "npm", "node_modules", "fixture-cold-package", "package.json");
 		assert.ok(existsSync(installedPkgJson), "Package must be installed in target directory");
 	} finally {
@@ -99,7 +90,6 @@ test("runner cold start in workspace requiring package install preserves wire pu
 test("stdout-guard unit: activates upstream takeover, enables wire writing, and restores cleanly", async () => {
 	const {
 		setupRunnerStdoutGuard,
-		writeWireStdout,
 		flushWireStdout,
 		isStdoutGuarded,
 		restoreRunnerStdout,
@@ -118,7 +108,6 @@ test("stdout-guard unit: activates upstream takeover, enables wire writing, and 
 		await setupRunnerStdoutGuard();
 		assert.equal(isStdoutGuarded(), true, "isStdoutGuarded must report true after setup");
 
-		// console.log / process.stdout.write must be redirected to stderr
 		process.stdout.write("REDIRECTED_DIAGNOSTIC\n");
 		assert.ok(
 			capturedStderr.some((s) => s.includes("REDIRECTED_DIAGNOSTIC")),
@@ -132,3 +121,37 @@ test("stdout-guard unit: activates upstream takeover, enables wire writing, and 
 	}
 });
 
+test("stdout-guard compatibility port: validates version, checks shape, and fails fast without silent fallback", async () => {
+	const {
+		validateUpstreamGuardVersion,
+		validateUpstreamGuardShape,
+		UpstreamStdoutGuardPortError,
+	} = await import("../src/runner/stdout-guard.ts");
+
+	// Version compatibility checks
+	assert.doesNotThrow(() => validateUpstreamGuardVersion("1.4.0"));
+	assert.doesNotThrow(() => validateUpstreamGuardVersion("1.4.12"));
+	assert.throws(
+		() => validateUpstreamGuardVersion("2.0.0"),
+		(err: any) => err instanceof UpstreamStdoutGuardPortError && err.reason === "INCOMPATIBLE_VERSION",
+	);
+
+	// Shape validation checks
+	assert.throws(
+		() => validateUpstreamGuardShape(null),
+		(err: any) => err instanceof UpstreamStdoutGuardPortError && err.reason === "INVALID_MODULE",
+	);
+	assert.throws(
+		() => validateUpstreamGuardShape({ takeOverStdout: () => {} }),
+		(err: any) => err instanceof UpstreamStdoutGuardPortError && err.reason === "INVALID_SHAPE",
+	);
+
+	const validMock = {
+		takeOverStdout: () => {},
+		restoreStdout: () => {},
+		isStdoutTakenOver: () => true,
+		writeRawStdout: (_t: string) => {},
+		flushRawStdout: async () => {},
+	};
+	assert.doesNotThrow(() => validateUpstreamGuardShape(validMock));
+});

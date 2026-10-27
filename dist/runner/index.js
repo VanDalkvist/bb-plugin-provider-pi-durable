@@ -3988,6 +3988,8 @@ var runtimeGraphSnapshotSchema = z5.object({
 );
 
 // src/runner/runtime-graph-receipts.ts
+var MAX_ERROR_MESSAGE_LENGTH = 1024;
+var MAX_ERROR_CODE_LENGTH = 64;
 var RuntimeGraphReceiptsCollector = class {
   capacity;
   receipts = [];
@@ -3996,22 +3998,34 @@ var RuntimeGraphReceiptsCollector = class {
     this.capacity = capacity;
   }
   recordTerminal(task, options) {
+    const state = task.state;
+    if (state.status !== "terminal") {
+      return void 0;
+    }
     const taskId = Number(task.id);
     let outcome = "completed";
     let error;
-    const state = task.state;
-    if (state.status === "terminal" || state.status === "completing") {
-      const taskOutcome = typeof state.outcome === "object" && state.outcome !== null && "status" in state.outcome ? state.outcome : { status: String(state.outcome ?? "completed") };
-      outcome = taskOutcome.status ?? "completed";
-      if ("error" in taskOutcome && taskOutcome.error) {
+    const taskOutcome = typeof state.outcome === "object" && state.outcome !== null && "status" in state.outcome ? state.outcome : { status: String(state.outcome ?? "completed") };
+    outcome = taskOutcome.status ?? "completed";
+    if ("error" in taskOutcome && taskOutcome.error !== void 0 && taskOutcome.error !== null) {
+      let rawMsg = "Task execution failed";
+      let rawCode;
+      if (typeof taskOutcome.error === "object") {
         const err = taskOutcome.error;
-        error = {
-          message: String(err.message ?? "Task execution failed"),
-          code: err.code ? String(err.code) : void 0
-        };
-      } else if ("reason" in taskOutcome && taskOutcome.reason) {
-        error = { message: String(taskOutcome.reason) };
+        if (err.message !== void 0 && err.message !== null) rawMsg = String(err.message);
+        if (err.code !== void 0 && err.code !== null) rawCode = String(err.code);
+      } else {
+        rawMsg = String(taskOutcome.error);
       }
+      error = {
+        message: rawMsg.length > MAX_ERROR_MESSAGE_LENGTH ? rawMsg.slice(0, MAX_ERROR_MESSAGE_LENGTH) : rawMsg,
+        code: rawCode ? rawCode.length > MAX_ERROR_CODE_LENGTH ? rawCode.slice(0, MAX_ERROR_CODE_LENGTH) : rawCode : void 0
+      };
+    } else if ("reason" in taskOutcome && taskOutcome.reason !== void 0 && taskOutcome.reason !== null) {
+      const rawReason = String(taskOutcome.reason);
+      error = {
+        message: rawReason.length > MAX_ERROR_MESSAGE_LENGTH ? rawReason.slice(0, MAX_ERROR_MESSAGE_LENGTH) : rawReason
+      };
     }
     let preview = options?.preview;
     if (preview && preview.length > MAX_PREVIEW_LENGTH) {
@@ -4163,8 +4177,10 @@ var RuntimeGraphSource = class {
     if (this.harness?.subscribeCommits) {
       this.unsubscribeCommits = this.harness.subscribeCommits((pub) => {
         for (const ch of pub.changes) {
-          if (ch?.type === "task" && (ch.value?.state?.status === "terminal" || ch.value?.state?.status === "completing")) {
-            this.receipts.recordTerminal(ch.value);
+          if (ch?.type === "task") {
+            if (ch.value?.state?.status === "terminal") {
+              this.receipts.recordTerminal(ch.value);
+            }
             this.schedule();
           } else if (ch?.type === "conversation" && ch.value) {
             this.conversations.recordConversation(ch.value);
@@ -4248,7 +4264,10 @@ var RuntimeGraphSource = class {
     const completeness = totalLiveCount > MAX_LIVE_NODES || hasMissingReceipts ? "limited" : "complete";
     const conversations = this.conversations.snapshot();
     const receipts = this.receipts.getReceipts();
-    const stats = { liveCount: Object.keys(mappedNodes).length, terminalCount: receipts.length, totalCount: totalLiveCount + receipts.length };
+    const allTaskIds = /* @__PURE__ */ new Set();
+    for (const key of Object.keys(rawNodes)) allTaskIds.add(Number(key));
+    for (const r of receipts) allTaskIds.add(r.taskId);
+    const stats = { liveCount: Object.keys(mappedNodes).length, terminalCount: receipts.length, totalCount: allTaskIds.size };
     const structuralJson = JSON.stringify({ nodes: mappedNodes, conversations, receipts, completeness, stats });
     if (structuralJson === this.lastStructuralJson) return;
     this.lastStructuralJson = structuralJson;
@@ -4270,7 +4289,7 @@ var RuntimeGraphSource = class {
         hasMissing = true;
         if (this.harness?.getTask) {
           void this.harness.getTask(prevId).then((task) => {
-            if (task && (task.state?.status === "terminal" || task.state?.status === "completing")) {
+            if (task && task.state?.status === "terminal") {
               this.receipts.recordTerminal(task);
               this.schedule();
             }
@@ -4290,53 +4309,79 @@ import { ROOT_CONVERSATION_ID as ROOT_CONVERSATION_ID6 } from "@earendil-works/p
 import { getPackageDir } from "@earendil-works/pi-coding-agent";
 import { join as join3 } from "node:path";
 import { pathToFileURL } from "node:url";
+import { existsSync as existsSync3, readFileSync as readFileSync3 } from "node:fs";
+var SUPPORTED_PI_VERSION_PREFIX = "1.4.";
+var EXPECTED_GUARD_RELATIVE_PATH = "dist/core/output-guard.js";
+var UpstreamStdoutGuardPortError = class extends Error {
+  reason;
+  constructor(message, reason) {
+    super(`[UpstreamStdoutGuardPortError] ${message} (reason: ${reason})`);
+    this.name = "UpstreamStdoutGuardPortError";
+    this.reason = reason;
+  }
+};
 var activeGuard = null;
-var originalStdoutWrite = null;
-function createFallbackGuard() {
-  const rawStdout = process.stdout.write.bind(process.stdout);
-  let isGuarded = false;
-  return {
-    takeOverStdout: () => {
-      if (isGuarded) return;
-      originalStdoutWrite = process.stdout.write;
-      process.stdout.write = ((chunk, encoding, cb) => {
-        return process.stderr.write(chunk, encoding, cb);
-      });
-      isGuarded = true;
-    },
-    restoreStdout: () => {
-      if (!isGuarded) return;
-      if (originalStdoutWrite) {
-        process.stdout.write = originalStdoutWrite;
-        originalStdoutWrite = null;
-      }
-      isGuarded = false;
-    },
-    isStdoutTakenOver: () => isGuarded,
-    writeRawStdout: (text) => {
-      rawStdout(text);
-    },
-    flushRawStdout: async () => {
+function validateUpstreamGuardVersion(version) {
+  if (!version.startsWith(SUPPORTED_PI_VERSION_PREFIX)) {
+    throw new UpstreamStdoutGuardPortError(
+      `Incompatible @earendil-works/pi-coding-agent version: "${version}". Expected ${SUPPORTED_PI_VERSION_PREFIX}x`,
+      "INCOMPATIBLE_VERSION"
+    );
+  }
+}
+function validateUpstreamGuardShape(mod) {
+  if (!mod || typeof mod !== "object") {
+    throw new UpstreamStdoutGuardPortError("Loaded upstream output-guard module is not an object", "INVALID_MODULE");
+  }
+  const candidate = mod;
+  const requiredFunctions = ["takeOverStdout", "restoreStdout", "isStdoutTakenOver", "writeRawStdout", "flushRawStdout"];
+  for (const fn of requiredFunctions) {
+    if (typeof candidate[fn] !== "function") {
+      throw new UpstreamStdoutGuardPortError(`Missing required upstream output-guard export: ${fn}`, "INVALID_SHAPE");
     }
-  };
+  }
 }
 async function loadUpstreamGuard() {
   if (activeGuard) return activeGuard;
-  try {
-    const pkgDir = getPackageDir();
-    const guardPath = join3(pkgDir, "dist", "core", "output-guard.js");
-    const mod = await import(pathToFileURL(guardPath).href);
-    activeGuard = mod;
-    return mod;
-  } catch (err) {
-    console.warn(`[StdoutGuard] Failed to load upstream output-guard: ${err instanceof Error ? err.message : String(err)}`);
-    activeGuard = createFallbackGuard();
-    return activeGuard;
+  const pkgDir = getPackageDir();
+  const pkgJsonPath = join3(pkgDir, "package.json");
+  if (!existsSync3(pkgJsonPath)) {
+    throw new UpstreamStdoutGuardPortError(`Cannot locate package.json at ${pkgJsonPath}`, "MISSING_PACKAGE_JSON");
   }
+  let version;
+  try {
+    const pkgJson = JSON.parse(readFileSync3(pkgJsonPath, "utf8"));
+    version = pkgJson.version ?? "";
+  } catch (err) {
+    throw new UpstreamStdoutGuardPortError(
+      `Failed to parse @earendil-works/pi-coding-agent package.json: ${err instanceof Error ? err.message : String(err)}`,
+      "PARSE_FAILURE"
+    );
+  }
+  validateUpstreamGuardVersion(version);
+  const guardPath = join3(pkgDir, EXPECTED_GUARD_RELATIVE_PATH);
+  if (!existsSync3(guardPath)) {
+    throw new UpstreamStdoutGuardPortError(`Missing upstream output guard artifact at ${guardPath}`, "MISSING_ARTIFACT");
+  }
+  let mod;
+  try {
+    mod = await import(pathToFileURL(guardPath).href);
+  } catch (err) {
+    throw new UpstreamStdoutGuardPortError(
+      `Failed to dynamically import output guard: ${err instanceof Error ? err.message : String(err)}`,
+      "IMPORT_FAILURE"
+    );
+  }
+  validateUpstreamGuardShape(mod);
+  activeGuard = mod;
+  return mod;
 }
 async function setupRunnerStdoutGuard() {
   const guard = await loadUpstreamGuard();
   guard.takeOverStdout();
+  if (!guard.isStdoutTakenOver()) {
+    throw new UpstreamStdoutGuardPortError("takeOverStdout() failed to activate takeover state", "ACTIVATION_FAILED");
+  }
 }
 function writeWireStdout(text) {
   if (activeGuard) {

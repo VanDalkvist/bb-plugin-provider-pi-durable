@@ -322,4 +322,18 @@ STAGE 2: РАСШИРЕННЫЕ ВОЗМОЖНОСТИ ДВИЖКА И ПОЛН�
   4. Написать детерминированный поведенческий тест `tests/runner-cold-start-protocol.test.ts`, подтверждающий изоляцию вывода установки в stderr и чистоту потока JSON-RPC на первом запуске без retry.
 - **Файлы:** `src/runner/stdout-guard.ts`, `src/runner/index.ts`, `tests/runner-cold-start-protocol.test.ts`, `docs/arch-improvement/ledger.md`.
 
+---
+
+### Cycle 78: Runtime Blockers CS/CC Remediation & Compatibility Port (v0.3.1) [✅ COMPLETED]
+- **Цель:** Полное закрытие замечаний независимого аудита `s9-cold-start-runtime.md` по срезам CS (Cold-Start Guard) и CC (Completing Task Outcome):
+  1. *[P2-CS1]* Строго изолированный compatibility port для Pi 1.4 (`src/runner/stdout-guard.ts`) с явной runtime-проверкой версий (`validateUpstreamGuardVersion`), формы объекта (`validateUpstreamGuardShape`) и fail-closed ошибкой `UpstreamStdoutGuardPortError` без тихого/нерабочего фолбэка. Документирование private-seam риска и архитектурной оговорки.
+  2. *[P2-CS2]* Сквозной Live Integration Proof холодного старта в новом изолированном воркспейсе Beyond Boundaries (`env_kzzf2vaibi` на треде `thr_v4kvf96pdn`) с реальной установкой npm-пакетов (`.pi/npm/node_modules`, 106 пакетов). Подтверждена изоляция текстового вывода npm в stderr, готовность первого RPC без сбоев `MALFORMED_JSON` и переход в `idle` без единого retry.
+  3. *[P2-CC1]* Строгое ограничение длины сериализованных полей ошибки в `src/runner/runtime-graph-receipts.ts`: `MAX_ERROR_MESSAGE_LENGTH = 1024`, `MAX_ERROR_CODE_LENGTH = 64`, `MAX_PREVIEW_LENGTH = 128` во избежание сбоев валидации Zod DTO.
+  4. *[P2-CC2]* Корректная семантика FSM: задача `completing` остаётся активной (live) и не заносится в терминальные `receipts` до наступления фактического перехода `status === "terminal"`. В `RuntimeGraphSource` устранено задвоение `stats.totalCount` (вычисляется по уникальным ID из объединения live и receipts).
+  5. *[P2-CC3]* Негативные контрактные тесты и поведенческие проверки в `tests/runtime-graph-completing.test.ts` (границы схемы, недопустимые enum-значения, оверлоад сообщений об ошибках, дедупликация повторных коммитов, prospective outcomes).
+- **Связанный аддитивный скоуп UI:**
+  - Следующий пользовательский срез UI (английская локализация контролов, правдивое отображение активных задач и скрытие инспектора до выбора узла) запланирован в документе [`docs/superpowers/plans/2026-10-27-runtime-graph-live-truth-and-english-ui.md`](./2026-10-27-runtime-graph-live-truth-and-english-ui.md) под управлением выделенного UI writer.
+- **Файлы:** `src/runner/stdout-guard.ts`, `src/runner/runtime-graph-receipts.ts`, `src/runner/runtime-graph-source.ts`, `tests/runner-cold-start-protocol.test.ts`, `tests/runtime-graph-completing.test.ts`, `dist/runner/index.js`.
+
+
 

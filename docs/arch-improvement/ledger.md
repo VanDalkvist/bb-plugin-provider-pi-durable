@@ -559,6 +559,39 @@
   - Все файлы строго < 200 строк (максимум `src/ui/runtime-graph/store.ts` — 162 строки, `tree-builder.ts` — 143 строки, `summary.tsx` — 142 строки, `details.tsx` — 139 строк, `node-row.tsx` — 131 строка).
 - **Файловый артефакт:** `/Users/vanya/.bb/thread-storage/thr_ct3kk9xne6/g3-review-fixes-result.md`.
 
+### Runtime Blockers CS/CC Remediation & Compatibility Port (Cycle 78) — 2026-10-27 (Execution Receipt)
+- **Цель и статус:** Устранение всех замечаний независимого аудита `s9-cold-start-runtime.md` по срезам CS (Cold-Start Guard) и CC (Completing Task Outcome Canonicalization). Статус: **PASS (VERIFIED LIVE)**.
+- **Устранённые дефекты и архитектурные решения:**
+  1. *[P2-CS1: Изолированный Compatibility Port для Pi 1.4]:*
+     - Первоисточник (`~/Projects/pi`, `DefaultPackageManager` и `DefaultResourceLoader`) подтверждает отсутствие публичного шва (seam) в `package.json#exports` для управления `isStdoutTakenOver()`.
+     - Реализован строго изолированный compatibility port `src/runner/stdout-guard.ts` (142 LOC, < 200).
+     - Добавлены функции runtime-проверки: `validateUpstreamGuardVersion` (строгое соответствие `1.4.x`) и `validateUpstreamGuardShape` (проверка экспорта 5 обязательных методов).
+     - Реализован fail-closed принцип: при несовпадении версий или отсутствии артефакта выбрасывается типизированная ошибка `UpstreamStdoutGuardPortError` без тихого неработающего monkeypatch-фолбэка.
+     - Зафиксирована архитектурная оговорка (private seam risk) в заголовке файла.
+  2. *[P2-CS2: Сквозной Live Integration Proof холодного старта]:*
+     - Проведён изолированный запуск в свежем worktree Beyond Boundaries (`env_kzzf2vaibi` на треде `thr_v4kvf96pdn`).
+     - Реальная фоновая установка пакетов npm (`.pi/npm/node_modules`, 106 пакетов) перенаправила все служебные строки в stderr (`[RunnerProcess:stderr]`), оставив FD 1 (stdout) на 100% чистым JSON-RPC.
+     - Первый RPC-запрос и ответ модели (`COLD_START_PROOF_PASSED`) завершены успешно с первого раза без `MALFORMED_JSON` и без retry. Тред штатно перешёл в статус `idle`.
+  3. *[P2-CC1: Ограничение длины DTO полей ошибки]:*
+     - В `src/runner/runtime-graph-receipts.ts` введены константы и защитное усечение: `MAX_ERROR_MESSAGE_LENGTH = 1024`, `MAX_ERROR_CODE_LENGTH = 64`, `MAX_PREVIEW_LENGTH = 128`.
+     - Предотвращён срыв валидации Zod-схемы `runtimeTaskReceiptSchema` при поступлении длинных сообщений об ошибках из упавших задач.
+  4. *[P2-CC2: Семантическая чистота FSM и исключение двойного учёта]:*
+     - Задача в состоянии `completing` остаётся активной (live) и не заносится в терминальные `receipts` до наступления фактического перехода `status === "terminal"`.
+     - В `RuntimeGraphSource.publish` поле `stats.totalCount` вычисляется как `new Set([...liveTaskIds, ...receiptTaskIds]).size`, что полностью исключает двойной учёт задач, находящихся в процессе завершения.
+  5. *[P2-CC3: Негативные контрактные тесты]:*
+     - В `tests/runtime-graph-completing.test.ts` (188 LOC, < 200) добавлены негативные проверки отклонения схемой невалидных enum-значений (`unknown_custom`), сообщений ошибки > 1024 символов и кодов > 64 символов, а также тесты идемпотентности повторных коммитов и нормализации prospective outcomes (`completed`, `failed`, `aborted`).
+- **Связанный аддитивный скоуп UI:**
+  - Запланирован срез UI-улучшений в [`docs/superpowers/plans/2026-10-27-runtime-graph-live-truth-and-english-ui.md`](../superpowers/plans/2026-10-27-runtime-graph-live-truth-and-english-ui.md).
+- **Line Budgets (AP-019):**
+  - `src/runner/stdout-guard.ts`: 142 строки (< 200)
+  - `src/runner/runtime-graph-receipts.ts`: 133 строки (< 200)
+  - `src/runner/runtime-graph-source.ts`: 186 строк (< 200)
+  - `tests/runner-cold-start-protocol.test.ts`: 157 строк (< 200)
+  - `tests/runtime-graph-completing.test.ts`: 188 строк (< 200)
+- **Тестовый сьют:** 559 тестов (527 модульных + 32 UI), 100% pass, 0 fail.
+- **Файловый артефакт:** `/Users/vanya/.bb/thread-storage/thr_ct3kk9xne6/runtime-cs-cc-remediation-result.md`.
+
+
 
 
 

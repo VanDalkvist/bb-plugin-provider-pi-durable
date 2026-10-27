@@ -61,8 +61,10 @@ export class RuntimeGraphSource {
 		if (this.harness?.subscribeCommits) {
 			this.unsubscribeCommits = this.harness.subscribeCommits((pub) => {
 				for (const ch of pub.changes as Array<{ type?: string; value?: any }>) {
-					if (ch?.type === "task" && (ch.value?.state?.status === "terminal" || ch.value?.state?.status === "completing")) {
-						this.receipts.recordTerminal(ch.value);
+					if (ch?.type === "task") {
+						if (ch.value?.state?.status === "terminal") {
+							this.receipts.recordTerminal(ch.value);
+						}
 						this.schedule();
 					} else if (ch?.type === "conversation" && ch.value) {
 						this.conversations.recordConversation(ch.value);
@@ -147,7 +149,10 @@ export class RuntimeGraphSource {
 		const completeness = (totalLiveCount > MAX_LIVE_NODES || hasMissingReceipts) ? "limited" : "complete";
 		const conversations = this.conversations.snapshot();
 		const receipts = this.receipts.getReceipts();
-		const stats = { liveCount: Object.keys(mappedNodes).length, terminalCount: receipts.length, totalCount: totalLiveCount + receipts.length };
+		const allTaskIds = new Set<number>();
+		for (const key of Object.keys(rawNodes)) allTaskIds.add(Number(key));
+		for (const r of receipts) allTaskIds.add(r.taskId);
+		const stats = { liveCount: Object.keys(mappedNodes).length, terminalCount: receipts.length, totalCount: allTaskIds.size };
 
 		const structuralJson = JSON.stringify({ nodes: mappedNodes, conversations, receipts, completeness, stats });
 		if (structuralJson === this.lastStructuralJson) return;
@@ -168,7 +173,7 @@ export class RuntimeGraphSource {
 				hasMissing = true;
 				if (this.harness?.getTask) {
 					void this.harness.getTask(prevId).then((task) => {
-						if (task && (task.state?.status === "terminal" || task.state?.status === "completing")) {
+						if (task && task.state?.status === "terminal") {
 							this.receipts.recordTerminal(task);
 							this.schedule();
 						}

@@ -2,6 +2,9 @@ import type { TaskRecord } from "@earendil-works/pi-durable";
 import type { RuntimeTaskReceipt, TaskOutcomeName } from "../runtime-graph/types.ts";
 import { MAX_RECEIPTS, MAX_PREVIEW_LENGTH } from "../runtime-graph/schema.ts";
 
+export const MAX_ERROR_MESSAGE_LENGTH = 1024;
+export const MAX_ERROR_CODE_LENGTH = 64;
+
 export interface TerminalOptions {
 	readonly isToolError?: boolean;
 	readonly durationMs?: number;
@@ -24,27 +27,40 @@ export class RuntimeGraphReceiptsCollector {
 	recordTerminal(
 		task: TaskRecord<unknown, unknown, unknown>,
 		options?: TerminalOptions,
-	): RuntimeTaskReceipt {
+	): RuntimeTaskReceipt | undefined {
+		const state = task.state;
+		if (state.status !== "terminal") {
+			return undefined;
+		}
+
 		const taskId = Number(task.id);
 		let outcome: TaskOutcomeName = "completed";
 		let error: { message: string; code?: string } | undefined;
 
-		const state = task.state;
-		if (state.status === "terminal" || state.status === "completing") {
-			const taskOutcome =
-				typeof state.outcome === "object" && state.outcome !== null && "status" in state.outcome
-					? (state.outcome as { status: string; error?: unknown; reason?: unknown })
-					: { status: String(state.outcome ?? "completed") };
-			outcome = (taskOutcome.status as TaskOutcomeName) ?? "completed";
-			if ("error" in taskOutcome && taskOutcome.error) {
-				const err = taskOutcome.error as { message?: string; code?: string };
-				error = {
-					message: String(err.message ?? "Task execution failed"),
-					code: err.code ? String(err.code) : undefined,
-				};
-			} else if ("reason" in taskOutcome && taskOutcome.reason) {
-				error = { message: String(taskOutcome.reason) };
+		const taskOutcome =
+			typeof state.outcome === "object" && state.outcome !== null && "status" in state.outcome
+				? (state.outcome as { status: string; error?: unknown; reason?: unknown })
+				: { status: String(state.outcome ?? "completed") };
+		outcome = (taskOutcome.status as TaskOutcomeName) ?? "completed";
+		if ("error" in taskOutcome && taskOutcome.error !== undefined && taskOutcome.error !== null) {
+			let rawMsg = "Task execution failed";
+			let rawCode: string | undefined;
+			if (typeof taskOutcome.error === "object") {
+				const err = taskOutcome.error as { message?: unknown; code?: unknown };
+				if (err.message !== undefined && err.message !== null) rawMsg = String(err.message);
+				if (err.code !== undefined && err.code !== null) rawCode = String(err.code);
+			} else {
+				rawMsg = String(taskOutcome.error);
 			}
+			error = {
+				message: rawMsg.length > MAX_ERROR_MESSAGE_LENGTH ? rawMsg.slice(0, MAX_ERROR_MESSAGE_LENGTH) : rawMsg,
+				code: rawCode ? (rawCode.length > MAX_ERROR_CODE_LENGTH ? rawCode.slice(0, MAX_ERROR_CODE_LENGTH) : rawCode) : undefined,
+			};
+		} else if ("reason" in taskOutcome && taskOutcome.reason !== undefined && taskOutcome.reason !== null) {
+			const rawReason = String(taskOutcome.reason);
+			error = {
+				message: rawReason.length > MAX_ERROR_MESSAGE_LENGTH ? rawReason.slice(0, MAX_ERROR_MESSAGE_LENGTH) : rawReason,
+			};
 		}
 
 		let preview = options?.preview;
