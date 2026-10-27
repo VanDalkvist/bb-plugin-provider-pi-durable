@@ -8,8 +8,6 @@ import {
 import {
 	isDelegationTool,
 	getDelegationPresentation,
-	extractCodemodeTitle,
-	getCodemodePresentation,
 	resolveToolPresentation,
 } from "./tool-presentations.ts";
 import { buildToolItemShape } from "./tool-item-shape.ts";
@@ -21,8 +19,6 @@ export {
 	resolveFileChangeItem,
 	isDelegationTool,
 	getDelegationPresentation,
-	extractCodemodeTitle,
-	getCodemodePresentation,
 	resolveToolPresentation,
 	buildToolItemShape,
 };

@@ -15,37 +15,6 @@ export function getDelegationPresentation(title: unknown): Record<string, unknow
 	};
 }
 
-export function extractCodemodeTitle(code?: unknown): string {
-	if (typeof code !== "string" || !code.trim()) {
-		return "Code execution";
-	}
-	const lines = code.trim().split("\n");
-	for (const rawLine of lines) {
-		const line = rawLine.trim();
-		if (!line) continue;
-		if (line.startsWith("// @options:") || line.startsWith("/* @options:")) {
-			continue;
-		}
-		const cleaned = line
-			.replace(/^(\/\/|\/\*+|\*+|\/\/!|#)\s*/, "")
-			.replace(/\*+\/$/, "")
-			.trim();
-		if (cleaned.length > 0) {
-			return cleaned.length > 80 ? `${cleaned.slice(0, 77)}...` : cleaned;
-		}
-	}
-	return "Code execution";
-}
-
-export function getCodemodePresentation(args?: Record<string, unknown>): Record<string, unknown> {
-	const title = extractCodemodeTitle(args?.code);
-	return {
-		label: { pending: "Running code", completed: "Ran code" },
-		icon: { glyph: "Code" },
-		title,
-	};
-}
-
 export function resolveToolPresentation(
 	toolName: string,
 	shape: Record<string, unknown>,
@@ -54,8 +23,6 @@ export function resolveToolPresentation(
 	if (shape.type === "delegation") {
 		return getDelegationPresentation(shape.label);
 	}
-	if (toolName === "codemode") {
-		return getCodemodePresentation(args);
-	}
+	// Generic tools, including codemode, use BB's built-in tool card.
 	return undefined;
 }
