@@ -1,4 +1,3 @@
-import { experimental_planStepsPresentation as planStepsPresentation, type ThreadEventPlanStep } from "@get-bb/plugin-sdk/provider-bridge";
 import {
 	translateToolStart,
 	translateToolUpdate,
@@ -11,9 +10,6 @@ import {
 } from "./message-delta-translator.ts";
 import { translateRuntimeGraphSnapshot } from "./runtime-graph-delta.ts";
 import type { RunnerEvent, ThreadDelta } from "./types.ts";
-
-/** Timeline channel of the durable task graph; stable so every snapshot closes over the same key. */
-const TASKS_CHANNEL = "pi-durable-tasks";
 
 export interface DeltaTranslatorContext {
 	threadId: string;
@@ -137,18 +133,10 @@ export class DeltaTranslator {
 				break;
 			}
 
-			case "tasks_snapshot": {
-				// The graph spans the whole session, so it stays on the parent thread while subagents run.
-				const steps = Array.isArray(event.steps) ? (event.steps as ThreadEventPlanStep[]) : [];
-				if (steps.length === 0) break;
-				const item = { type: "planSteps" as const, steps };
-				const presentation = planStepsPresentation(steps);
-				deltas.push(
-					{ kind: "item.open", key: { channel: TASKS_CHANNEL }, item, presentation },
-					{ kind: "item.close", key: { channel: TASKS_CHANNEL }, status: "completed", item, presentation },
-				);
+			case "tasks_snapshot":
+				// Discontinued: native BB todo/planSteps synchronization removed in favor of runtime graph.
+				// Kept as an explicit no-op to preserve backwards wire protocol validation.
 				break;
-			}
 
 			case "runtime_graph_snapshot": {
 				deltas.push(...translateRuntimeGraphSnapshot(event, event.conversationId));

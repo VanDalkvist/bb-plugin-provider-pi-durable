@@ -59,23 +59,13 @@ test("taskSteps: an empty graph yields no rows", () => {
 	assert.deepEqual(taskSteps(graph({})), []);
 });
 
-test("tasks_snapshot translates into a planSteps item that BB's schema accepts", () => {
+test("tasks_snapshot is an explicit no-op in DeltaTranslator and emits no planSteps deltas", () => {
     const steps: BBPlanStep[] = [
         { step: "#1 assistant turn", status: "active" },
         { step: "  #2 bash: echo alpha", status: "completed" },
     ];
     const deltas = new DeltaTranslator().translate(wireFixture("tasks_snapshot", { type: "tasks_snapshot", steps }), { threadId: "thread-1" });
-    assert.deepEqual(deltas.map((delta) => delta.kind), ["item.open", "item.close"]);
-    for (const delta of deltas) {
-        const parsed = threadDeltaSchema.safeParse(delta);
-        assert.equal(parsed.success, true, `delta must validate against threadDeltaSchema: ${JSON.stringify(delta)}`);
-        assert.equal((delta.key as {
-            channel: string;
-        }).channel, "pi-durable-tasks");
-    }
-    const closed = deltas[1];
-    assert.equal(closed.status, "completed");
-    assert.deepEqual(closed.item, { type: "planSteps", steps });
+    assert.deepEqual(deltas, [], "tasks_snapshot must emit no deltas (discontinued native BB todo synchronization)");
 });
 
 test("tasks_snapshot without steps emits nothing", () => {
