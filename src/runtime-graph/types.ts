@@ -60,6 +60,13 @@ export interface RuntimeTaskNode {
 	readonly startedAt?: number;
 	readonly endedAt?: number;
 	readonly durationMs?: number;
+	readonly toolName?: string;
+	readonly targetHint?: string;
+	readonly model?: {
+		readonly provider: string;
+		readonly modelId: string;
+	};
+	readonly thinkingLevel?: string;
 }
 
 export interface RuntimeConversationNode {
@@ -88,6 +95,9 @@ export interface RuntimeTaskReceipt {
 	readonly endedAt: number;
 	readonly durationMs?: number;
 	readonly preview?: string;
+	readonly toolName?: string;
+	readonly targetHint?: string;
+	readonly startedAt?: number;
 }
 
 export interface RuntimeGraphStats {

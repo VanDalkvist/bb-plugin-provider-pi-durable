@@ -67,6 +67,15 @@ export const runtimeTaskNodeSchema = z.object({
 	startedAt: z.number().int().positive().optional(),
 	endedAt: z.number().int().positive().optional(),
 	durationMs: z.number().int().nonnegative().optional(),
+	toolName: z.string().max(64).optional(),
+	targetHint: z.string().max(128).optional(),
+	model: z
+		.object({
+			provider: z.string().max(64),
+			modelId: z.string().max(128),
+		})
+		.optional(),
+	thinkingLevel: z.string().max(32).optional(),
 });
 
 export const runtimeConversationNodeSchema = z.object({
@@ -101,6 +110,9 @@ export const runtimeTaskReceiptSchema = z.object({
 	endedAt: z.number().int().positive(),
 	durationMs: z.number().int().nonnegative().optional(),
 	preview: z.string().max(MAX_PREVIEW_LENGTH).optional(),
+	toolName: z.string().max(64).optional(),
+	targetHint: z.string().max(128).optional(),
+	startedAt: z.number().int().positive().optional(),
 });
 
 export const runtimeGraphStatsSchema = z.object({
