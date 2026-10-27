@@ -21,7 +21,7 @@ function makeNodeRow(id: number, status: string, startedAt?: number, durationMs?
 		isTerminal,
 		liveNode: isTerminal ? undefined : ({
 			id, kind: "pi.tool", conversationId: 1, background: false, abortRequested: false,
-			state: { status }, label: `Task #${id}`, startedAt,
+			state: { status }, label: `Task #${id}`, startedAt, durationMs,
 		} as any),
 		receipt: isTerminal ? ({
 			taskId: id, kind: "pi.tool", conversationId: 1,
@@ -67,7 +67,7 @@ test("Native compact wrapper: removes double border, rounded-md, shadow-sm, my-1
 	assert.ok(className.includes("w-full"), `Must have w-full: ${className}`);
 });
 
-test("Bounded view clock: 1Hz clock advances running task duration without affecting terminal duration", async () => {
+test("Bounded view clock: 1Hz clock advances running task duration without affecting terminal duration", async (t) => {
 	const startTime = Date.now() - 8800; // 8.8s ago
 	const runningTask = makeNodeRow(10, "running", startTime, 8800);
 	const terminalTask = makeNodeRow(11, "completed", undefined, 350); // fixed 350ms
@@ -75,7 +75,7 @@ test("Bounded view clock: 1Hz clock advances running task duration without affec
 	const state: any = {
 		threadId: "thr-clock", status: "ok", snapshot: { nodes: {}, receipts: [], stats: {} },
 		tree: [runningTask, terminalTask],
-		selectedTaskId: null, selectedItem: null, collapsedTaskIds: new Set(),
+		selectedTaskId: 10, selectedItem: runningTask, collapsedTaskIds: new Set(),
 		selectTask: () => {}, toggleCollapse: () => {},
 	};
 
@@ -83,32 +83,41 @@ test("Bounded view clock: 1Hz clock advances running task duration without affec
 		threadId: "thr-clock", projectId: "p-1", environment: null, segments: [], isExpanded: true, onToggle: () => {}, testState: state,
 	}));
 
-	// Expand folded finished history so terminal task row is in DOM
-	const seeMoreBtn = container.querySelector("button[data-history-toggle='true']");
-	if (seeMoreBtn) {
-		fireEvent.click(seeMoreBtn);
+	try {
+		// Expand folded finished history so terminal task row is in DOM
+		const seeMoreBtn = container.querySelector("button[data-history-toggle='true']");
+		if (seeMoreBtn) {
+			fireEvent.click(seeMoreBtn);
+		}
+
+		const rowRunning = container.querySelector("[data-task-id='10']");
+		const rowTerminal = container.querySelector("[data-task-id='11']");
+		const inspector = container.querySelector("[data-testid='runtime-graph-inspector']");
+
+		assert.ok(rowRunning?.textContent?.includes("8.8s") || rowRunning?.textContent?.includes("8.9s"), `Expected ~8.8s in row, got ${rowRunning?.textContent}`);
+		assert.ok(inspector?.textContent?.includes("8.8 s") || inspector?.textContent?.includes("8.9 s"), `Expected ~8.8 s in inspector, got ${inspector?.textContent}`);
+		assert.ok(rowTerminal?.textContent?.includes("350ms"), "Terminal task must show exact 350ms");
+
+		// Wait 2050ms for 2 clock ticks (at 1000ms each)
+		await new Promise((resolve) => setTimeout(resolve, 2050));
+
+		const rowRunningAfter = container.querySelector("[data-task-id='10']");
+		const rowTerminalAfter = container.querySelector("[data-task-id='11']");
+		const inspectorAfter = container.querySelector("[data-testid='runtime-graph-inspector']");
+
+		// Duration should have advanced by ~2 seconds to ~10.8s without external events in BOTH row and inspector
+		assert.ok(
+			rowRunningAfter?.textContent?.includes("10.8s") || rowRunningAfter?.textContent?.includes("10.9s"),
+			`Expected advanced duration ~10.8s in row, got ${rowRunningAfter?.textContent}`,
+		);
+		assert.ok(
+			inspectorAfter?.textContent?.includes("10.8 s") || inspectorAfter?.textContent?.includes("10.9 s"),
+			`Expected advanced duration ~10.8 s in inspector, got ${inspectorAfter?.textContent}`,
+		);
+
+		// Terminal duration must remain strictly fixed at 350ms
+		assert.ok(rowTerminalAfter?.textContent?.includes("350ms"), "Terminal duration must not drift");
+	} finally {
+		unmount();
 	}
-
-	const rowRunning = container.querySelector("[data-task-id='10']");
-	const rowTerminal = container.querySelector("[data-task-id='11']");
-
-	assert.ok(rowRunning?.textContent?.includes("8.8s") || rowRunning?.textContent?.includes("8.9s"), `Expected ~8.8s, got ${rowRunning?.textContent}`);
-	assert.ok(rowTerminal?.textContent?.includes("350ms"), "Terminal task must show exact 350ms");
-
-	// Wait 2050ms for 2 clock ticks (at 1000ms each)
-	await new Promise((resolve) => setTimeout(resolve, 2050));
-
-	const rowRunningAfter = container.querySelector("[data-task-id='10']");
-	const rowTerminalAfter = container.querySelector("[data-task-id='11']");
-
-	// Duration should have advanced by ~2 seconds to ~10.8s without external events
-	assert.ok(
-		rowRunningAfter?.textContent?.includes("10.8s") || rowRunningAfter?.textContent?.includes("10.9s"),
-		`Expected advanced duration ~10.8s, got ${rowRunningAfter?.textContent}`,
-	);
-
-	// Terminal duration must remain strictly fixed at 350ms
-	assert.ok(rowTerminalAfter?.textContent?.includes("350ms"), "Terminal duration must not drift");
-
-	unmount();
 });

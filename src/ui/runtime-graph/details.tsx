@@ -23,10 +23,10 @@ export const RuntimeGraphDetails: FC<RuntimeGraphDetailsProps> = ({ selectedItem
 
 	const previewText = receipt?.preview;
 	const errorInfo = receipt?.error;
-	const liveElapsed = liveNode?.durationMs ?? (
+	const liveElapsed = (
 		liveNode?.startedAt && liveNode.startedAt > 0
 			? Math.max(0, (now ?? Date.now()) - liveNode.startedAt)
-			: undefined
+			: liveNode?.durationMs
 	);
 	const durationMs = receipt?.durationMs ?? liveElapsed;
 
