@@ -96,6 +96,7 @@ export async function handleTurnStart(id: string | number, params: TurnStartPara
 
 		await session.prompt({ text, images, conversationId: targetConversationId });
 		sendInputAccepted(ctx.sendNotification, params.threadId, params.clientRequestId);
+		ctx.sendNotification("thread/delta", { threadId: params.threadId, deltas: [{ kind: "turn.open" }] });
 		ctx.sendResult(id, { threadId: params.threadId });
 		return;
 	}
@@ -127,6 +128,7 @@ export async function handleTurnStart(id: string | number, params: TurnStartPara
 	await reconcileSessionOptions(session, params.options, params.providerOptions);
 	await session.prompt({ text, images });
 	sendInputAccepted(ctx.sendNotification, params.threadId, params.clientRequestId);
+	ctx.sendNotification("thread/delta", { threadId: params.threadId, deltas: [{ kind: "turn.open" }] });
 	ctx.sendResult(id, { threadId: params.threadId });
 }
 

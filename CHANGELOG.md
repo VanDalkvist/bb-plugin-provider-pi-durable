@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.3.4] - 2026-10-27
+
+### Fixed
+- **Non-Blocking Background Subagents via `Anchor` (Cycle 79 checkpoint)**: Resolved architectural defect where background subagents (`isBackground: true`) were directly owned by the caller tool task (`api.taskId`), causing Pi Durable's scheduler (§5.5 Spec) to hold the tool task in `completing` and the parent generation in `waiting`, completely freezing the parent conversation for the duration of the subagent. Implemented Pi Durable's canonical background `Anchor` task pattern (`test/examples/23-subagent-background.ts`) so the tool task and parent turn settle immediately, while preserving logical creator metadata (`ownerTaskId`) in `SubagentsDoc` and `RuntimeGraphSnapshot`. (Originally intended for 0.3.2, committed as part of current 0.3.4 checkpoint).
+- **BB Core 120s Watchdog Disarm (Cycle 79 checkpoint)**: Emitted `{ kind: "turn.open" }` immediately upon input acceptance on root threads in `handleTurnStart`, disarming BB Core's 120s watchdog timer (`p.delete(threadId)`) and preventing false `provider_turn_start_timeout` system errors when long-running background tasks are active.
+
+---
+
+## [0.3.3] - 2026-10-27
+
+### Added
+- **English Plugin UI Chrome & Conditional Inspector**: Standardized all plugin-owned UI labels, titles, summaries, and counters to English. Refactored details inspector to mount conditionally only upon explicit node selection, allowing the task tree full layout width by default.
+- **Truthful Live Graph Metadata (Cycle 80)**: Enriched task nodes and terminal receipts with real `toolName`, sanitized `targetHint` (redacting credentials and auth tokens), extracted model and thinking levels for generation tasks, and high-resolution start/duration timestamps.
+- **Native Codemode Presentation Parity**: Adopted built-in Beyond Boundaries tool presentation for codemode execution.
+
+---
+
 ## [0.3.1] - 2026-10-26
 
 ### Fixed

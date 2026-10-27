@@ -68,3 +68,24 @@
   - `src/runner/runtime-graph-source.ts`: 180 строк (< 200)
   - `tests/runtime-graph-live-metadata.test.ts`: 159 строк (< 200)
 - **Файловый артефакт:** `/Users/vanya/.bb/thread-storage/thr_ct3kk9xne6/runtime-graph-live-metadata-fix-result.md`.
+
+### Candidate Checkpoint 0.3.4 (Cycle 79 Integration & Dist Reconciliation) — 2026-10-27 (Execution Receipt)
+- **Цель и статус:** Интеграция и фиксация незакоммиченного кандидата Cycle 79 (канонический паттерн фоновых субагентов `Anchor` по Pi Durable Spec §5.5 Rule 4, снятие сторожевого таймера 120s `turn.open` в `handleTurnStart`), синхронизация `dist/` бандлов, микробэмп `0.3.3` -> `0.3.4`. Статус: **CHECKPOINT COMMITTED & PUSHED (Architecture and Live Review gates remain OPEN; NOT final PASS)**.
+- **Основание и прямое разрешение:** Прямое поручение Вани («Если есть незакоммиченные версии файлов – делай новый микро бамп, коммить и пушь»). Снятие гейта публичного репозитория для сохранения целостного рабочего снимка. Handoff ownership подтверждён автором `thr_t3x53wmjif`.
+- **Реальные выполненные изменения:**
+  1. `src/runner/subagent.ts`: канонический `Anchor` task (`{ ownership: { kind: "conversation" }, background: true }`) для фоновых субагентов, освобождающий инструмент `api.taskId` в `terminal` и возвращающий родительскую беседу в `idle`.
+  2. `src/runner/subagent-docs.ts`: фиксация `anchorTaskId` в `SubagentRecord`.
+  3. `src/host/bridge-router.ts`: отправка `{ kind: "turn.open" }` сразу при приёме ввода в `handleTurnStart` на корневом треде для разоружения 120s watchdog таймера в BB Core.
+  4. `tests/subagent-background-unblock.test.ts` & `tests/turn-start-watchdog-prevention.test.ts`: TDD тесты на паттерн Anchor и watchdog-предотвращение.
+  5. `package.json`, `package-lock.json`, `CHANGELOG.md`: версия обновлена `0.3.3` -> `0.3.4`.
+  6. Пересобраны production-бандлы `dist/` из точного исходного кода.
+- **TDD и доказательная база:**
+  - Полный тестовый сьют (`npm test`): 582 теста (539 backend + 43 UI), 100% pass, 0 fail.
+  - Contract compiler & negative guard (`npm run test:contracts`): PASS.
+  - Строгая типизация (`npx tsc --noEmit`): 0 errors.
+  - Import AST SCC (алгоритм Тарьяна): 135 файлов, 0 циклов.
+  - Line budgets (AP-019): все файлы строго < 200 LOC.
+- **Статус ревью, рантайма и открытых дефектов:**
+  - Архитектурное и независимое live review (thr_qf7vysbvrr): **OPEN**.
+  - Realtime stale graph bug & UI active-first / "See more" compact history / native BB chrome: **OPEN** (подтверждённый user report, evidence собирается независимыми reviewers; не входит в 0.3.4 freeze, получит отдельный ownership и следующий patch).
+  - Runtime resident state: плагин на диске обновлён до 0.3.4, но работающие сессии BB удерживают загруженный процесс (`restart: pending`, `runtime verified: unverified (not switched)`).

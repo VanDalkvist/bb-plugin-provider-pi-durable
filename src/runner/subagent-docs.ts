@@ -20,6 +20,7 @@ export type SubagentRecord = {
 	task: string;
 	role: string;
 	ownerTaskId: TaskId;
+	anchorTaskId?: TaskId;
 	background: boolean;
 	reporter?: TaskId;
 	report?: string;

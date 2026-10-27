@@ -5,9 +5,10 @@ import {
 	defineExtension,
 	defineTool,
 	type Extension,
+	type TaskId,
 } from "@earendil-works/pi-durable";
 import { SubagentsDoc, type SubagentRecord } from "./subagent-docs.ts";
-import { BACKGROUND, DefaultReporter, answerText } from "./subagent-delivery.ts";
+import { Anchor, BACKGROUND, DefaultReporter, answerText } from "./subagent-delivery.ts";
 import { nativeChildTitle } from "../shared/child-title.ts";
 import { buildTechnicalWorkerRole } from "./subagent-role.ts";
 import { resolveSubagentModelConfiguration } from "../policy/resolver.ts";
@@ -75,8 +76,15 @@ export function createSubagentExtension(
 
 							const existingConv = (await tx.scanConversations({ ownerTaskId: api.taskId }, 1)).items[0];
 							let childId = existingConv?.id;
+							let anchorId: TaskId | undefined;
 							if (childId === undefined) {
-								const created = await tx.createConversation({ ownership: { kind: "task", taskId: api.taskId } });
+								if (isBackground) {
+									anchorId = await tx.createTask(Anchor, null, BACKGROUND);
+								}
+								const ownership = isBackground && anchorId !== undefined
+									? { kind: "task" as const, taskId: anchorId }
+									: { kind: "task" as const, taskId: api.taskId };
+								const created = await tx.createConversation({ ownership });
 								await configure(tx, created.id, {
 									model: resolved.model,
 									thinkingLevel: resolved.thinkingLevel,
@@ -92,6 +100,7 @@ export function createSubagentExtension(
 								task: args.task,
 								role: "worker",
 								ownerTaskId: api.taskId,
+								anchorTaskId: anchorId,
 								background: isBackground,
 								actualModel: resolved.model,
 								thinkingLevel: resolved.thinkingLevel,

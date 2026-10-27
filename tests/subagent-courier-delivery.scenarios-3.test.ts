@@ -52,9 +52,13 @@ test("Subagent tool: registers record in SubagentsDoc, uses friendly name, and d
 
 	assert.ok(res.output[0].text.includes("Subagent spawned in background"));
 	assert.equal(childConversationSubmitted, false, "Must NOT call api.conversation or child.submit in background mode");
-	assert.equal(createdTasks.length, 1);
-	assert.equal(createdTasks[0].input.task, "Background integration job");
-	assert.equal(createdTasks[0].input.conversationId, "conv_child_live");
+	assert.equal(createdTasks.length, 2, "Must create Anchor task and DefaultReporter task");
+	const anchor = createdTasks.find((t) => t.def === Anchor);
+	assert.ok(anchor, "Anchor task must be created");
+	const reporter = createdTasks.find((t) => t.def !== Anchor);
+	assert.ok(reporter, "Reporter task must be created");
+	assert.equal(reporter.input.task, "Background integration job");
+	assert.equal(reporter.input.conversationId, "conv_child_live");
 	assert.equal(docStore.agents["subagent:task_parent_exec"].reporter, "task_reporter_gen");
 	assert.equal(docStore.agents["subagent:task_parent_exec"].task, "Background integration job");
 	assert.equal(

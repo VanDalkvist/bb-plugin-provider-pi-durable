@@ -134,5 +134,9 @@
 - Recheck next time: file identity follows args.path, not replacement-region count; native details.patch is canonical, details.diff is TUI display. Protect semantics with real producer plus exact patch application, not schema acceptance alone.
 - Evidence: `f11f89d`, `tests/native-edit-file-change.test.ts`, both delta acceptance reports, ledger cycle `file-change-delta-2026-10-25`.
 
-
-
+## 2026-10-27 - Background Subagent Ownership Invariant: Anchor Task vs Foreground Tool Task
+- Context: Spawning background subagents in Pi Durable (`src/runner/subagent.ts`).
+- Symptom: Spawning a background subagent (`background: true`) caused the parent conversation to freeze for 15+ minutes in `status: "waiting"`, unable to answer the user or accept input, triggering BB Core's 120s `provider_turn_start_timeout` watchdog.
+- Cause: Assigning conversation ownership to the caller tool task (`ownership: { kind: "task", taskId: api.taskId }`). Under Pi Durable Spec §5.5 Rule 4, a task cannot become `terminal` while any owned task is live (`#hasOwnedLive`). Because `api.taskId` owned the child conversation, the tool task was held in `completing` for the entire lifetime of the subagent, and the parent `pi.generation` was held in `waiting`, completely locking the parent conversation.
+- Use next time: Strictly follow Pi Durable's background canon (`test/examples/23-subagent-background.ts`). A background conversation must be owned by an `Anchor` task (`{ ownership: { kind: "conversation" }, background: true }`). This allows the foreground tool task to settle immediately to `terminal` in milliseconds, returning the parent conversation to `idle`, while the subagent runs asynchronously in the background. On the wire bridge, also emit `{ kind: "turn.open" }` on root input acceptance to disarm BB Core's 120s watchdog timer.
+- Evidence: `tests/subagent-background-unblock.test.ts`, `tests/turn-start-watchdog-prevention.test.ts`, `src/runner/subagent.ts`, `src/host/bridge-router.ts`.

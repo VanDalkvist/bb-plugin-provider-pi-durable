@@ -42,7 +42,7 @@ test("Subagent tool in background mode returns immediately without waiting for c
 				createConversation: async () => ({ id: "conv_child_99" }),
 				doc: async () => ({}),
 				createTask: async (_task: any, input: any) => {
-					submittedContent = input.task;
+					if (input?.task) submittedContent = input.task;
 					return "task_reporter_1";
 				},
 			};
