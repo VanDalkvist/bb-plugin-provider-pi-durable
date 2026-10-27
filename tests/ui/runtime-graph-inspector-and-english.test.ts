@@ -72,7 +72,8 @@ test("Conditional Inspector: inspector mounts on explicit selection and can be c
 	assert.ok(container.textContent?.includes("#10"));
 
 	// Close / deselect button should exist and work
-	const closeBtn = container.querySelector("button[aria-label='Close inspector']") as HTMLButtonElement;
+	const closeBtn = (container.querySelector("button[aria-label='Close task details']") ??
+		container.querySelector("button[aria-label='Close inspector']")) as HTMLButtonElement;
 	assert.ok(closeBtn, "Close inspector button must be present");
 	fireEvent.click(closeBtn);
 	assert.equal(selectedId, null, "Clicking close must deselect task (set to null)");

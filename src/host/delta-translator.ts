@@ -9,6 +9,7 @@ import {
 	translateAgentEnd,
 } from "./message-delta-translator.ts";
 import { translateRuntimeGraphSnapshot } from "./runtime-graph-delta.ts";
+import type { ToolItemReconciler } from "./tool-item-reconciler.ts";
 import type { RunnerEvent, ThreadDelta } from "./types.ts";
 
 export interface DeltaTranslatorContext {
@@ -20,11 +21,16 @@ export interface DeltaTranslatorContext {
 
 export class DeltaTranslator {
 	private activeTools = new Map<string, Record<string, unknown>>();
+	private reconciler?: ToolItemReconciler;
 	public currentThinkingIndex = 0;
 	public currentAgentText = "";
 	private turnOpenSent = false;
 	private turnBoundarySent = false;
 	public openThinkingChannels = new Set<string>();
+
+	public setReconciler(reconciler: ToolItemReconciler): void {
+		this.reconciler = reconciler;
+	}
 
 	public reset(): void {
 		this.activeTools.clear();
@@ -103,6 +109,7 @@ export class DeltaTranslator {
 				const parentShape = parentRef ? this.activeTools.get(parentRef) : undefined;
 				const { shape, delta } = translateToolStart(event, fallbackCwd, parentShape);
 				this.activeTools.set(String(event.toolCallId), shape);
+				this.reconciler?.recordOpen(ctx.threadId, String(event.toolCallId), String(event.toolName), shape, parentRef);
 				deltas.push(delta);
 				break;
 			}
@@ -127,6 +134,7 @@ export class DeltaTranslator {
 				const callId = String(event.toolCallId);
 				const cachedShape = this.activeTools.get(callId);
 				this.activeTools.delete(callId);
+				this.reconciler?.recordClose(ctx.threadId, callId);
 				const parentRef = event.parentRef ? String(event.parentRef) : (event.parentToolCallId ? String(event.parentToolCallId) : undefined);
 				const parentShape = parentRef ? this.activeTools.get(parentRef) : undefined;
 				deltas.push(translateToolEnd(event, cachedShape, fallbackCwd, parentShape));

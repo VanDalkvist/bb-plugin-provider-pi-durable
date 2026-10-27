@@ -10,7 +10,11 @@ export interface SubagentMirrorRecord {
 	source?: "inherit" | "configured";
 	policyRevision?: number;
 	initialTurnConsumed?: boolean;
+	isTruncated?: boolean;
 }
+
+const MAX_BUFFERED_EVENTS = 100;
+const MAX_OUTPUT_CHARS = 65536;
 
 export class SubagentMirrorManager {
 	private mirrors = new Map<string, SubagentMirrorRecord>();
@@ -50,6 +54,19 @@ export class SubagentMirrorManager {
 	public bufferEvent(conversationId: string | number, event: RunnerEvent): void {
 		const key = String(conversationId);
 		const list = this.eventBuffers.get(key) ?? [];
+		if (event.type === "runtime_graph_snapshot") {
+			const existingIdx = list.findIndex((e) => e.type === "runtime_graph_snapshot");
+			if (existingIdx !== -1) {
+				list[existingIdx] = event;
+				this.eventBuffers.set(key, list);
+				return;
+			}
+		}
+		if (list.length >= MAX_BUFFERED_EVENTS) {
+			list.shift();
+			const rec = this.mirrors.get(key);
+			if (rec) rec.isTruncated = true;
+		}
 		list.push(event);
 		this.eventBuffers.set(key, list);
 	}
@@ -81,7 +98,14 @@ export class SubagentMirrorManager {
 	public appendOutputText(conversationId: string | number, delta: string): void {
 		const key = String(conversationId);
 		const current = this.outputTexts.get(key) ?? "";
-		this.outputTexts.set(key, current + delta);
+		const combined = current + delta;
+		if (combined.length > MAX_OUTPUT_CHARS) {
+			this.outputTexts.set(key, combined.slice(0, MAX_OUTPUT_CHARS));
+			const rec = this.mirrors.get(key);
+			if (rec) rec.isTruncated = true;
+		} else {
+			this.outputTexts.set(key, combined);
+		}
 	}
 
 	public getOutputText(conversationId: string | number): string {

@@ -2,6 +2,12 @@
 
 Operational guidelines and invariants for `bb-plugin-provider-pi-durable`.
 
+This repository inherits the general workspace operating contract in
+`/Users/vanya/Projects/AGENTS.md` (parent orchestration authority, native background
+subagents under saved policy, bounded timeouts, empirical progress judgment, role
+separation, and data preservation). Only plugin-specific release, versioning, dist,
+and committer rules are maintained below.
+
 ## Hard rules for this repository
 
 ⛔ **ALWAYS COMMIT AND PUSH TO MAIN.**
@@ -32,6 +38,23 @@ Operational guidelines and invariants for `bb-plugin-provider-pi-durable`.
   - Минимальный технический worker envelope (`subagent-role.ts`) является разрешённым контрактом инструмента, а не собственной системной persona. Базовый системный промпт извлекается динамически из upstream.
   - Корневой координатор ведёт полный архитектурный цикл (arch loop) и публикацию; нативный воркер выполняет порученный brief в рамках роли, не становясь самостоятельным оркестратором.
   - Модель и reasoning нативного инструмента `subagent` берутся строго из сохранённой политики провайдера (`inherit` или `configured`), а не из model kwargs или жёстко заданных имён в LLM-промпте.
+
+## Release, Versioning, Dist and Mechanical Committer Invariants
+
+General orchestration and delegation rules are governed by `/Users/vanya/Projects/AGENTS.md`. The plugin-specific release, versioning, artifact, and commit pipeline invariants are:
+
+1. **ONE COMMIT = ONE PATCH BUMP:**
+   Every release commit must contain exactly one patch bump in that same commit. Never push separate version-only follow-up commits, and never rewrite published git history.
+2. **Tracked `dist/` and metadata agreement:**
+   The `dist/` build directory is tracked in git and MUST be committed alongside its corresponding source and version bump. `package.json`, `package-lock.json`, and all `dist/` metadata files (app, host, and server `pluginVersion`) must strictly agree on the exact same version string.
+3. **Patch reservation order (Two version files BEFORE build):**
+   Reserve the patch bump in the TWO version files (`package.json` and `package-lock.json`) BEFORE executing the ordinary build (`npm run build`), because the Beyond Boundaries SDK build embeds `pluginVersion` into generated artifact metadata. The feature author or builder performs the normal build. The mechanical committer then stages the explicitly ready source, tests, and `dist/` alongside those already-bumped version files, committing and pushing WITHOUT performing a second bump.
+4. **Strictly mechanical committer scope:**
+   The committer role is deliberately mechanical: it performs ONLY version editing (if not pre-bumped), explicit staging of ready files, git commit, and git push. It executes NO tests, compiler/audit/SCC checks, builds, isolated exports/worktrees, extra docs/CHANGELOG/ledger edits, or plugin installs/restarts. Quality, build, and audit checks remain the responsibility of the feature author, independent reviewer, and builder within the arch loop.
+5. **Serialized version ownership & WIP isolation:**
+   One dedicated committer serializes version and index changes across parallel source writers. Never sweep another author's unfinished or unreviewed WIP into ready commits.
+6. **Runtime generation vs source/manifest distinction:**
+   Strictly distinguish among source commit, built artifact, installed manifest, loaded UI bundle, and resident host/runner. A version bumped in `package.json` or visible in `bb plugin list` is NOT proof that existing resident sessions have switched to the new runtime.
 
 ## Checklist for Updating the Plugin (Обязательный чеклист обновления плагина)
 

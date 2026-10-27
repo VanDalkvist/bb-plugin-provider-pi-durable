@@ -46,9 +46,12 @@ export class SessionRegistry {
 		return session;
 	}
 
-	private attachShared(threadId: string, providerThreadId: string, session: OwnedSessionPort, nativeChild: ReturnType<typeof detectNativeChild>, params: SessionCreationParams): OwnedSessionPort {
+	private attachShared(threadId: string, providerThreadId: string, session: OwnedSessionPort, nativeChild: ReturnType<typeof detectNativeChild>, params: SessionCreationParams, parentThreadId?: string): OwnedSessionPort {
 		const text = extractInputText(params.input) || params.prompt?.trim() || params.task?.trim() || "";
 		const targetConvId = nativeChild.conversationId ?? (text && typeof session.findSubagentConversationForTask === "function" ? session.findSubagentConversationForTask(text) : undefined) ?? session.getConversationIdForThread?.(threadId);
+		if (parentThreadId && !targetConvId) {
+			throw new Error(`Cannot resolve native child conversation for thread ${threadId} under parent ${parentThreadId}`);
+		}
 		this.track(threadId, session);
 		this.bindings.bind(threadId, providerThreadId);
 		session.registerThread?.(threadId, targetConvId);
@@ -96,18 +99,18 @@ export class SessionRegistry {
 			}
 		}
 
-		if (sharedSession) return this.attachShared(threadId, providerThreadId, sharedSession, nativeChild, params);
+		if (sharedSession) return this.attachShared(threadId, providerThreadId, sharedSession, nativeChild, params, parentThreadId);
 
 		const acquisition = this.admission.acquire(threadId, sessionKey, parentThreadId);
 		if (acquisition.kind === "wait") {
 			const created = await acquisition.promise;
 			if (this.sessions.get(threadId) === created) return created;
-			return this.attachShared(threadId, providerThreadId, created, nativeChild, params);
+			return this.attachShared(threadId, providerThreadId, created, nativeChild, params, parentThreadId);
 		}
 
 		const { admission } = acquisition;
 		try {
-			if (nativeChild.isNative) {
+			if (nativeChild.isNative || parentThreadId) {
 				if (!parentThreadId) throw new Error(`Unresolved parent owner thread for subagent conversation ${nativeChild.conversationId}`);
 				const options = buildSessionOptions(parentThreadId, providerThreadId, sessionKey, params, this.sharedSkillRoots, true);
 				const session = this.sessionFactory(options, this.sendNotification);
@@ -122,9 +125,13 @@ export class SessionRegistry {
 				session.registerThread?.(parentThreadId);
 				const childAborted = admission.isParticipantAborted(threadId);
 				if (!childAborted) {
+					const resolvedConvId = nativeChild.conversationId ?? session.getConversationIdForThread?.(threadId);
+					if (!resolvedConvId) {
+						throw new Error(`Cannot resolve native child conversation for thread ${threadId} under parent ${parentThreadId}`);
+					}
 					this.track(threadId, session);
 					this.bindings.bind(threadId, providerThreadId);
-					session.registerThread?.(threadId, nativeChild.conversationId);
+					session.registerThread?.(threadId, resolvedConvId);
 					this.sendNotification("thread/identity", { threadId, providerThreadId, sessionRestorable: true });
 					this.sendNotification("thread/delta", { threadId, deltas: [{ kind: "session.reset" }] });
 				}

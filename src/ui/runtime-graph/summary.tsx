@@ -13,8 +13,11 @@ export interface RuntimeGraphSummaryProps {
 	readonly testState?: RuntimeGraphState;
 }
 
-function formatActiveCount(count: number): string {
-	return `${count} active`;
+function formatActiveCount(active: number, total?: number): string {
+	if (total !== undefined && total > 0) {
+		return `${active} active of ${total}`;
+	}
+	return `${active} active`;
 }
 
 export const RuntimeGraphSummary: FC<RuntimeGraphSummaryProps> = ({
@@ -56,7 +59,7 @@ export const RuntimeGraphSummary: FC<RuntimeGraphSummaryProps> = ({
 		const active = running + waiting + sleeping + completing;
 		const hasToolError = snapshot.receipts.some((r) => r.isToolError);
 		const terminalCount = snapshot.receipts.length;
-		const isLimited = snapshot.observation.completeness === "limited";
+		const isLimited = snapshot.observation?.completeness === "limited";
 
 		return { active, running, waiting, sleeping, completing, hasToolError, terminalCount, isLimited };
 	}, [snapshot]);
@@ -77,21 +80,30 @@ export const RuntimeGraphSummary: FC<RuntimeGraphSummaryProps> = ({
 	} else if (!counters || (counters.active === 0 && counters.terminalCount === 0)) {
 		iconName = "Circle";
 		iconColor = "text-muted-foreground";
-		summaryContent = <span className="text-muted-foreground">0 active</span>;
+		summaryContent = (
+			<span data-summary-count="true" className={isExpanded ? "text-foreground" : "text-muted-foreground"}>
+				0 active
+			</span>
+		);
 	} else if (counters.active > 0) {
 		iconName = isStale ? "AlertTriangle" : "Play";
 		iconColor = isStale ? "text-amber-500" : "text-blue-500";
 		const parts: string[] = [];
-		parts.push(formatActiveCount(counters.active));
+		const total = snapshot?.stats?.totalCount ?? (counters.active + counters.terminalCount);
+		parts.push(formatActiveCount(counters.active, total));
 		if (counters.waiting > 0) parts.push(`${counters.waiting} waiting`);
 		if (counters.sleeping > 0) parts.push(`${counters.sleeping} sleeping`);
 		if (counters.completing > 0) parts.push(`${counters.completing} completing`);
-		summaryContent = <span className="font-medium text-foreground">{parts.join(" · ")}</span>;
+		summaryContent = (
+			<span data-summary-count="true" className={isExpanded ? "font-medium text-foreground" : "text-muted-foreground"}>
+				{parts.join(" · ")}
+			</span>
+		);
 	} else {
 		iconName = isStale ? "AlertTriangle" : "Check";
 		iconColor = isStale ? "text-amber-500" : "text-green-500";
 		summaryContent = (
-			<span className="text-muted-foreground">
+			<span data-summary-count="true" className={isExpanded ? "text-foreground" : "text-muted-foreground"}>
 				Completed ({counters.terminalCount})
 			</span>
 		);
@@ -101,13 +113,16 @@ export const RuntimeGraphSummary: FC<RuntimeGraphSummaryProps> = ({
 		<button
 			type="button"
 			onClick={onToggle}
+			aria-expanded={isExpanded}
 			className="h-6 px-2 py-1 flex items-center gap-2 text-xs select-none rounded hover:bg-state-hover transition-colors duration-150 cursor-pointer"
 		>
 			<span className={`flex items-center justify-center ${iconColor}`}>
 				<Icon name={iconName} className="w-3.5 h-3.5" />
 			</span>
 
-			<span className="font-semibold text-foreground">Task graph</span>
+			<span className={`font-semibold ${isExpanded ? "text-foreground" : "text-muted-foreground"}`}>
+				Task graph
+			</span>
 			<span className="text-muted-foreground">·</span>
 			{summaryContent}
 

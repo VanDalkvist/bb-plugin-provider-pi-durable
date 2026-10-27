@@ -87,14 +87,21 @@ export const RuntimeGraphNodeRow: FC<RuntimeGraphNodeRowProps> = ({
 			data-task-id={item.id}
 			data-active={!item.isTerminal ? "true" : undefined}
 			style={{ paddingLeft: `${depth * 16 + 6}px` }}
-			className="group flex items-center gap-1 py-0.5 pr-2 rounded text-xs select-none transition-colors duration-150"
+			onClick={(e) => {
+				if ((e.target as HTMLElement).closest?.("button")) return;
+				onSelect();
+			}}
+			className="group flex items-center gap-1 py-0.5 pr-2 rounded text-xs select-none transition-colors duration-150 cursor-pointer"
 		>
 			{hasChildren ? (
 				<button
 					type="button"
 					aria-expanded={!isCollapsed}
 					aria-label={isCollapsed ? "Expand" : "Collapse"}
-					onClick={onToggleCollapse}
+					onClick={(e) => {
+						e.stopPropagation();
+						onToggleCollapse();
+					}}
 					className="w-4 h-4 flex-shrink-0 flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-state-hover cursor-pointer focus:outline-none focus-visible:ring-1 focus-visible:ring-ring rounded"
 				>
 					<Icon name={isCollapsed ? "ChevronRight" : "ChevronDown"} className="w-3.5 h-3.5" />
@@ -105,7 +112,10 @@ export const RuntimeGraphNodeRow: FC<RuntimeGraphNodeRowProps> = ({
 
 			<button
 				type="button"
-				onClick={onSelect}
+				onClick={(e) => {
+					e.stopPropagation();
+					onSelect();
+				}}
 				onKeyDown={(e) => {
 					if (e.key === "Enter" || e.key === " ") {
 						e.preventDefault();

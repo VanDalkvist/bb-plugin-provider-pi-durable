@@ -153,7 +153,7 @@ async function main() {
 		},
 	);
 	const watcher = await startSubagentWatcher(durable.harness, adapter, () => durable.view.current());
-	activeWatcher = watcher;
+	activeWatcher = watcher; durable.watcher = watcher;
 	activeTaskBridge = startTaskGraphBridge(durable.view, output);
 	activeGraphSource = new RuntimeGraphSource(
 		durable.view,

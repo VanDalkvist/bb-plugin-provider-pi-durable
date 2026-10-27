@@ -3374,6 +3374,7 @@ async function handleActiveSessionCommand(cmd, durable, modelRuntime, args2, res
       const behavior = cmd.streamingBehavior || "followUp";
       const targetId = parseConversationId(cmd.conversationId);
       if (targetId !== ROOT_CONVERSATION_ID4) {
+        if (durable.watcher) await durable.watcher.ensureAttached(targetId);
         const conv = await durable.harness.conversation(targetId, BACKGROUND_CONTEXT3);
         if (!conv) {
           throw new Error(`Conversation not found: ${cmd.conversationId}`);
@@ -3393,6 +3394,7 @@ async function handleActiveSessionCommand(cmd, durable, modelRuntime, args2, res
       respond.success(cmd.id, "steer");
       const targetId = parseConversationId(cmd.conversationId);
       if (targetId !== ROOT_CONVERSATION_ID4) {
+        if (durable.watcher) await durable.watcher.ensureAttached(targetId);
         const conv = await durable.harness.conversation(targetId, BACKGROUND_CONTEXT3);
         if (!conv) {
           throw new Error(`Conversation not found: ${cmd.conversationId}`);
@@ -3632,7 +3634,7 @@ function initBridgeInboundChannel(modelScope, sendToBridge2) {
 // src/runner/subagent-watcher.ts
 import {
   ROOT_CONVERSATION_ID as ROOT_CONVERSATION_ID5,
-  watchEvents
+  watchEvents as defaultWatchEvents
 } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT as BACKGROUND_CONTEXT4 } from "@earendil-works/chord/context";
 function extractChildConversationId(event) {
@@ -3642,7 +3644,8 @@ function extractChildConversationId(event) {
   }
   return void 0;
 }
-async function startSubagentWatcher(harness, adapter, getCurrentView) {
+async function startSubagentWatcher(harness, adapter, getCurrentView, options) {
+  const watch = options?.watchEventsFn ?? defaultWatchEvents;
   const attached = /* @__PURE__ */ new Set();
   const activeStreams = /* @__PURE__ */ new Map();
   const attach = async (conversationId, parentCallId) => {
@@ -3651,7 +3654,7 @@ async function startSubagentWatcher(harness, adapter, getCurrentView) {
     const isChild = parentCallId !== void 0;
     const childAdapter = isChild ? adapter.createChildAdapter(parentCallId, conversationId) : void 0;
     try {
-      const stream = await watchEvents(harness, conversationId, BACKGROUND_CONTEXT4);
+      const stream = await watch(harness, conversationId, BACKGROUND_CONTEXT4);
       activeStreams.set(conversationId, stream);
       stream.start(async (batch) => {
         try {
@@ -3677,7 +3680,30 @@ async function startSubagentWatcher(harness, adapter, getCurrentView) {
     }
   };
   await attach(ROOT_CONVERSATION_ID5);
+  try {
+    const index = await harness.snapshot(BindingIndexDoc, BACKGROUND_CONTEXT4);
+    if (index?.byThreadId) {
+      for (const convId of Object.values(index.byThreadId)) {
+        if (convId && convId !== ROOT_CONVERSATION_ID5) {
+          await attach(convId, "subagent");
+        }
+      }
+    }
+    const subagents = await harness.snapshot(SubagentsDoc, ROOT_CONVERSATION_ID5, BACKGROUND_CONTEXT4);
+    if (subagents?.agents) {
+      for (const agent of Object.values(subagents.agents)) {
+        if (agent?.conversationId && agent.conversationId !== ROOT_CONVERSATION_ID5) {
+          await attach(agent.conversationId, String(agent.ownerTaskId ?? "subagent"));
+        }
+      }
+    }
+  } catch (err) {
+    console.warn(`[SubagentWatcher] Bootstrap child discovery warning: ${err instanceof Error ? err.message : String(err)}`);
+  }
   return {
+    ensureAttached: async (conversationId, parentCallId) => {
+      await attach(conversationId, parentCallId ?? "subagent");
+    },
     close: () => {
       for (const stream of activeStreams.values()) {
         try {
@@ -4673,6 +4699,7 @@ async function main() {
   );
   const watcher = await startSubagentWatcher(durable.harness, adapter, () => durable.view.current());
   activeWatcher = watcher;
+  durable.watcher = watcher;
   activeTaskBridge = startTaskGraphBridge(durable.view, output);
   activeGraphSource = new RuntimeGraphSource(
     durable.view,

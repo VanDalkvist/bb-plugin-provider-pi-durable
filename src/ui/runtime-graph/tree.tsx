@@ -1,4 +1,4 @@
-import React, { type FC, useState } from "react";
+import React, { type FC, useState, useEffect } from "react";
 import { experimental_Icon } from "@get-bb/plugin-sdk/app";
 import type { TaskTreeItem } from "./types.ts";
 import { RuntimeGraphNodeRow } from "./node-row.tsx";
@@ -17,6 +17,8 @@ export interface RuntimeGraphTreeProps {
 	readonly onToggleCollapse: (id: number) => void;
 }
 
+const FOLD_THRESHOLD = 5;
+
 export const RuntimeGraphTree: FC<RuntimeGraphTreeProps> = ({
 	tree,
 	selectedTaskId,
@@ -27,6 +29,40 @@ export const RuntimeGraphTree: FC<RuntimeGraphTreeProps> = ({
 }) => {
 	const Icon = experimental_Icon;
 	const [expandedHistory, setExpandedHistory] = useState<ReadonlySet<string>>(() => new Set());
+	const [lastRevealedId, setLastRevealedId] = useState<number | null>(null);
+
+	useEffect(() => {
+		if (selectedTaskId === null) {
+			if (lastRevealedId !== null) {
+				setLastRevealedId(null);
+			}
+			return;
+		}
+		if (selectedTaskId !== lastRevealedId) {
+			setLastRevealedId(selectedTaskId);
+			const toExpand: string[] = [];
+			const findBranches = (items: readonly TaskTreeItem[], key: string) => {
+				const finished = items.filter((it) => !hasActiveWork(it));
+				const summary = getFoldedHistorySummary(finished);
+				if (summary.total > FOLD_THRESHOLD && finished.some((it) => hasDescendantId(it, selectedTaskId))) {
+					toExpand.push(key);
+				}
+				for (const it of items) {
+					if (it.children.length > 0) {
+						findBranches(it.children, `branch-${it.id}`);
+					}
+				}
+			};
+			findBranches(tree, "root");
+			if (toExpand.length > 0) {
+				setExpandedHistory((prev) => {
+					const next = new Set(prev);
+					for (const k of toExpand) next.add(k);
+					return next;
+				});
+			}
+		}
+	}, [selectedTaskId, lastRevealedId, tree]);
 
 	if (tree.length === 0) {
 		return (
@@ -63,9 +99,9 @@ export const RuntimeGraphTree: FC<RuntimeGraphTreeProps> = ({
 		active.sort((a, b) => a.id - b.id);
 		finished.sort((a, b) => a.id - b.id);
 
-		const isSelectedInFinished = selectedTaskId !== null &&
-			finished.some((item) => hasDescendantId(item, selectedTaskId));
-		const isHistoryExpanded = isSelectedInFinished || expandedHistory.has(branchKey);
+		const finishedSummary = getFoldedHistorySummary(finished);
+		const shouldFold = finishedSummary.total > FOLD_THRESHOLD;
+		const isHistoryExpanded = !shouldFold || expandedHistory.has(branchKey);
 
 		const renderItemNode = (item: TaskTreeItem) => {
 			const isSelected = selectedTaskId === item.id;
@@ -94,11 +130,11 @@ export const RuntimeGraphTree: FC<RuntimeGraphTreeProps> = ({
 			<React.Fragment key={branchKey}>
 				{active.map(renderItemNode)}
 
-				{finished.length > 0 && !isHistoryExpanded ? (() => {
-					const { total, failed, toolError } = getFoldedHistorySummary(finished);
+				{!shouldFold ? finished.map(renderItemNode) : null}
+
+				{shouldFold && !isHistoryExpanded ? (() => {
+					const { total, failed, toolError } = finishedSummary;
 					const hasFailure = failed > 0 || toolError > 0;
-					const iconName = failed > 0 ? "AlertTriangle" : (toolError > 0 ? "AlertTriangle" : "ChevronDown");
-					const iconColor = failed > 0 ? "text-red-500" : (toolError > 0 ? "text-amber-500" : "text-muted-foreground");
 					const labelText = failed > 0
 						? `See more (${total} · ${failed} failed)`
 						: (toolError > 0 ? `See more (${total} · ${toolError} tool error)` : `See more (${total})`);
@@ -116,8 +152,8 @@ export const RuntimeGraphTree: FC<RuntimeGraphTreeProps> = ({
 								onClick={() => toggleHistory(branchKey)}
 								className="flex items-center gap-1.5 py-0.5 px-1.5 rounded text-xs select-none transition-colors duration-150 text-muted-foreground hover:bg-state-hover hover:text-foreground cursor-pointer focus:outline-none focus-visible:ring-1 focus-visible:ring-ring"
 							>
-								<span className={`w-3.5 h-3.5 flex items-center justify-center ${iconColor}`}>
-									<Icon name={iconName} className="w-3.5 h-3.5" />
+								<span className="w-3.5 h-3.5 flex items-center justify-center text-muted-foreground">
+									<Icon name="ChevronDown" className="w-3.5 h-3.5" />
 								</span>
 								<span>{labelText}</span>
 							</button>
@@ -125,7 +161,7 @@ export const RuntimeGraphTree: FC<RuntimeGraphTreeProps> = ({
 					);
 				})() : null}
 
-				{finished.length > 0 && isHistoryExpanded ? (
+				{shouldFold && isHistoryExpanded ? (
 					<>
 						{finished.map(renderItemNode)}
 						<div

@@ -5,6 +5,9 @@ import { DeltaTranslator } from "./delta-translator.ts";
 import { buildRunnerArgs, createReadyDeferred, waitForReady, extractSessionStats, createContextWindowDelta, type SessionStats } from "./session-telemetry.ts";
 import { SessionSubagentHandler } from "./session-subagent-handler.ts";
 import { DurableBindingManager } from "./durable-binding-store.ts";
+import { ToolItemReconciler } from "./tool-item-reconciler.ts";
+import { resolveSessionFilePath } from "./paths.ts";
+import { parseProviderThreadId } from "./composite-id.ts";
 import type { SubagentMirrorRecord } from "./subagent-mirror.ts";
 import type { SubagentPolicyRecord } from "../policy/types.ts";
 import type { RunnerEvent, SessionOptions } from "./types.ts";
@@ -22,6 +25,7 @@ export class PiThreadSession {
 	public isProcessing = false;
 	private lastCheckpointId: string | null = null;
 	public bindings = new DurableBindingManager();
+	public reconciler = new ToolItemReconciler();
 	private subagents = new SessionSubagentHandler();
 	private acknowledgedSubagentPolicyRevision?: number = undefined;
 
@@ -46,6 +50,11 @@ export class PiThreadSession {
 			onExit: (code, sig) => this.readyReject(new Error(`Runner exited before becoming ready (code ${code}, signal ${sig})`)),
 		});
 		this.bindings.setRpc((cmd) => this.runner.requestOk(cmd));
+		const sKey = options.providerThreadId ? parseProviderThreadId(options.providerThreadId).sessionKey : options.threadId;
+		const sessionDir = resolveSessionFilePath(sKey);
+		this.bindings.setSessionDir(sessionDir);
+		this.reconciler.setSessionDir(sessionDir);
+		this.translator.setReconciler(this.reconciler);
 	}
 
 	public registerThread(threadId: string, conversationId?: string): boolean {
@@ -98,11 +107,18 @@ export class PiThreadSession {
 		try {
 			await waitForReady(this.readyPromise);
 			await this.bindings.hydrateFromRunner();
+			this.reconcileInterruptedItems(this.options.threadId);
 			await this.refreshContextUsage();
 		} catch (err) {
 			this.kill();
 			throw err;
 		}
+	}
+
+	public reconcileInterruptedItems(threadId: string, reason?: string): string[] {
+		return this.reconciler.reconcileInterruptedItems(threadId, (delta) => {
+			this.sendNotification("thread/delta", { threadId, deltas: [delta] });
+		}, reason);
 	}
 
 	private async handleRunnerEvent(event: RunnerEvent) {

@@ -89,6 +89,11 @@ export interface OpenDurableOptions {
 	readonly prompt?: PromptOptions;
 }
 
+export interface SubagentWatcherController {
+	close(): void;
+	ensureAttached(conversationId: ConversationId, parentCallId?: string): Promise<void>;
+}
+
 export interface OpenDurableResult {
 	readonly view: DurableViewSource;
 	readonly controller: DurableController;
@@ -96,6 +101,7 @@ export interface OpenDurableResult {
 	readonly modelRuntime: ModelRuntime;
 	readonly harness: Harness;
 	readonly subagentPolicyHolder: SubagentPolicyHolder;
+	watcher?: SubagentWatcherController;
 	close(): Promise<void>;
 }
 

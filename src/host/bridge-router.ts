@@ -70,7 +70,9 @@ export async function handleTurnStart(id: string | number, params: TurnStartPara
 			return;
 		}
 
-		const mirror = targetConversationId && typeof session.getSubagentState === "function" ? session.getSubagentState(targetConversationId) : undefined;
+		const mirror = targetConversationId && typeof session.getSubagentState === "function"
+			? session.getSubagentState(targetConversationId)
+			: undefined;
 		if (targetConversationId && mirror) {
 			const adoption = adoptInitialMirror(mirror, text, {
 				markConsumed: () => session.markInitialMirrorTurnConsumed(targetConversationId),
@@ -175,8 +177,11 @@ export async function handleThreadStop(id: string | number, params: ThreadStopPa
 	if (params.intent === "interrupt") {
 		const session = ctx.registry.get(params.threadId);
 		if (session) {
+			const convId = resolveTargetConversationId(params, session);
+			if (convId) session.markInitialMirrorTurnConsumed(convId);
+			session.reconcileInterruptedItems?.(params.threadId);
 			ctx.sendNotification("thread/delta", { threadId: params.threadId, deltas: [{ kind: "session.ended" }] });
-			await session.abort(resolveTargetConversationId(params, session));
+			await session.abort(convId);
 		}
 		ctx.sendResult(id, { ok: true, providerCheckpointId: session?.getLastCheckpointId() ?? null });
 	} else {

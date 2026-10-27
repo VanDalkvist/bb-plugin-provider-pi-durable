@@ -41,6 +41,7 @@ export async function handleActiveSessionCommand(
 			const behavior = (cmd.streamingBehavior as "steer" | "followUp") || "followUp";
 			const targetId = parseConversationId(cmd.conversationId);
 			if (targetId !== ROOT_CONVERSATION_ID) {
+				if (durable.watcher) await durable.watcher.ensureAttached(targetId);
 				const conv = await durable.harness.conversation(targetId, BACKGROUND_CONTEXT);
 				if (!conv) {
 					throw new Error(`Conversation not found: ${cmd.conversationId}`);
@@ -60,6 +61,7 @@ export async function handleActiveSessionCommand(
 			respond.success(cmd.id, "steer");
 			const targetId = parseConversationId(cmd.conversationId);
 			if (targetId !== ROOT_CONVERSATION_ID) {
+				if (durable.watcher) await durable.watcher.ensureAttached(targetId);
 				const conv = await durable.harness.conversation(targetId, BACKGROUND_CONTEXT);
 				if (!conv) {
 					throw new Error(`Conversation not found: ${cmd.conversationId}`);

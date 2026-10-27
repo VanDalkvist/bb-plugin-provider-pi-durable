@@ -1,16 +1,22 @@
 import { DatabaseSync } from "node:sqlite";
-import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 
 export interface StoredBindingItem {
 	readonly bbThreadId: string;
 	readonly conversationId: string;
+	readonly parentThreadId?: string | null;
 }
 
 export class DurableBindingManager {
 	private convToThread = new Map<string, string>();
 	private threadToConv = new Map<string, string>();
 	private runnerRpc?: (cmd: Record<string, unknown>) => Promise<unknown>;
+	private sessionDir?: string;
+
+	public setSessionDir(dir: string): void {
+		this.sessionDir = dir;
+	}
 
 	public setRpc(rpc: (cmd: Record<string, unknown>) => Promise<unknown>): void {
 		this.runnerRpc = rpc;
@@ -23,6 +29,7 @@ export class DurableBindingManager {
 		const convStr = String(conversationId);
 		this.convToThread.set(convStr, threadId);
 		this.threadToConv.set(threadId, convStr);
+		this.persistAdapterManifest(threadId, convStr, parentThreadId);
 
 		if (this.runnerRpc) {
 			void this.runnerRpc({
@@ -33,6 +40,20 @@ export class DurableBindingManager {
 			}).catch((err) => {
 				console.warn(`[BindingManager] Failed to persist binding to runner: ${err}`);
 			});
+		}
+	}
+
+	private persistAdapterManifest(threadId: string, conversationId: string, parentThreadId?: string): void {
+		if (!this.sessionDir) return;
+		try {
+			mkdirSync(this.sessionDir, { recursive: true });
+			const manifestPath = join(this.sessionDir, "adapter-bindings.json");
+			const existing = this.readOfflineBindings(this.sessionDir);
+			const filtered = existing.filter((b) => b.bbThreadId !== threadId);
+			filtered.push({ bbThreadId: threadId, conversationId, parentThreadId });
+			writeFileSync(manifestPath, JSON.stringify(filtered, null, 2), "utf8");
+		} catch (err) {
+			console.warn(`[BindingManager] Failed to write adapter manifest: ${err}`);
 		}
 	}
 
@@ -76,6 +97,25 @@ export class DurableBindingManager {
 	}
 
 	public readOfflineBindings(sessionFilePath: string): StoredBindingItem[] {
+		const dir = sessionFilePath.endsWith(".sqlite") ? dirname(sessionFilePath) : sessionFilePath;
+		const manifestPath = join(dir, "adapter-bindings.json");
+		if (existsSync(manifestPath)) {
+			try {
+				const content = readFileSync(manifestPath, "utf8");
+				const parsed = JSON.parse(content);
+				if (Array.isArray(parsed)) {
+					return parsed.filter((item) => item && typeof item.bbThreadId === "string" && item.conversationId !== undefined)
+						.map((item) => ({
+							bbThreadId: item.bbThreadId,
+							conversationId: String(item.conversationId),
+							parentThreadId: item.parentThreadId ?? null,
+						}));
+				}
+			} catch (err) {
+				console.warn(`[BindingManager] Failed to read adapter manifest: ${err}`);
+			}
+		}
+
 		const dbPath = sessionFilePath.endsWith(".sqlite")
 			? sessionFilePath
 			: join(sessionFilePath, "session.sqlite");

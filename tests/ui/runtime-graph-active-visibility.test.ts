@@ -65,7 +65,7 @@ test("Active task visibility: with 100+ history tasks, active node is marked and
 	assert.ok(scrollIntoViewCalled, "Active node must be scrolled into view on mount/expansion");
 });
 
-test("Manual scroll preservation: does not steal scroll and offers Follow active control", () => {
+test("Manual scroll preservation: does not steal scroll and Follow active is removed", () => {
 	const activeItem: TaskTreeItem = {
 		id: 50, kind: "pi.tool", label: "Running Task", conversationId: 1,
 		isTerminal: false, children: [],
@@ -108,15 +108,9 @@ test("Manual scroll preservation: does not steal scroll and offers Follow active
 	Object.defineProperty(scrollContainer, "clientHeight", { value: 300, configurable: true });
 	fireEvent.scroll(scrollContainer);
 
-	// After manual scroll, Follow active control must appear
-	const followBtn = container.querySelector("button[aria-label='Follow active']") as HTMLButtonElement;
-	assert.ok(followBtn, "Follow active control must appear when user scrolls up");
-	assert.equal(followBtn.textContent?.trim(), "Follow active");
-
-	// Clicking Follow active must trigger scroll and resume following
-	const prevScrollCalls = scrollCalls;
-	fireEvent.click(followBtn);
-	assert.ok(scrollCalls > prevScrollCalls, "Clicking Follow active must trigger scroll");
+	// After manual scroll, Follow active button is completely removed per Requirement 6
+	const followBtn = container.querySelector("button[aria-label='Follow active']");
+	assert.equal(followBtn, null, "Follow active button is removed per feedback requirement 6");
 });
 
 test("Live metadata rendering: inspector shows toolName, targetHint, model, thinkingLevel, startedAt", () => {

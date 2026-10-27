@@ -67,11 +67,10 @@ test("Terminal parent with live descendant stays in active branch and is not fol
 
 test("Finished-only siblings fold behind English See more and toggle with See less", () => {
 	const active1 = makeTask(1, false);
-	const finished2 = makeTask(2, true);
-	const finished3 = makeTask(3, true);
+	const finished = [2, 3, 4, 5, 6, 7].map((id) => makeTask(id, true));
 
 	const { container } = render(React.createElement(RuntimeGraphTree, {
-		tree: [active1, finished2, finished3],
+		tree: [active1, ...finished],
 		selectedTaskId: null,
 		collapsedTaskIds: new Set(),
 		onSelectTask: () => {},
@@ -79,10 +78,10 @@ test("Finished-only siblings fold behind English See more and toggle with See le
 	}));
 
 	assert.ok(container.textContent?.includes("Task #1"));
-	// When folded by default, finished items are hidden and "See more (2)" button is present
+	// When folded by default (6 finished items > FOLD_THRESHOLD 5), finished items are hidden and "See more (6)" button is present
 	const seeMoreBtn = container.querySelector("button[data-history-toggle='true']");
 	assert.ok(seeMoreBtn, "See more control should be rendered for finished siblings");
-	assert.ok(seeMoreBtn?.textContent?.includes("See more (2)"));
+	assert.ok(seeMoreBtn?.textContent?.includes("See more (6)"));
 	assert.ok(!container.textContent?.includes("Task #2"));
 
 	// Click to expand
@@ -95,17 +94,17 @@ test("Finished-only siblings fold behind English See more and toggle with See le
 	const seeLessBtn = container.querySelector("button[data-history-toggle='true']");
 	fireEvent.click(seeLessBtn!);
 	assert.ok(!container.textContent?.includes("Task #2"));
-	assert.ok(container.textContent?.includes("See more (2)"));
+	assert.ok(container.textContent?.includes("See more (6)"));
 });
 
 test("Folded history honestly reports terminal failures and tool errors", () => {
 	const active = makeTask(10, false);
-	const okTask = makeTask(11, true, "completed");
-	const failedTask = makeTask(12, true, "failed");
+	const okTasks = [11, 12, 13, 14, 15].map((id) => makeTask(id, true, "completed"));
+	const failedTask = makeTask(16, true, "failed");
 	failedTask.receipt!.isToolError = true;
 
 	const { container } = render(React.createElement(RuntimeGraphTree, {
-		tree: [active, okTask, failedTask],
+		tree: [active, ...okTasks, failedTask],
 		selectedTaskId: null,
 		collapsedTaskIds: new Set(),
 		onSelectTask: () => {},
@@ -114,7 +113,7 @@ test("Folded history honestly reports terminal failures and tool errors", () => 
 
 	const toggle = container.querySelector("button[data-history-toggle='true']");
 	assert.ok(toggle, "See more control should exist");
-	assert.ok(toggle?.textContent?.includes("See more (2 · 1 failed)"));
+	assert.ok(toggle?.textContent?.includes("See more (6 · 1 failed)"));
 	assert.equal(toggle?.getAttribute("data-has-failure"), "true");
 });
 

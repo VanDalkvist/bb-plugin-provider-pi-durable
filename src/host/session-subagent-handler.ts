@@ -129,8 +129,11 @@ export class SessionSubagentHandler {
 					if (childDeltas.length > 0) {
 						sendNotification("thread/delta", { threadId: childThreadId, deltas: childDeltas });
 					}
-				} else if (this.mirrors.getState(cid)) {
-					this.mirrors.bufferEvent(cid, childEvent);
+				} else {
+					const mirror = this.mirrors.getState(cid);
+					if (mirror && mirror.status !== "completed") {
+						this.mirrors.bufferEvent(cid, childEvent);
+					}
 				}
 			}
 			return false;

@@ -37,9 +37,8 @@ export const RuntimeGraphSegmentDetails: FC<RuntimeGraphSegmentDetailsProps> = (
 
 	const containerRef = useRef<HTMLDivElement>(null);
 	const treeScrollRef = useRef<HTMLDivElement>(null);
-	const prevActiveIdRef = useRef<number | null>(null);
+	const hasScrolledInitialRef = useRef(false);
 	const [isNarrow, setIsNarrow] = useState(false);
-	const [isFollowingActive, setIsFollowingActive] = useState(true);
 
 	useEffect(() => {
 		const el = containerRef.current;
@@ -79,26 +78,15 @@ export const RuntimeGraphSegmentDetails: FC<RuntimeGraphSegmentDetailsProps> = (
 	}, [latestActiveId, tree, collapsedTaskIds, toggleCollapse]);
 
 	useEffect(() => {
-		if (!isExpanded || latestActiveId === null) return;
-		if (isFollowingActive && latestActiveId !== prevActiveIdRef.current) {
-			prevActiveIdRef.current = latestActiveId;
+		if (!isExpanded) {
+			hasScrolledInitialRef.current = false;
+			return;
+		}
+		if (latestActiveId !== null && !hasScrolledInitialRef.current) {
+			hasScrolledInitialRef.current = true;
 			scrollToActive();
 		}
-	}, [isExpanded, latestActiveId, isFollowingActive, scrollToActive]);
-
-	const handleScroll = useCallback(() => {
-		const container = treeScrollRef.current;
-		if (!container || latestActiveId === null) return;
-		const isAtBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 30;
-		if (!isAtBottom && isFollowingActive) {
-			setIsFollowingActive(false);
-		}
-	}, [latestActiveId, isFollowingActive]);
-
-	const handleFollowActive = useCallback(() => {
-		setIsFollowingActive(true);
-		scrollToActive();
-	}, [scrollToActive]);
+	}, [isExpanded, latestActiveId, scrollToActive]);
 
 	if (!isExpanded) {
 		return null;
@@ -137,7 +125,6 @@ export const RuntimeGraphSegmentDetails: FC<RuntimeGraphSegmentDetailsProps> = (
 			>
 				<div
 					ref={treeScrollRef}
-					onScroll={handleScroll}
 					className="flex-1 overflow-y-auto px-2 py-1 min-w-0"
 				>
 					<RuntimeGraphTree
@@ -149,25 +136,12 @@ export const RuntimeGraphSegmentDetails: FC<RuntimeGraphSegmentDetailsProps> = (
 						onToggleCollapse={toggleCollapse}
 					/>
 				</div>
-
-				{latestActiveId !== null && !isFollowingActive ? (
-					<div className="absolute bottom-1 right-3 z-10">
-						<button
-							type="button"
-							onClick={handleFollowActive}
-							aria-label="Follow active"
-							className="px-2 py-0.5 text-[11px] font-medium bg-blue-500 text-white hover:bg-blue-600 rounded shadow cursor-pointer transition-colors"
-						>
-							Follow active
-						</button>
-					</div>
-				) : null}
 			</div>
 
 			{hasSelection ? (
 				<div
 					data-testid="runtime-graph-inspector"
-					className={`${isNarrow ? "h-36" : "w-80"} flex-shrink-0 overflow-y-auto p-2.5 bg-muted/5`}
+					className={`${isNarrow ? "h-36" : "w-80"} flex-shrink-0 flex flex-col min-w-0 overflow-hidden p-2.5 bg-muted/5`}
 				>
 					<RuntimeGraphDetails
 						selectedItem={selectedItem}

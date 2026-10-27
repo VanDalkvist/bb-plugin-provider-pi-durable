@@ -1,5 +1,5 @@
 import React, { type FC } from "react";
-import { experimental_DetailRow, experimental_InfoSection } from "@get-bb/plugin-sdk/app";
+import { experimental_DetailRow, experimental_InfoSection, experimental_Icon } from "@get-bb/plugin-sdk/app";
 import { projectTaskState, projectTaskReceipt } from "../../runtime-graph/status.ts";
 import type { TaskTreeItem } from "./types.ts";
 
@@ -12,6 +12,7 @@ export interface RuntimeGraphDetailsProps {
 export const RuntimeGraphDetails: FC<RuntimeGraphDetailsProps> = ({ selectedItem, now, onClose }) => {
 	const DetailRow = experimental_DetailRow;
 	const InfoSection = experimental_InfoSection;
+	const Icon = experimental_Icon;
 
 	if (!selectedItem) {
 		return null;
@@ -23,30 +24,35 @@ export const RuntimeGraphDetails: FC<RuntimeGraphDetailsProps> = ({ selectedItem
 
 	const previewText = receipt?.preview;
 	const errorInfo = receipt?.error;
-	const liveElapsed = (
-		liveNode?.startedAt && liveNode.startedAt > 0
-			? Math.max(0, (now ?? Date.now()) - liveNode.startedAt)
-			: liveNode?.durationMs
-	);
+	const liveElapsed = liveNode?.startedAt && liveNode.startedAt > 0
+		? Math.max(0, (now ?? Date.now()) - liveNode.startedAt)
+		: liveNode?.durationMs;
 	const durationMs = receipt?.durationMs ?? liveElapsed;
 
 	return (
-		<div className="space-y-4 text-xs">
-			<div className="flex items-center justify-between pb-1 border-b">
+		<div className="flex flex-col h-full min-h-0 text-xs">
+			<div className="flex items-center justify-between pb-1 border-b flex-shrink-0">
 				<span className="font-semibold text-xs text-foreground">Task Details</span>
 				{onClose ? (
 					<button
 						type="button"
 						onClick={onClose}
-						aria-label="Close inspector"
-						className="text-xs text-muted-foreground hover:text-foreground px-1.5 py-0.5 rounded hover:bg-muted/60 transition-colors cursor-pointer"
+						onKeyDown={(e) => {
+							if (e.key === "Enter" || e.key === " ") {
+								e.preventDefault();
+								onClose();
+							}
+						}}
+						aria-label="Close task details"
+						className="text-xs text-muted-foreground hover:text-foreground p-1 rounded hover:bg-state-hover transition-colors cursor-pointer focus:outline-none focus-visible:ring-1 focus-visible:ring-ring"
 					>
-						Close
+						<Icon name="X" className="w-3.5 h-3.5" />
 					</button>
 				) : null}
 			</div>
 
-			<InfoSection label={`Task #${id}`}>
+			<div className="flex-1 overflow-y-auto min-h-0 space-y-4 pt-2">
+				<InfoSection label={`Task #${id}`}>
 				<DetailRow label="Task ID">
 					<span className="font-mono">#{id}</span>
 				</DetailRow>
@@ -71,7 +77,7 @@ export const RuntimeGraphDetails: FC<RuntimeGraphDetailsProps> = ({ selectedItem
 
 				{liveNode?.targetHint || receipt?.targetHint ? (
 					<DetailRow label="Target">
-						<span className="font-mono truncate max-w-[200px]" title={liveNode?.targetHint ?? receipt?.targetHint}>
+						<span className="font-mono break-words break-all [overflow-wrap:anywhere] min-w-0" title={liveNode?.targetHint ?? receipt?.targetHint}>
 							{liveNode?.targetHint ?? receipt?.targetHint}
 						</span>
 					</DetailRow>
@@ -163,7 +169,7 @@ export const RuntimeGraphDetails: FC<RuntimeGraphDetailsProps> = ({ selectedItem
 
 			{previewText ? (
 				<InfoSection label="Execution output">
-					<pre className="p-2 bg-muted/40 rounded border text-[11px] font-mono whitespace-pre-wrap break-all max-h-40 overflow-y-auto">
+					<pre className="p-2 bg-muted/40 rounded border text-[11px] font-mono whitespace-pre-wrap break-all [overflow-wrap:anywhere] max-h-40 overflow-y-auto">
 						{previewText}
 					</pre>
 				</InfoSection>
@@ -173,16 +179,17 @@ export const RuntimeGraphDetails: FC<RuntimeGraphDetailsProps> = ({ selectedItem
 				<InfoSection label="Error diagnostics">
 					<div className="space-y-1.5 p-2 bg-red-500/10 border border-red-500/20 rounded">
 						{errorInfo.code ? (
-							<div className="font-mono text-[10px] text-red-600 dark:text-red-400 font-semibold">
+							<div className="font-mono text-[10px] text-red-600 dark:text-red-400 font-semibold break-all [overflow-wrap:anywhere]">
 								Error code: {errorInfo.code}
 							</div>
 						) : null}
-						<pre className="text-[11px] font-mono text-red-600 dark:text-red-400 whitespace-pre-wrap break-all max-h-40 overflow-y-auto">
+						<pre className="text-[11px] font-mono text-red-600 dark:text-red-400 whitespace-pre-wrap break-all [overflow-wrap:anywhere] max-h-40 overflow-y-auto">
 							{errorInfo.message}
 						</pre>
 					</div>
 				</InfoSection>
 			) : null}
+			</div>
 		</div>
 	);
 };

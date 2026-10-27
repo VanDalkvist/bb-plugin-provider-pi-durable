@@ -47,11 +47,13 @@ export interface SessionPort {
  getLastCheckpointId(): string | null;
  registerThread(threadId: string, conversationId?: string): boolean;
  getConversationIdForThread(threadId: string): string | undefined;
+ getThreadIdForConversation?(conversationId: string | number): string | undefined;
  getSubagentState(id: string | number): SubagentMirrorRecord | undefined;
  findSubagentConversationForTask(task: string): string | undefined;
  getMirrorOutputText(id: string | number): string;
  markInitialMirrorTurnConsumed(id: string | number): void;
  consumeCompletedMirror(id: string | number): void;
+ reconcileInterruptedItems?(threadId: string, reason?: string): string[];
  setModel(provider: string, modelId: string): Promise<void>;
  setThinkingLevel(level: string): Promise<void>;
  setSubagentPolicy(record: SubagentPolicyRecord): Promise<void>;
