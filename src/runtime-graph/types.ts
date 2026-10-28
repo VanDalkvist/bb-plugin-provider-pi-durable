@@ -47,6 +47,14 @@ export type RuntimeTaskState =
 			readonly outcome: TaskOutcomeName;
 	  };
 
+export interface TaskTokensUsage {
+	readonly total?: number;
+	readonly input?: number;
+	readonly output?: number;
+	readonly reasoning?: number;
+	readonly cacheRead?: number;
+}
+
 export interface RuntimeTaskNode {
 	readonly id: number;
 	readonly kind: string;
@@ -67,6 +75,7 @@ export interface RuntimeTaskNode {
 		readonly modelId: string;
 	};
 	readonly thinkingLevel?: string;
+	readonly tokens?: TaskTokensUsage;
 }
 
 export interface RuntimeConversationNode {
@@ -98,6 +107,7 @@ export interface RuntimeTaskReceipt {
 	readonly toolName?: string;
 	readonly targetHint?: string;
 	readonly startedAt?: number;
+	readonly tokens?: TaskTokensUsage;
 }
 
 export interface RuntimeGraphStats {

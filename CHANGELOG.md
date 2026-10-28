@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.3.15] - 2026-10-28
+
+### Added
+- **Task Token Usage in Task Graph (Cycle 84)**: Displayed token consumption for `pi.generation` and breadcrumbs (`pi.generation › tool`) directly in the task row before timing (`duration`), formatted compactly (e.g. `1.4k tok · 1.8s` or `450 tok · 820ms`).
+- **Live On-The-Fly Token Streaming**: Active generation tasks reflect live token counts accumulated in `pi.live` (`generation.message.usage`) on the fly, updating synchronously with duration.
+- **Detailed Token Breakdown in Details Panel**: Added a `Tokens` row in the Task Details inspector showing total tokens and breakdown (`total (in · out · reasoning · cache)`).
+- **Dedicated Formatter and Extraction Modules**: Implemented `token-format.ts` and `task-tokens.ts`, strictly respecting line budget limits (< 200 LOC per AP-019) and zero-cycle DAG topology (AP-025).
+
+---
+
 ## [0.3.14] - 2026-10-28
 
 ### Fixed

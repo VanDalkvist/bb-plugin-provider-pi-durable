@@ -5,6 +5,7 @@ import type { RuntimeGraphConversations } from "./runtime-graph-conversations.ts
 import type { TaskNames } from "./task-labels.ts";
 import { taskLabel } from "./task-labels.ts";
 import type { RuntimeGraphReceiptsCollector } from "./runtime-graph-receipts.ts";
+import { extractLiveTokens, extractTerminalTokens } from "./task-tokens.ts";
 
 export interface ViewSource {
 	current(): { tasks?: unknown } | undefined;
@@ -129,6 +130,7 @@ export function buildMappedNode(
 		toolName: callDetails?.toolName ?? (subMeta ? "subagent" : undefined),
 		targetHint: callDetails?.targetHint ?? (subMeta ? (subMeta.name || subMeta.task) : undefined),
 		model: meta.model, thinkingLevel: meta.thinkingLevel,
+		tokens: extractLiveTokens(node, current),
 	};
 }
 
@@ -149,6 +151,7 @@ export function recordTerminalWithDetails(
 	receipts.recordTerminal(task, {
 		preview, toolName, targetHint,
 		startedAt: nativeStartedAt.get(id),
+		tokens: extractTerminalTokens(task, current),
 	});
 }
 

@@ -2,6 +2,7 @@ import React, { type FC } from "react";
 import { experimental_Icon } from "@get-bb/plugin-sdk/app";
 import type { TaskTreeItem } from "./types.ts";
 import { hasActiveWork } from "./tree-order.ts";
+import { formatTokens } from "./token-format.ts";
 
 export interface RuntimeGraphNodeRowProps {
 	readonly item: TaskTreeItem;
@@ -52,6 +53,9 @@ function resolveItemLabel(item: TaskTreeItem): string {
 	if (tool && (item.label.startsWith("pi.tool") || item.label === item.kind)) {
 		return target ? `${tool}: ${target}` : tool;
 	}
+	if (target && (item.label === `${item.kind} #${item.id}` || item.label.startsWith("bb.subagent-anchor"))) {
+		return `${item.kind} · ${tool ? `${tool}: ` : ""}${target}`;
+	}
 	return item.label;
 }
 
@@ -71,15 +75,15 @@ export const RuntimeGraphNodeRow: FC<RuntimeGraphNodeRowProps> = ({
 		? Math.max(0, (now ?? Date.now()) - startedAt)
 		: (item.liveNode?.durationMs ?? singleChild?.liveNode?.durationMs);
 	const duration = formatDuration(isActive ? liveElapsed : (item.receipt?.durationMs ?? singleChild?.receipt?.durationMs ?? liveElapsed));
+	const rawTokens = item.liveNode?.tokens?.total ?? item.receipt?.tokens?.total
+		?? singleChild?.liveNode?.tokens?.total ?? singleChild?.receipt?.tokens?.total;
+	const tokens = formatTokens(rawTokens);
 
 	const hasToolError = Boolean(item.receipt?.isToolError) || Boolean(singleChild?.receipt?.isToolError);
 	const waitingOn = (item.waitingOn && item.waitingOn.length > 0) ? item.waitingOn : singleChild?.waitingOn;
 	const isAborted = Boolean(item.liveNode?.abortRequested) || Boolean(singleChild?.liveNode?.abortRequested);
 
-	const handleRowClick = () => {
-		if (singleChild && onSelectChild) onSelectChild();
-		else onSelect();
-	};
+	const handleRowClick = () => (singleChild && onSelectChild ? onSelectChild() : onSelect());
 
 	return (
 		<div
@@ -161,25 +165,23 @@ export const RuntimeGraphNodeRow: FC<RuntimeGraphNodeRowProps> = ({
 				)}
 
 				{waitingOn && waitingOn.length > 0 ? (
-					<span className="text-[10px] px-1 py-0.2 bg-amber-500/10 text-amber-600 dark:text-amber-400 rounded">
-						waits: #{waitingOn.join(", #")}
-					</span>
+					<span className="text-[10px] px-1 py-0.2 bg-amber-500/10 text-amber-600 dark:text-amber-400 rounded">waits: #{waitingOn.join(", #")}</span>
 				) : null}
-
 				{hasToolError ? (
-					<span className="text-[10px] px-1 py-0.2 bg-red-500/10 text-red-600 dark:text-red-400 rounded">
-						tool error
-					</span>
+					<span className="text-[10px] px-1 py-0.2 bg-red-500/10 text-red-600 dark:text-red-400 rounded">tool error</span>
+				) : null}
+				{isAborted ? (
+					<span className="text-[10px] px-1 py-0.2 bg-muted text-muted-foreground rounded">aborted</span>
 				) : null}
 
-				{isAborted ? (
-					<span className="text-[10px] px-1 py-0.2 bg-muted text-muted-foreground rounded">
-						aborted
+				{tokens ? (
+					<span className="ml-auto text-[10px] text-muted-foreground/80 pr-1 flex-shrink-0 font-mono">
+						{tokens}
 					</span>
 				) : null}
 
 				{duration ? (
-					<span className="ml-auto text-[10px] text-muted-foreground pl-1 flex-shrink-0">
+					<span className={`${tokens ? "" : "ml-auto "}text-[10px] text-muted-foreground pl-1 flex-shrink-0`}>
 						{duration}
 					</span>
 				) : null}

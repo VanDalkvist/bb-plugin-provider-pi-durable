@@ -64,6 +64,10 @@ export function buildTaskTree(snapshot: RuntimeGraphSnapshot): TaskTreeItem[] {
 			if (existing.ownerId === undefined && receipt.owner !== undefined) {
 				existing.ownerId = receipt.owner;
 			}
+			if (receipt.targetHint && (existing.label === existing.kind || existing.label.endsWith(`#${id}`))) {
+				const detail = receipt.toolName ? `${receipt.toolName}: ${receipt.targetHint}` : receipt.targetHint;
+				existing.label = `${receipt.kind} · ${detail}`;
+			}
 			if (existing.liveNode?.state.status === "completing") {
 				// Completing state remains until evicted from live nodes
 				existing.isTerminal = false;

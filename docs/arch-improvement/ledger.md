@@ -180,3 +180,47 @@
   - Строгая типизация: `npx tsc --noEmit` (0 errors).
   - Line budgets (AP-019): все изменённые и новые файлы строго < 200 LOC.
 - **Файловый артефакт:** `/Users/vanya/.bb/thread-storage/thr_ct3kk9xne6/backend-mirror-recovery-remediation-result.md`.
+
+### Live and Terminal Task Token Usage in Task Graph (Cycle 84) — 2026-10-28 (Execution Receipt)
+- **Цель и статус:** Вывод расхода токенов для задач генерации (`pi.generation` и крошек `pi.generation › tool`) в строке дерева задач перед таймингом (`duration`), обновляемого на лету при инференсе, и детальной раскладки в инспекторе Details. Статус: **PASS (VERIFIED)**.
+- **Устранённые дефекты и архитектурные решения:**
+  1. *[Контракты и DTO токенов (AP-010, AP-013)]:*
+     - В `src/runtime-graph/types.ts` и `schema.ts` добавлен типизированный контракт `TaskTokensUsage` (`total`, `input`, `output`, `reasoning`, `cacheRead`).
+     - Расширены `RuntimeTaskNode` (для live-задач) и `RuntimeTaskReceipt` (для завершённых задач).
+  2. *[Изолированный форматтер токенов (AP-019)]:*
+     - Создан модуль `src/ui/runtime-graph/token-format.ts` (46 LOC < 200).
+     - Функция `formatTokens(tokens)` форматирует значения компактно (`450 tok`, `1.4k tok`, `12k tok`, `1.5M tok`).
+     - Функция `formatDetailedTokens(tokens)` формирует структурированную раскладку для инспектора (`1,420 total (1,100 in · 320 out · 250 reasoning)`).
+  3. *[Извлечение токенов в раннере (AP-026)]:*
+     - Создан модуль `src/runner/task-tokens.ts` (74 LOC < 200).
+     - `extractLiveTokens` извлекает live usage из `pi.live` (`live.generation.message.usage`) во время стриминга.
+     - `extractTerminalTokens` извлекает авторитетный usage завершённой генерации из `AssistantEntry` через `task.state.outcome.result.entryId`.
+  4. *[Отображение в строке списка и инспекторе]:*
+     - В `src/ui/runtime-graph/node-row.tsx`: перед `duration` рендерится моноширинный бейдж токенов (`1.4k tok · 1.4s`), тикающий в реальном времени при генерации.
+     - В `src/ui/runtime-graph/details.tsx`: добавлена строка `Tokens` с полной раскладкой токенов.
+- **TDD и доказательная база:**
+  - `tests/ui/runtime-graph-tokens.test.ts`: 119 LOC (< 200 LOC), 7 тестов, 100% pass:
+    * Форматирование компактных токенов `formatTokens` (граничные значения, null, тысячи, миллионы).
+    * Детальное форматирование `formatDetailedTokens`.
+    * Извлечение live токенов из `pi.live`.
+    * Извлечение terminal токенов из `AssistantEntry`.
+    * Отрисовка бейджа токенов перед `duration` в строке дерева.
+    * Отрисовка live-токенов активной задачи.
+    * Отрисовка строки `Tokens` в панели Details.
+  - Общий сьют: **655 тестов (556 backend + 99 UI): 655 pass, 0 fail**.
+  - Контракты: `npm run test:contracts` (Negative contract guard: TS2322 rejection pass).
+  - Ацикличность импортов: `node scripts/verify-import-graph.mjs` подтверждает 141 файл, 0 циклов (Tarjan SCC).
+  - Строгая типизация: `npx tsc --noEmit` (0 errors).
+  - Line budgets (AP-019): все изменённые и новые файлы строго < 200 LOC:
+    * `src/ui/runtime-graph/token-format.ts`: 46 LOC
+    * `src/runner/task-tokens.ts`: 74 LOC
+    * `src/runtime-graph/types.ts`: 148 LOC
+    * `src/runtime-graph/schema.ts`: 179 LOC
+    * `src/runner/runtime-graph-receipts.ts`: 156 LOC
+    * `src/runner/runtime-graph-mapper.ts`: 193 LOC
+    * `src/ui/runtime-graph/node-row.tsx`: 191 LOC
+    * `src/ui/runtime-graph/details.tsx`: 165 LOC
+    * `tests/ui/runtime-graph-tokens.test.ts`: 119 LOC
+- **Сборка (Build Receipt):**
+  - Версия обновлена `0.3.14` → `0.3.15` в `package.json` и `package-lock.json`.
+  - `npm run build` пересобрал бандлы: `dist/runner/index.js`, `dist/host.js`, `dist/server.js`, `dist/app.js`, `dist/app.css` с метаданными `pluginVersion: 0.3.15`.

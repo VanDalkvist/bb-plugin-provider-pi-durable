@@ -54,6 +54,14 @@ export const runtimeTaskStateSchema = z.discriminatedUnion("status", [
 	}),
 ]);
 
+export const taskTokensUsageSchema = z.object({
+	total: z.number().int().nonnegative().optional(),
+	input: z.number().int().nonnegative().optional(),
+	output: z.number().int().nonnegative().optional(),
+	reasoning: z.number().int().nonnegative().optional(),
+	cacheRead: z.number().int().nonnegative().optional(),
+});
+
 export const runtimeTaskNodeSchema = z.object({
 	id: z.number().int().positive(),
 	kind: z.string().min(1).max(64),
@@ -76,6 +84,7 @@ export const runtimeTaskNodeSchema = z.object({
 		})
 		.optional(),
 	thinkingLevel: z.string().max(32).optional(),
+	tokens: taskTokensUsageSchema.optional(),
 });
 
 export const runtimeConversationNodeSchema = z.object({
@@ -113,6 +122,7 @@ export const runtimeTaskReceiptSchema = z.object({
 	toolName: z.string().max(64).optional(),
 	targetHint: z.string().max(128).optional(),
 	startedAt: z.number().int().positive().optional(),
+	tokens: taskTokensUsageSchema.optional(),
 });
 
 export const runtimeGraphStatsSchema = z.object({

@@ -3947,6 +3947,13 @@ var runtimeTaskStateSchema = z5.discriminatedUnion("status", [
     outcome: taskOutcomeSchema
   })
 ]);
+var taskTokensUsageSchema = z5.object({
+  total: z5.number().int().nonnegative().optional(),
+  input: z5.number().int().nonnegative().optional(),
+  output: z5.number().int().nonnegative().optional(),
+  reasoning: z5.number().int().nonnegative().optional(),
+  cacheRead: z5.number().int().nonnegative().optional()
+});
 var runtimeTaskNodeSchema = z5.object({
   id: z5.number().int().positive(),
   kind: z5.string().min(1).max(64),
@@ -3966,7 +3973,8 @@ var runtimeTaskNodeSchema = z5.object({
     provider: z5.string().max(64),
     modelId: z5.string().max(128)
   }).optional(),
-  thinkingLevel: z5.string().max(32).optional()
+  thinkingLevel: z5.string().max(32).optional(),
+  tokens: taskTokensUsageSchema.optional()
 });
 var runtimeConversationNodeSchema = z5.object({
   id: z5.number().int().positive(),
@@ -3995,7 +4003,8 @@ var runtimeTaskReceiptSchema = z5.object({
   preview: z5.string().max(MAX_PREVIEW_LENGTH).optional(),
   toolName: z5.string().max(64).optional(),
   targetHint: z5.string().max(128).optional(),
-  startedAt: z5.number().int().positive().optional()
+  startedAt: z5.number().int().positive().optional(),
+  tokens: taskTokensUsageSchema.optional()
 });
 var runtimeGraphStatsSchema = z5.object({
   liveCount: z5.number().int().nonnegative(),
@@ -4114,7 +4123,8 @@ var RuntimeGraphReceiptsCollector = class {
       durationMs,
       preview,
       toolName,
-      targetHint
+      targetHint,
+      tokens: options?.tokens
     };
     this.pushReceipt(receipt);
     return receipt;
@@ -4187,6 +4197,61 @@ var RuntimeGraphConversations = class {
     return Object.fromEntries(this.known);
   }
 };
+
+// src/runner/task-tokens.ts
+function normalizeUsage(raw) {
+  if (!raw || typeof raw !== "object") return void 0;
+  const u = raw;
+  const total = typeof u.totalTokens === "number" ? u.totalTokens : typeof u.total === "number" ? u.total : void 0;
+  const input = typeof u.input === "number" ? u.input : typeof u.inputTokens === "number" ? u.inputTokens : void 0;
+  const output2 = typeof u.output === "number" ? u.output : typeof u.outputTokens === "number" ? u.outputTokens : void 0;
+  const reasoning = typeof u.reasoning === "number" ? u.reasoning : void 0;
+  const cacheRead = typeof u.cacheRead === "number" ? u.cacheRead : typeof u.cachedInputTokens === "number" ? u.cachedInputTokens : void 0;
+  const computedTotal = total ?? (input ?? 0) + (output2 ?? 0);
+  if (computedTotal <= 0 && (output2 ?? 0) <= 0) return void 0;
+  return {
+    total: computedTotal,
+    input,
+    output: output2,
+    reasoning,
+    cacheRead
+  };
+}
+function extractLiveTokens(node, current) {
+  if (node.kind !== "pi.generation") return void 0;
+  const cur = current;
+  if (!cur || typeof cur !== "object") return void 0;
+  const liveDoc = cur?.conversation?.docs?.["pi.live"];
+  if (liveDoc?.generation?.message?.usage) {
+    const usage = normalizeUsage(liveDoc.generation.message.usage);
+    if (usage) return usage;
+  }
+  return void 0;
+}
+function extractTerminalTokens(task, current) {
+  if (task.kind !== "pi.generation") return void 0;
+  const cur = current;
+  if (!cur || typeof cur !== "object") return void 0;
+  const state = task.state;
+  const outcome = state?.outcome;
+  const entryId = outcome?.result?.entryId;
+  const entries = cur?.conversation?.entries;
+  if (Array.isArray(entries)) {
+    if (entryId !== void 0) {
+      const target = entries.find((e) => e?.id === entryId || Number(e?.id) === Number(entryId));
+      if (target?.model?.[0]?.usage) {
+        return normalizeUsage(target.model[0].usage);
+      }
+    }
+    for (let i = entries.length - 1; i >= 0; i--) {
+      const e = entries[i];
+      if (e?.kind === "pi.assistant" && e?.model?.[0]?.usage) {
+        return normalizeUsage(e.model[0].usage);
+      }
+    }
+  }
+  return void 0;
+}
 
 // src/runner/runtime-graph-mapper.ts
 function extractTaskModelMeta(node, current, rootConvId) {
@@ -4273,7 +4338,8 @@ function buildMappedNode(node, current, rootConvId, names, nativeStartedAt, cloc
     toolName: callDetails?.toolName ?? (subMeta ? "subagent" : void 0),
     targetHint: callDetails?.targetHint ?? (subMeta ? subMeta.name || subMeta.task : void 0),
     model: meta.model,
-    thinkingLevel: meta.thinkingLevel
+    thinkingLevel: meta.thinkingLevel,
+    tokens: extractLiveTokens(node, current)
   };
 }
 function recordTerminalWithDetails(receipts, task, names, nativeStartedAt, current) {
@@ -4287,7 +4353,8 @@ function recordTerminalWithDetails(receipts, task, names, nativeStartedAt, curre
     preview,
     toolName,
     targetHint,
-    startedAt: nativeStartedAt.get(id)
+    startedAt: nativeStartedAt.get(id),
+    tokens: extractTerminalTokens(task, current)
   });
 }
 function extractTaskGraph(current) {

@@ -1,5 +1,5 @@
 import type { TaskRecord } from "@earendil-works/pi-durable";
-import type { RuntimeTaskReceipt, TaskOutcomeName } from "../runtime-graph/types.ts";
+import type { RuntimeTaskReceipt, TaskOutcomeName, TaskTokensUsage } from "../runtime-graph/types.ts";
 import { MAX_RECEIPTS, MAX_PREVIEW_LENGTH } from "../runtime-graph/schema.ts";
 
 export const MAX_ERROR_MESSAGE_LENGTH = 1024;
@@ -12,6 +12,7 @@ export interface TerminalOptions {
 	readonly toolName?: string;
 	readonly targetHint?: string;
 	readonly startedAt?: number;
+	readonly tokens?: TaskTokensUsage;
 }
 
 /**
@@ -111,6 +112,7 @@ export class RuntimeGraphReceiptsCollector {
 			preview,
 			toolName,
 			targetHint,
+			tokens: options?.tokens,
 		};
 
 		this.pushReceipt(receipt);

@@ -3,6 +3,7 @@ import { experimental_DetailRow, experimental_InfoSection, experimental_Icon } f
 import { projectTaskState, projectTaskReceipt } from "../../runtime-graph/status.ts";
 import type { TaskTreeItem } from "./types.ts";
 import { hasActiveWork } from "./tree-order.ts";
+import { formatDetailedTokens } from "./token-format.ts";
 
 export interface RuntimeGraphDetailsProps {
 	readonly selectedItem: TaskTreeItem | null;
@@ -30,6 +31,7 @@ export const RuntimeGraphDetails: FC<RuntimeGraphDetailsProps> = ({ selectedItem
 
 	const isSubagent = kind.includes("subagent") || liveNode?.toolName === "subagent" || receipt?.toolName === "subagent";
 	const subagentTask = isSubagent ? (receipt?.preview ?? liveNode?.targetHint ?? receipt?.targetHint) : undefined;
+	const tokensStr = formatDetailedTokens(liveNode?.tokens ?? receipt?.tokens);
 
 	return (
 		<div className="flex flex-col h-full min-h-0 text-xs">
@@ -73,6 +75,10 @@ export const RuntimeGraphDetails: FC<RuntimeGraphDetailsProps> = ({ selectedItem
 
 					{liveNode?.thinkingLevel ? (
 						<DetailRow label="Thinking"><span className="font-mono">{liveNode.thinkingLevel}</span></DetailRow>
+					) : null}
+
+					{tokensStr ? (
+						<DetailRow label="Tokens"><span className="font-mono text-[11px]">{tokensStr}</span></DetailRow>
 					) : null}
 
 					{isActive ? (
