@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.3.13] - 2026-10-28
+
+### Fixed
+- **Task Graph 1-Line Breadcrumbs for Single Tool Calls (Cycle 82)**: Resolved multi-line layout explosion where a generation with a single tool call occupied 2 to 3 lines. Generations with exactly one tool call are now flattened into clean 1-line breadcrumbs (`✓ pi.generation #67 › read: src/foo.ts`) without expand/collapse chevrons or nested rows.
+- **Root-Only History Folding**: Eliminated parasitic `See more (1 completed)` buttons inside individual generation turns caused by global ID folding. History folding is now strictly enforced at the root level only (`depth === 0`), placed at the bottom of the root list when root turns exceed 5, and expands downwards cleanly.
+- **Default-Collapsed Multi-Child Generations**: Multi-child generation turns ($\ge 2$ tool calls or subtasks) now default to a collapsed 1-line state (`› ✓ pi.generation #42 (2 tasks)`), expanding only when explicitly toggled or when active work is in progress.
+
+---
+
 ## [0.3.4] - 2026-10-27
 
 ### Fixed

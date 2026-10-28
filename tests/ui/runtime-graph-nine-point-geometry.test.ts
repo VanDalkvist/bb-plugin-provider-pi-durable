@@ -66,20 +66,20 @@ test("R4: 0..5 vs 6 boundary and terminal ancestor with active child", () => {
 	const terminalParent = makeTask(100, true);
 	const activeChild = makeTask(101, false);
 	terminalParent.children = [activeChild];
-	const finishedSiblings = [1, 2, 3, 4].map((id) => makeTask(id, true));
+	const finishedSiblings = [1, 2, 3, 4, 5].map((id) => makeTask(id, true));
 
 	const { container: cNested } = render(React.createElement(RuntimeGraphTree, {
 		tree: [terminalParent, ...finishedSiblings], selectedTaskId: null,
 		collapsedTaskIds: new Set(), onSelectTask: () => {}, onToggleCollapse: () => {},
 	}));
-	// Parent #100 has active child (2 active), finished siblings has 4 (total 6 > 5); preview shows 2 active + 3 finished = 5 rows, 1 hidden
+	// Parent #100 has active child (1 active root), finished siblings has 5 (total 6 > 5); preview shows 1 active + 4 finished = 5 rows, 1 hidden
 	assert.ok(cNested.querySelector("button[data-history-toggle='true']"));
 	assert.ok(cNested.textContent?.includes("See more (1 completed)"));
 	assert.ok(cNested.querySelector("[data-task-id='100']"));
 	assert.ok(cNested.querySelector("[data-task-id='101']"));
 	assert.ok(cNested.querySelector("[data-task-id='1']"));
-	assert.ok(cNested.querySelector("[data-task-id='3']"));
-	assert.equal(cNested.querySelector("[data-task-id='4']") === null, true);
+	assert.ok(cNested.querySelector("[data-task-id='4']"));
+	assert.equal(cNested.querySelector("[data-task-id='5']") === null, true);
 });
 
 test("R7 & R8: Inspector header remains fixed, only body scrolls, and X supports keyboard", () => {

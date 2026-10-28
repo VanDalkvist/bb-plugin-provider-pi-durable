@@ -65,24 +65,10 @@ export const RuntimeGraphTree: FC<RuntimeGraphTreeProps> = ({
 		}
 		if (selectedTaskId !== lastRevealedId) {
 			setLastRevealedId(selectedTaskId);
-			const toExpand: string[] = [];
-			const findBranches = (items: readonly TaskTreeItem[], key: string) => {
-				const finished = items.filter((it) => !hasActiveWork(it));
-				const breakdown = getHiddenBreakdown(finished, previewFinishedIds);
-				if (breakdown.total > 0 && finished.some((it) => hasDescendantId(it, selectedTaskId))) {
-					toExpand.push(key);
-				}
-				for (const it of items) {
-					if (it.children.length > 0) findBranches(it.children, `branch-${it.id}`);
-				}
-			};
-			findBranches(tree, "root");
-			if (toExpand.length > 0) {
-				setExpandedHistory((prev) => {
-					const next = new Set(prev);
-					for (const k of toExpand) next.add(k);
-					return next;
-				});
+			const finishedRoots = tree.filter((it) => !hasActiveWork(it));
+			const breakdown = getHiddenBreakdown(finishedRoots, previewFinishedIds);
+			if (breakdown.total > 0 && finishedRoots.some((it) => hasDescendantId(it, selectedTaskId))) {
+				setExpandedHistory((prev) => new Set([...prev, "root"]));
 			}
 		}
 	}, [selectedTaskId, lastRevealedId, tree, previewFinishedIds]);
@@ -119,26 +105,48 @@ export const RuntimeGraphTree: FC<RuntimeGraphTreeProps> = ({
 		active.sort((a, b) => a.id - b.id);
 		finished.sort((a, b) => a.id - b.id);
 
-		const hiddenBreakdown = getHiddenBreakdown(finished, previewFinishedIds);
-		const shouldFold = hiddenBreakdown.total > 0;
+		const isRoot = depth === 0;
+		const hiddenBreakdown = isRoot
+			? getHiddenBreakdown(finished, previewFinishedIds)
+			: { total: 0, hasFailure: false, label: "" };
+		const shouldFold = isRoot && hiddenBreakdown.total > 0;
 		const isHistoryExpanded = expandedHistory.has(branchKey);
 
-		const renderItemNode = (item: TaskTreeItem) => (
-			<React.Fragment key={`task-node-${item.id}`}>
-				<RuntimeGraphNodeRow
-					item={item}
-					depth={depth}
-					isSelected={selectedTaskId === item.id}
-					isCollapsed={collapsedTaskIds.has(item.id)}
-					now={now}
-					onSelect={() => onSelectTask(item.id)}
-					onToggleCollapse={() => onToggleCollapse(item.id)}
-				/>
-				{!collapsedTaskIds.has(item.id) && item.children.length > 0
-					? renderBranch(item.children, depth + 1, `branch-${item.id}`)
-					: null}
-			</React.Fragment>
-		);
+		const renderItemNode = (item: TaskTreeItem) => {
+			const isGeneration = item.kind === "pi.generation" ||
+				item.label.startsWith("assistant turn") ||
+				item.label.startsWith("pi.generation");
+			const hasSingleChild = isGeneration && item.children.length === 1;
+			const singleChild = hasSingleChild ? item.children[0] : undefined;
+			const isMultiChild = item.children.length >= (hasSingleChild ? 2 : 1);
+
+			const defaultCollapsed = !hasActiveWork(item);
+			const isCollapsed = isMultiChild
+				? (defaultCollapsed ? !collapsedTaskIds.has(item.id) : collapsedTaskIds.has(item.id))
+				: false;
+
+			const isSelected = selectedTaskId === item.id ||
+				(singleChild !== undefined && selectedTaskId === singleChild.id);
+
+			return (
+				<React.Fragment key={`task-node-${item.id}`}>
+					<RuntimeGraphNodeRow
+						item={item}
+						singleChild={singleChild}
+						depth={depth}
+						isSelected={isSelected}
+						isCollapsed={isCollapsed}
+						now={now}
+						onSelect={() => onSelectTask(item.id)}
+						onSelectChild={singleChild ? () => onSelectTask(singleChild.id) : undefined}
+						onToggleCollapse={() => onToggleCollapse(item.id)}
+					/>
+					{isMultiChild && !isCollapsed
+						? renderBranch(item.children, depth + 1, `branch-${item.id}`)
+						: null}
+				</React.Fragment>
+			);
+		};
 
 		return (
 			<React.Fragment key={branchKey}>

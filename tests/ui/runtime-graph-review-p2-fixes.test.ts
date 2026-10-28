@@ -68,8 +68,8 @@ test("Finding 1 RED: Clicking node-row button or container calls onSelect exactl
 	assert.equal(selectCount, 0, "Chevron click must NOT call onSelect");
 });
 
-test("Finding 2 RED: Nested 1 root + 5 children (total 6) folds behind See more (1 completed)", () => {
-	// 1 finished root with 5 finished children = 6 total finished task nodes; preview fills to 5, 1 hidden
+test("Finding 2: Multi-child root defaults to collapsed 1 line and never has nested See more", () => {
+	// 1 finished root with 5 finished children: 1 root task (<= 5 root tasks), no See more button
 	const children = [2, 3, 4, 5, 6].map((id) => makeTask(id, true));
 	const tree = [makeTask(1, true, children)];
 
@@ -80,17 +80,17 @@ test("Finding 2 RED: Nested 1 root + 5 children (total 6) folds behind See more 
 		}),
 	);
 
+	// No See more button on subtrees or <= 5 roots
 	const toggleBtn = container.querySelector("button[data-history-toggle='true']");
-	assert.ok(toggleBtn, "Group with 6 total finished nodes (1 root + 5 children) MUST fold");
-	assert.ok(toggleBtn.textContent?.includes("See more (1 completed)"), `Button must report disjoint hidden count, got: ${toggleBtn.textContent}`);
+	assert.equal(toggleBtn, null, "Subtree/single root must NOT have See more button");
+	// Multi-child item is collapsed by default into 1 line
+	assert.ok(container.textContent?.includes("(5 tasks)"), "Multi-child item shows child task count");
+	assert.equal(container.querySelectorAll("[data-task-id]").length, 1, "Only root row visible when collapsed");
 });
 
-test("Finding 2 RED: 2 roots with 2 children each (total 6) folds behind See more (1 completed)", () => {
-	// 2 roots * (1 root + 2 children) = 6 total finished nodes; preview fills to 5, 1 hidden
-	const tree = [
-		makeTask(1, true, [makeTask(2, true), makeTask(3, true)]),
-		makeTask(4, true, [makeTask(5, true), makeTask(6, true)]),
-	];
+test("Finding 2: 6 root tasks fold behind root See more (1 completed)", () => {
+	// 6 root tasks: preview fills to 5, 1 hidden under root See more
+	const tree = [1, 2, 3, 4, 5, 6].map((id) => makeTask(id, true));
 
 	const { container } = render(
 		React.createElement(RuntimeGraphTree, {
@@ -100,14 +100,12 @@ test("Finding 2 RED: 2 roots with 2 children each (total 6) folds behind See mor
 	);
 
 	const toggleBtn = container.querySelector("button[data-history-toggle='true']");
-	assert.ok(toggleBtn, "Group with 6 total finished nodes (2 roots + 4 children) MUST fold");
+	assert.ok(toggleBtn, "Group with 6 root tasks MUST fold behind See more");
 	assert.ok(toggleBtn.textContent?.includes("See more (1 completed)"), `Button must report disjoint hidden count, got: ${toggleBtn.textContent}`);
 });
 
-test("Finding 2 RED: Hierarchy with <= 5 total finished nodes stays unfolded with no disclosure button", () => {
-	// 1 root with 4 children = 5 total nodes (boundary <= 5)
-	const children = [2, 3, 4, 5].map((id) => makeTask(id, true));
-	const tree5 = [makeTask(1, true, children)];
+test("Finding 2: Root list with <= 5 finished tasks stays unfolded with no disclosure button", () => {
+	const tree5 = [1, 2, 3, 4, 5].map((id) => makeTask(id, true));
 
 	const { container } = render(
 		React.createElement(RuntimeGraphTree, {
@@ -117,7 +115,7 @@ test("Finding 2 RED: Hierarchy with <= 5 total finished nodes stays unfolded wit
 	);
 
 	const toggleBtn = container.querySelector("button[data-history-toggle='true']");
-	assert.equal(toggleBtn === null, true, "5 total finished nodes must NOT have See more button");
+	assert.equal(toggleBtn === null, true, "5 root finished nodes must NOT have See more button");
 	assert.equal(container.querySelectorAll("[data-task-id]").length, 5, "All 5 nodes must be directly visible");
 });
 

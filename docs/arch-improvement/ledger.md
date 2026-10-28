@@ -87,5 +87,66 @@
   - Line budgets (AP-019): все файлы строго < 200 LOC.
 - **Статус ревью, рантайма и открытых дефектов:**
   - Архитектурное и независимое live review (thr_qf7vysbvrr): **OPEN**.
-  - Realtime stale graph bug & UI active-first / "See more" compact history / native BB chrome: **OPEN** (подтверждённый user report, evidence собирается независимыми reviewers; не входит в 0.3.4 freeze, получит отдельный ownership и следующий patch).
-  - Runtime resident state: плагин на диске обновлён до 0.3.4, но работающие сессии BB удерживают загруженный процесс (`restart: pending`, `runtime verified: unverified (not switched)`).
+  - Realtime stale graph bug & UI active-first / "See more" compact history / native BB chrome: **RESOLVED in Cycle 82** (Task Graph breadcrumbs and root-only history folding).
+  - Runtime resident state: плагин на диске обновлён до 0.3.13, но работающие сессии BB удерживают загруженный процесс (`restart: pending`, `runtime verified: unverified (not switched)`).
+
+### Task Graph Breadcrumbs & Root-Only History Folding (Cycle 82) — 2026-10-28 (Execution Receipt)
+- **Цель и статус:** Устранение избыточного раскрытия задач и паразитных кнопок `See more (1 completed)` внутри вызовов генераций, внедрение однострочных хлебных крошек для одиночных вызовов тулов, свёрнутости по умолчанию для задач с несколькими дочерними элементами и ограничение раскрытия истории строго корневым уровнем списка. Статус: **PASS (VERIFIED)**.
+- **Устранённые дефекты и архитектурные решения:**
+  1. *[Однострочные хлебные крошки (Single-Child Breadcrumbs)]:*
+     - Первоисточник: последовательное исполнение ходов в `@earendil-works/pi-durable` (`finishToolRound` завершает текущую `pi.generation` и передаёт управление новой генерации через `handOver`). В типичных ходах генерация владеет ровно одним вызовом инструмента `pi.tool`.
+     - Коренная причина: генерация с одним тулом отображалась в виде развёрнутого дерева с шевроном, занимая 2–3 строки и отображая паразитную кнопку `See more (1 completed)`.
+     - Решение: в `src/ui/runtime-graph/node-row.tsx` и `tree.tsx` добавлена поддержка хлебных крошек `pi.generation #67 › read: src/foo.ts` на ровно одной строке без шеврона раскрытия. Клик по сегменту тула выбирает тул в инспекторе, клик по сегменту генерации — генерацию.
+  2. *[Свёрнутость по умолчанию для задач с $\ge 2$ детьми]:*
+     - Завершенные задачи с несколькими дочерними элементами по умолчанию находятся в свёрнутом состоянии (`ChevronRight`, отображают бейдж `(N tasks)`), занимая ровно 1 строку.
+     - Задачи с активной работой (`hasActiveWork(item)`) остаются развёрнутыми во время исполнения для отображения live-прогресса и автоматически схлопываются по завершении.
+  3. *[Изоляция раскрытия истории строго на корневом уровне]:*
+     - Первоисточник бага: `tree-preview.ts` собирал первые 5 ID завершённых задач глобально по всему графу. Для длинных тредов (70+ задач) дочерние тулы последующих генераций объявлялись «скрытыми», порождая кнопки `See more (1 completed)` внутри ветвей.
+     - Решение: фильтрация и кнопка `See more / See less` ограничены исключительно верхним (корневым) уровнем списка (`depth === 0`). Внутри генераций и подзадач кнопки истории полностью запрещены. На корневом уровне показываются первые 5 ходов, а кнопка раскрытия размещена внизу списка, разворачивая полную историю со скроллом.
+- **TDD и доказательная база:**
+  - `tests/ui/runtime-graph-breadcrumbs-and-root-folding.test.ts`: 176 строк (< 200 LOC), 4 теста, 100% pass:
+    * Отрисовка генерации с 1 тулом в 1 строку без шеврона (`✓ pi.generation #67 › read: src/foo.ts`).
+    * Выбор дочернего тула и родительской генерации по клику на соответствующие сегменты крошек.
+    * Свёрнутость по умолчанию для мультидочерних генераций с бейджем `(2 tasks)` и разворачивание по клику.
+    * Развёрнутость мультидочерних задач с активным live-прогрессом.
+    * Корневое сворачивание истории (> 5 задач) внизу списка с переключением `See more` / `See less`.
+  - Общий сьют: **643 теста (556 backend + 87 UI): 643 pass, 0 fail**.
+  - Контракты: `npm run test:contracts` (Negative contract guard: TS2322 rejection pass).
+  - Ацикличность импортов: `scripts/verify-import-graph.mjs` подтверждает 139 файлов, 0 циклов (Tarjan SCC).
+  - Строгая типизация: `./node_modules/.bin/tsc --noEmit` (0 errors).
+  - Line budgets (AP-019): все изменённые и новые файлы строго < 200 LOC.
+- **Сборка (Build Receipt):**
+  - Версия обновлена `0.3.12` → `0.3.13` в `package.json` и `package-lock.json`.
+  - `npm run build` пересобрал бандлы: `dist/runner/index.js`, `dist/host.js`, `dist/server.js`, `dist/app.js`, `dist/app.css` с метаданными `pluginVersion: 0.3.13`.
+
+### Native BB Mirror Recovery & Bounded Retention (Cycle 81) — 2026-10-28 (Execution Receipt)
+- **Цель и статус:** Устранение дефектов восстановления дочерних бесед после перезапуска демона, предотвращение зависания возобновляемых тредов через ложную mirror adoption, честное согласование прерванных инструментов (orphan cards) и ограниченное удержание снимков/событий в памяти без нарушения late-binding. Статус: **PASS (SOURCE READY)**.
+- **Устранённые дефекты и архитектурные решения:**
+  1. *[Устранение сбоя восстановления связей (Offline Bindings Recovery)]:*
+     - Первоисточник: `durable-binding-store.ts` парсил SQLite document_revisions, спотыкаясь о приватные дельта-массивы Chord.
+     - Решение: `DurableBindingManager` сохраняет явный адаптерный манифест `adapter-bindings.json` в директории сессии. При старте дочернего треда до родителя (`child before parent`) `SessionRegistry.createOrGet` захватывает sole owner admission, поднимает родителя, который гидратирует связки через публичный `harness.snapshot(BindingIndexDoc)`. При неоднозначности идентичности сессия аварийно завершается (`fail closed`), исключая создание ложных standalone root сессий.
+  2. *[Восстановление жизненного цикла Subagent Watcher]:*
+     - `startSubagentWatcher` при инициализации раннера выполняет bootstrap известных дочерних бесед из `BindingIndexDoc` и `SubagentsDoc`.
+     - Контроллер экспортирует метод `ensureAttached(conversationId)`, который вызывается в `session-commands.ts` перед выполнением `prompt`/`steer` на дочерней беседе, предотвращая «глухие» ходы после перезапуска.
+  3. *[Изоляция Mirror Adoption и предотвращение поглощения ввода]:*
+     - `decideMirrorAdoption` ограничен строго первоначальным рукопожатием первого хода (`!initialTurnConsumed`). Resumes и повторные ходы направляются непосредственно в `session.prompt()`.
+     - При прерывании (`handleThreadStop` с `intent: "interrupt"`) флаг `initialTurnConsumed` взводится, гарантируя, что возобновление создаст реальную работу в Pi Durable.
+  4. *[Честное согласование осиротевших карточек инструментов (Orphan Cards)]:*
+     - Реализован `ToolItemReconciler`, сохраняющий курсор открытых инструментов адаптера в `adapter-active-items.json`.
+     - При реконнекте или прерывании не закрытые вовремя инструменты согласуются в статус `failed` с причиной прерывания, исключая зависшие «Running» карточки в UI без фальсификации успеха.
+  5. *[Ограниченное удержание памяти (Bounded Mirror Retention)]:*
+     - `SubagentMirrorManager` выполняет коалесценцию повторяемых снимков `runtime_graph_snapshot` (сохраняется только последний снимок).
+     - Буфер событий ограничен 100 записями с честным флагом `isTruncated`, вывод ограничен 64 КБ. Тяжёлые буферы освобождаются при `consumeCompleted` и `flushBufferedDeltas` без нарушения late adoption.
+- **TDD и доказательная база:**
+  - 5 новых сьютов (< 200 LOC каждый, 13 тестов, 100% pass):
+    * `tests/subagent-recovery-binding.test.ts`: манифест связок, child-before-parent, fail-closed.
+    * `tests/subagent-watcher-lifecycle.test.ts`: bootstrap существующих дочерних бесед, ensureAttached.
+    * `tests/subagent-resume-adoption.test.ts`: предотвращение поглощения ввода при возобновлении.
+    * `tests/orphan-tool-reconciliation.test.ts`: честное закрытие осиротевших инструментов.
+    * `tests/subagent-mirror-retention.test.ts`: коалесценция снимков, ограничение буферов.
+  - Общий сьют: **632 теста (556 backend + 76 UI): 632 pass, 0 fail**.
+  - Контракты: `npm run test:contracts` (Negative contract guard: TS2322 rejection pass).
+  - Ацикличность импортов: `npm test` подтверждает 0 циклов (Tarjan SCC).
+  - Строгая типизация: `npx tsc --noEmit` (0 errors).
+  - Line budgets (AP-019): все изменённые и новые файлы строго < 200 LOC.
+- **Файловый артефакт:** `/Users/vanya/.bb/thread-storage/thr_ct3kk9xne6/backend-mirror-recovery-remediation-result.md`.
