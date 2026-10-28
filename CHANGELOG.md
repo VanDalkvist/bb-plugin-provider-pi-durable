@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.3.14] - 2026-10-28
+
+### Fixed
+- **Subagent Active Status Bubble-Up (Cycle 83)**: Fixed false green checkmarks on running subagents. When a subagent anchor has active descendants (`hasActiveWork(item) === true`), the row displays the active running icon (`Play` / `text-blue-500`) and live ticking duration (`liveElapsed`) rather than static `1ms` and completed checkmark. Completed checkmark appears strictly after all child tasks settle.
+- **Enriched Subagent Labels with Technical Prefix**: Subagent anchor nodes enrich their label to `bb.subagent-anchor · subagent: ${name}` from `SubagentsDoc`, preserving the technical prefix while presenting the human-readable subagent name.
+- **Dedicated Subagent Task Box in Details**: Added a dedicated `<InfoSection label="Subagent task">` rendering the subagent's task prompt in a scrollable block (`max-h-32 font-mono whitespace-pre-wrap break-all`), keeping long prompts cleanly contained.
+- **Stable Segment Layout & Fixed Details Header**: Fixed container vertical height jump by locking segment height to stable `max-h-64` regardless of selection. Bound inspector width to `w-72 max-w-[45%]` so the tree retains dominant width. Pinned Details header so scrolling inspector content never scrolls the header or close button out of view.
+
+---
+
 ## [0.3.13] - 2026-10-28
 
 ### Fixed

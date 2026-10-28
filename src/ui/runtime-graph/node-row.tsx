@@ -1,6 +1,7 @@
 import React, { type FC } from "react";
 import { experimental_Icon } from "@get-bb/plugin-sdk/app";
 import type { TaskTreeItem } from "./types.ts";
+import { hasActiveWork } from "./tree-order.ts";
 
 export interface RuntimeGraphNodeRowProps {
 	readonly item: TaskTreeItem;
@@ -23,6 +24,9 @@ function resolveStatusIcon(item: TaskTreeItem): { icon: string; colorClass: stri
 			case "completing": return { icon: "ArrowDownCircle", colorClass: "text-purple-500", title: "Completing child work" };
 			case "pending": return { icon: "Clock", colorClass: "text-muted-foreground", title: "Queued" };
 		}
+	}
+	if (hasActiveWork(item)) {
+		return { icon: "Play", colorClass: "text-blue-500", title: "Running (active child work)" };
 	}
 	if (item.receipt) {
 		switch (item.receipt.outcome) {
@@ -61,10 +65,12 @@ export const RuntimeGraphNodeRow: FC<RuntimeGraphNodeRowProps> = ({
 	const { icon, colorClass, title: statusTitle } = resolveStatusIcon(effectiveIconItem);
 	const hasChildren = !singleChild && item.children.length > 0;
 
-	const liveElapsed = (item.liveNode?.startedAt && item.liveNode.startedAt > 0
-		? Math.max(0, (now ?? Date.now()) - item.liveNode.startedAt)
-		: item.liveNode?.durationMs);
-	const duration = formatDuration(item.receipt?.durationMs ?? singleChild?.receipt?.durationMs ?? liveElapsed);
+	const isActive = hasActiveWork(item) || (singleChild ? hasActiveWork(singleChild) : false);
+	const startedAt = item.liveNode?.startedAt ?? item.receipt?.startedAt ?? singleChild?.liveNode?.startedAt ?? singleChild?.receipt?.startedAt;
+	const liveElapsed = isActive && startedAt && startedAt > 0
+		? Math.max(0, (now ?? Date.now()) - startedAt)
+		: (item.liveNode?.durationMs ?? singleChild?.liveNode?.durationMs);
+	const duration = formatDuration(isActive ? liveElapsed : (item.receipt?.durationMs ?? singleChild?.receipt?.durationMs ?? liveElapsed));
 
 	const hasToolError = Boolean(item.receipt?.isToolError) || Boolean(singleChild?.receipt?.isToolError);
 	const waitingOn = (item.waitingOn && item.waitingOn.length > 0) ? item.waitingOn : singleChild?.waitingOn;
@@ -78,7 +84,7 @@ export const RuntimeGraphNodeRow: FC<RuntimeGraphNodeRowProps> = ({
 	return (
 		<div
 			data-task-id={item.id}
-			data-active={(!item.isTerminal || (singleChild && !singleChild.isTerminal)) ? "true" : undefined}
+			data-active={isActive ? "true" : undefined}
 			style={{ paddingLeft: `${depth * 16 + 6}px` }}
 			onClick={(e) => {
 				if ((e.target as HTMLElement).closest?.("button")) return;

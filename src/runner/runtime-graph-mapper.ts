@@ -31,9 +31,7 @@ export interface ExtractedTaskMeta {
 }
 
 export function extractTaskModelMeta(
-	node: TaskGraphNode,
-	current: unknown,
-	rootConvId: number,
+	node: TaskGraphNode, current: unknown, rootConvId: number,
 ): ExtractedTaskMeta {
 	if (node.kind !== "pi.generation") return {};
 	const cp = (node as any).state?.checkpoint ?? (node as any).checkpoint;
@@ -46,34 +44,20 @@ export function extractTaskModelMeta(
 			provider = String(cp.model.provider);
 			modelId = String(cp.model.modelId ?? cp.model.id);
 		}
-		if (cp.thinkingLevel !== undefined && cp.thinkingLevel !== null) {
-			thinkingLevel = String(cp.thinkingLevel);
-		}
+		if (cp.thinkingLevel !== undefined && cp.thinkingLevel !== null) thinkingLevel = String(cp.thinkingLevel);
 	}
 
 	if (!provider || !modelId) {
 		const convId = Number(node.conversationId);
 		if (convId === rootConvId) {
-			const agentDoc = (current as any)?.conversation?.docs?.["pi.agent"];
-			if (agentDoc?.model?.provider && (agentDoc.model.modelId || agentDoc.model.id)) {
-				provider = String(agentDoc.model.provider);
-				modelId = String(agentDoc.model.modelId ?? agentDoc.model.id);
-			}
-			if (agentDoc?.thinkingLevel !== undefined && agentDoc.thinkingLevel !== null) {
-				thinkingLevel = String(agentDoc.thinkingLevel);
-			}
+			const doc = (current as any)?.conversation?.docs?.["pi.agent"];
+			if (doc?.model?.provider) { provider = String(doc.model.provider); modelId = String(doc.model.modelId ?? doc.model.id); }
+			if (doc?.thinkingLevel !== undefined && doc?.thinkingLevel !== null) thinkingLevel = String(doc.thinkingLevel);
 		} else {
-			const subagentsDoc = (current as any)?.conversation?.docs?.["bb.subagents"];
-			const subRec = subagentsDoc?.agents
-				? (Object.values(subagentsDoc.agents).find((a: any) => Number(a?.conversationId) === convId) as any)
-				: undefined;
-			if (subRec?.actualModel?.provider && (subRec.actualModel.modelId || subRec.actualModel.id)) {
-				provider = String(subRec.actualModel.provider);
-				modelId = String(subRec.actualModel.modelId ?? subRec.actualModel.id);
-			}
-			if (subRec?.thinkingLevel !== undefined && subRec.thinkingLevel !== null) {
-				thinkingLevel = String(subRec.thinkingLevel);
-			}
+			const doc = (current as any)?.conversation?.docs?.["bb.subagents"];
+			const sub = doc?.agents ? (Object.values(doc.agents).find((a: any) => Number(a?.conversationId) === convId) as any) : undefined;
+			if (sub?.actualModel?.provider) { provider = String(sub.actualModel.provider); modelId = String(sub.actualModel.modelId ?? sub.actualModel.id); }
+			if (sub?.thinkingLevel !== undefined && sub?.thinkingLevel !== null) thinkingLevel = String(sub.thinkingLevel);
 		}
 	}
 
@@ -99,6 +83,19 @@ export function recordSubagentOwnership(
 	}
 }
 
+export function findSubagentMeta(
+	current: unknown, taskId: number,
+): { readonly name?: string; readonly task?: string } | undefined {
+	const doc = (current as any)?.conversation?.docs?.["bb.subagents"];
+	if (!doc?.agents) return undefined;
+	for (const a of Object.values(doc.agents) as any[]) {
+		if (Number(a?.anchorTaskId) === taskId || Number(a?.ownerTaskId) === taskId) {
+			return { name: a.name, task: a.task };
+		}
+	}
+	return undefined;
+}
+
 export function buildMappedNode(
 	node: TaskGraphNode,
 	current: unknown,
@@ -110,13 +107,17 @@ export function buildMappedNode(
 	const id = Number(node.id);
 	const convId = Number(node.conversationId);
 	const meta = extractTaskModelMeta(node, current, rootConvId);
+	const callDetails = names.getDetails(String(id));
+	const subMeta = findSubagentMeta(current, id);
+
 	let label = taskLabel(node, names, meta.modelLabel);
+	if (node.kind === "bb.subagent-anchor" && subMeta?.name) {
+		label = `bb.subagent-anchor · subagent: ${subMeta.name}`;
+	}
 	if (label.length > MAX_LABEL_LENGTH) label = label.slice(0, MAX_LABEL_LENGTH);
 
-	const callDetails = names.getDetails(String(id));
 	const startedAt = (node as any).startedAt !== undefined && (node as any).startedAt !== null
-		? Number((node as any).startedAt)
-		: nativeStartedAt.get(id);
+		? Number((node as any).startedAt) : nativeStartedAt.get(id);
 	const durationMs = startedAt !== undefined ? Math.max(0, clock() - startedAt) : undefined;
 
 	return {
@@ -125,10 +126,9 @@ export function buildMappedNode(
 		background: Boolean(node.background), abortRequested: Boolean(node.abortRequested),
 		state: mapTaskGraphNodeState(node.state), blocked: node.blocked, label,
 		startedAt, durationMs,
-		toolName: callDetails?.toolName,
-		targetHint: callDetails?.targetHint,
-		model: meta.model,
-		thinkingLevel: meta.thinkingLevel,
+		toolName: callDetails?.toolName ?? (subMeta ? "subagent" : undefined),
+		targetHint: callDetails?.targetHint ?? (subMeta ? (subMeta.name || subMeta.task) : undefined),
+		model: meta.model, thinkingLevel: meta.thinkingLevel,
 	};
 }
 
@@ -137,13 +137,17 @@ export function recordTerminalWithDetails(
 	task: TaskRecord<unknown, unknown, unknown>,
 	names: TaskNames,
 	nativeStartedAt: Map<number, number>,
+	current?: unknown,
 ): void {
 	const id = Number(task.id);
 	const details = names.getDetails(String(id));
+	const subMeta = findSubagentMeta(current, id);
+	const toolName = details?.toolName ?? (subMeta ? "subagent" : undefined);
+	const targetHint = details?.targetHint ?? (subMeta ? (subMeta.name || subMeta.task) : undefined);
+	const preview = subMeta?.task ?? details?.preview ?? names.get(String(id));
+
 	receipts.recordTerminal(task, {
-		preview: details?.preview ?? names.get(String(id)),
-		toolName: details?.toolName,
-		targetHint: details?.targetHint,
+		preview, toolName, targetHint,
 		startedAt: nativeStartedAt.get(id),
 	});
 }

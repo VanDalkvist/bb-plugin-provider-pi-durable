@@ -59,7 +59,7 @@ export class RuntimeGraphSource {
 						if (taskVal?.startedAt) this.nativeStartedAt.set(idNum, Number(taskVal.startedAt));
 						if (taskVal?.state?.status === "terminal") {
 							this.learnNames();
-							recordTerminalWithDetails(this.receipts, taskVal, this.names, this.nativeStartedAt);
+							recordTerminalWithDetails(this.receipts, taskVal, this.names, this.nativeStartedAt, this.viewSource.current());
 						}
 						this.schedule();
 					} else if (ch?.type === "conversation" && ch.value) {
@@ -168,7 +168,7 @@ export class RuntimeGraphSource {
 					void this.harness.getTask(prevId).then((task) => {
 						if (task && task.state?.status === "terminal") {
 							this.learnNames();
-							recordTerminalWithDetails(this.receipts, task, this.names, this.nativeStartedAt);
+							recordTerminalWithDetails(this.receipts, task, this.names, this.nativeStartedAt, this.viewSource.current());
 							this.schedule();
 						}
 					}).catch(() => {});

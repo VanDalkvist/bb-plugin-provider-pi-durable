@@ -72,8 +72,11 @@ export function buildTaskTree(snapshot: RuntimeGraphSnapshot): TaskTreeItem[] {
 			}
 		} else {
 			const ownerId = resolveOwnerId(receipt.conversationId, receipt.owner, conversations);
-			const label = receipt.preview
-				? `${receipt.kind} · ${receipt.preview}`
+			const detail = receipt.targetHint
+				? (receipt.toolName ? `${receipt.toolName}: ${receipt.targetHint}` : receipt.targetHint)
+				: receipt.preview;
+			const label = detail
+				? `${receipt.kind} · ${detail}`
 				: `${receipt.kind} #${id}`;
 
 			itemsMap.set(id, {

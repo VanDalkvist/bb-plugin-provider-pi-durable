@@ -116,7 +116,7 @@ export const RuntimeGraphSegmentDetails: FC<RuntimeGraphSegmentDetailsProps> = (
 			data-layout={isNarrow ? "narrow" : "wide"}
 			className={`flex ${
 				isNarrow ? "flex-col" : "flex-row"
-			} w-full bg-transparent overflow-hidden text-xs ${hasSelection ? "max-h-72" : "max-h-60"}`}
+			} w-full bg-transparent overflow-hidden text-xs max-h-64`}
 		>
 			<div
 				className={`flex-1 relative flex flex-col min-w-0 ${
@@ -141,7 +141,7 @@ export const RuntimeGraphSegmentDetails: FC<RuntimeGraphSegmentDetailsProps> = (
 			{hasSelection ? (
 				<div
 					data-testid="runtime-graph-inspector"
-					className={`${isNarrow ? "h-36" : "w-80"} flex-shrink-0 flex flex-col min-w-0 overflow-hidden p-2.5 bg-muted/5`}
+					className={`${isNarrow ? "h-40 border-t border-border" : "w-72 max-w-[45%]"} flex-shrink-0 flex flex-col min-w-0 overflow-hidden p-2.5 bg-muted/5`}
 				>
 					<RuntimeGraphDetails
 						selectedItem={selectedItem}

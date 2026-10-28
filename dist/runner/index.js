@@ -4200,31 +4200,25 @@ function extractTaskModelMeta(node, current, rootConvId) {
       provider = String(cp.model.provider);
       modelId = String(cp.model.modelId ?? cp.model.id);
     }
-    if (cp.thinkingLevel !== void 0 && cp.thinkingLevel !== null) {
-      thinkingLevel = String(cp.thinkingLevel);
-    }
+    if (cp.thinkingLevel !== void 0 && cp.thinkingLevel !== null) thinkingLevel = String(cp.thinkingLevel);
   }
   if (!provider || !modelId) {
     const convId = Number(node.conversationId);
     if (convId === rootConvId) {
-      const agentDoc = current?.conversation?.docs?.["pi.agent"];
-      if (agentDoc?.model?.provider && (agentDoc.model.modelId || agentDoc.model.id)) {
-        provider = String(agentDoc.model.provider);
-        modelId = String(agentDoc.model.modelId ?? agentDoc.model.id);
+      const doc = current?.conversation?.docs?.["pi.agent"];
+      if (doc?.model?.provider) {
+        provider = String(doc.model.provider);
+        modelId = String(doc.model.modelId ?? doc.model.id);
       }
-      if (agentDoc?.thinkingLevel !== void 0 && agentDoc.thinkingLevel !== null) {
-        thinkingLevel = String(agentDoc.thinkingLevel);
-      }
+      if (doc?.thinkingLevel !== void 0 && doc?.thinkingLevel !== null) thinkingLevel = String(doc.thinkingLevel);
     } else {
-      const subagentsDoc = current?.conversation?.docs?.["bb.subagents"];
-      const subRec = subagentsDoc?.agents ? Object.values(subagentsDoc.agents).find((a) => Number(a?.conversationId) === convId) : void 0;
-      if (subRec?.actualModel?.provider && (subRec.actualModel.modelId || subRec.actualModel.id)) {
-        provider = String(subRec.actualModel.provider);
-        modelId = String(subRec.actualModel.modelId ?? subRec.actualModel.id);
+      const doc = current?.conversation?.docs?.["bb.subagents"];
+      const sub = doc?.agents ? Object.values(doc.agents).find((a) => Number(a?.conversationId) === convId) : void 0;
+      if (sub?.actualModel?.provider) {
+        provider = String(sub.actualModel.provider);
+        modelId = String(sub.actualModel.modelId ?? sub.actualModel.id);
       }
-      if (subRec?.thinkingLevel !== void 0 && subRec.thinkingLevel !== null) {
-        thinkingLevel = String(subRec.thinkingLevel);
-      }
+      if (sub?.thinkingLevel !== void 0 && sub?.thinkingLevel !== null) thinkingLevel = String(sub.thinkingLevel);
     }
   }
   if (!provider || !modelId) return {};
@@ -4241,13 +4235,27 @@ function recordSubagentOwnership(conversations, current, rootConvId) {
     }
   }
 }
+function findSubagentMeta(current, taskId) {
+  const doc = current?.conversation?.docs?.["bb.subagents"];
+  if (!doc?.agents) return void 0;
+  for (const a of Object.values(doc.agents)) {
+    if (Number(a?.anchorTaskId) === taskId || Number(a?.ownerTaskId) === taskId) {
+      return { name: a.name, task: a.task };
+    }
+  }
+  return void 0;
+}
 function buildMappedNode(node, current, rootConvId, names, nativeStartedAt, clock) {
   const id = Number(node.id);
   const convId = Number(node.conversationId);
   const meta = extractTaskModelMeta(node, current, rootConvId);
-  let label = taskLabel(node, names, meta.modelLabel);
-  if (label.length > MAX_LABEL_LENGTH) label = label.slice(0, MAX_LABEL_LENGTH);
   const callDetails = names.getDetails(String(id));
+  const subMeta = findSubagentMeta(current, id);
+  let label = taskLabel(node, names, meta.modelLabel);
+  if (node.kind === "bb.subagent-anchor" && subMeta?.name) {
+    label = `bb.subagent-anchor \xB7 subagent: ${subMeta.name}`;
+  }
+  if (label.length > MAX_LABEL_LENGTH) label = label.slice(0, MAX_LABEL_LENGTH);
   const startedAt = node.startedAt !== void 0 && node.startedAt !== null ? Number(node.startedAt) : nativeStartedAt.get(id);
   const durationMs = startedAt !== void 0 ? Math.max(0, clock() - startedAt) : void 0;
   return {
@@ -4262,19 +4270,23 @@ function buildMappedNode(node, current, rootConvId, names, nativeStartedAt, cloc
     label,
     startedAt,
     durationMs,
-    toolName: callDetails?.toolName,
-    targetHint: callDetails?.targetHint,
+    toolName: callDetails?.toolName ?? (subMeta ? "subagent" : void 0),
+    targetHint: callDetails?.targetHint ?? (subMeta ? subMeta.name || subMeta.task : void 0),
     model: meta.model,
     thinkingLevel: meta.thinkingLevel
   };
 }
-function recordTerminalWithDetails(receipts, task, names, nativeStartedAt) {
+function recordTerminalWithDetails(receipts, task, names, nativeStartedAt, current) {
   const id = Number(task.id);
   const details = names.getDetails(String(id));
+  const subMeta = findSubagentMeta(current, id);
+  const toolName = details?.toolName ?? (subMeta ? "subagent" : void 0);
+  const targetHint = details?.targetHint ?? (subMeta ? subMeta.name || subMeta.task : void 0);
+  const preview = subMeta?.task ?? details?.preview ?? names.get(String(id));
   receipts.recordTerminal(task, {
-    preview: details?.preview ?? names.get(String(id)),
-    toolName: details?.toolName,
-    targetHint: details?.targetHint,
+    preview,
+    toolName,
+    targetHint,
     startedAt: nativeStartedAt.get(id)
   });
 }
@@ -4352,7 +4364,7 @@ var RuntimeGraphSource = class {
             if (taskVal?.startedAt) this.nativeStartedAt.set(idNum, Number(taskVal.startedAt));
             if (taskVal?.state?.status === "terminal") {
               this.learnNames();
-              recordTerminalWithDetails(this.receipts, taskVal, this.names, this.nativeStartedAt);
+              recordTerminalWithDetails(this.receipts, taskVal, this.names, this.nativeStartedAt, this.viewSource.current());
             }
             this.schedule();
           } else if (ch?.type === "conversation" && ch.value) {
@@ -4456,7 +4468,7 @@ var RuntimeGraphSource = class {
           void this.harness.getTask(prevId).then((task) => {
             if (task && task.state?.status === "terminal") {
               this.learnNames();
-              recordTerminalWithDetails(this.receipts, task, this.names, this.nativeStartedAt);
+              recordTerminalWithDetails(this.receipts, task, this.names, this.nativeStartedAt, this.viewSource.current());
               this.schedule();
             }
           }).catch(() => {

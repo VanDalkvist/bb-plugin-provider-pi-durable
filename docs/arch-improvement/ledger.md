@@ -90,7 +90,37 @@
   - Realtime stale graph bug & UI active-first / "See more" compact history / native BB chrome: **RESOLVED in Cycle 82** (Task Graph breadcrumbs and root-only history folding).
   - Runtime resident state: плагин на диске обновлён до 0.3.13, но работающие сессии BB удерживают загруженный процесс (`restart: pending`, `runtime verified: unverified (not switched)`).
 
-### Task Graph Breadcrumbs & Root-Only History Folding (Cycle 82) — 2026-10-28 (Execution Receipt)
+### Subagent Active Status, Enriched Naming & Fixed Details Layout (Cycle 83) — 2026-10-28 (Execution Receipt)
+- **Цель и статус:** Устранение ложного статуса «Completed 1ms» для фоновых субагентов во время их работы, обогащение названий анкеров читаемыми именами субагентов с сохранением технических префиксов, отображение задачи субагента в инспекторе, стабилизация высоты контейнера сегмента и фиксация шапки Details. Статус: **PASS (VERIFIED)**.
+- **Устранённые дефекты и архитектурные решения:**
+  1. *[Честный статус активности родителя (Bubble-up Active State)]:*
+     - Первоисточник: задача `Anchor` (`bb.subagent-anchor`) завершалась за 1 мс, чтобы отпустить родительскую беседу. Из-за этого `node-row.tsx` смотрел только на собственный `receipt.outcome === "completed"` и выводил зелёную галочку `✓` и `1ms`, хотя дочерняя беседа субагента вовсю работала.
+     - Решение: в `resolveStatusIcon(item)` добавлена проверка `hasActiveWork(item)`. Если у задачи есть активные потомки, она отображает синюю иконку работы `▷ Play` (`text-blue-500`) и статус `Running (active child work)`. Длительность вычисляет живое время работы (`liveElapsed = now - startedAt`), тикающее в реальном времени. Зелёная галочка загорается строго после завершения всех дочерних задач.
+  2. *[Обогащение названий анкеров и сохранение префиксов]:*
+     - Функция `findSubagentMeta` в `runtime-graph-mapper.ts` извлекает `name` и `task` из `SubagentsDoc` по `anchorTaskId`.
+     - Узел анкера в графе именуется как `bb.subagent-anchor · subagent: ${name}`, сохраняя технический префикс и добавляя понятное человеческое имя. В `receipt` проставляются `toolName: "subagent"`, `targetHint: name` и `preview: task`.
+  3. *[Секция Subagent Task и честный статус в Details]:*
+     - В `details.tsx` для активных задач с живыми потомками выводится `Runtime status: Running in background`, а ложный `Outcome: Completed successfully` блокируется.
+     - Добавлена секция `<InfoSection label="Subagent task">`, выводящая исходный промпт задачи в аккуратном скроллируемом блоке (`max-h-32 font-mono whitespace-pre-wrap break-all`).
+  4. *[Стабилизация верстки сегмента и фиксация шапки Details]:*
+     - В `segment.tsx` зафиксирована стабильная высота `max-h-64` (256px) как при наличии выбора, так и без него — исключены любые вертикальные скачки панели при клике по карточкам.
+     - В десктопном режиме ширина инспектора ограничена `w-72 max-w-[45%]`, гарантируя, что дерево задач слева всегда сохраняет не менее 55% ширины.
+     - В `details.tsx` шапка зафиксирована (`flex-shrink-0 border-b pb-1.5`), а скроллинг изолирован в теле (`flex-1 overflow-y-auto min-h-0`) — заголовок и кнопка `X` никогда не уплывают наверх при скролле.
+- **TDD и доказательная база:**
+  - `tests/ui/runtime-graph-subagent-active-and-details.test.ts`: 161 строка (< 200 LOC), 5 тестов, 100% pass:
+    * Иконка `Play` (синяя) и живой таймер вместо `Check 1ms` при активном дочернем ходе.
+    * Переключение на зелёный `Check` строго при завершении всех детей.
+    * Отображение `Running in background` и блока `Subagent task` в Details с фиксированной шапкой.
+    * Стабильная высота `max-h-64` и пропорциональная ширина `w-72 max-w-[45%]`.
+    * Обогащение имени анкера из `SubagentsDoc` (`bb.subagent-anchor · subagent: Independent Reviewer`).
+  - Общий сьют: **648 тестов (556 backend + 92 UI): 648 pass, 0 fail**.
+  - Контракты: `npm run test:contracts` (Negative contract guard: TS2322 rejection pass).
+  - Ацикличность импортов: `scripts/verify-import-graph.mjs` подтверждает 139 файлов, 0 циклов (Tarjan SCC).
+  - Строгая типизация: `./node_modules/.bin/tsc --noEmit` (0 errors).
+  - Line budgets (AP-019): все изменённые и новые файлы строго < 200 LOC.
+- **Сборка (Build Receipt):**
+  - Версия обновлена `0.3.13` → `0.3.14` в `package.json` и `package-lock.json`.
+  - `npm run build` пересобрал бандлы: `dist/runner/index.js`, `dist/host.js`, `dist/server.js`, `dist/app.js`, `dist/app.css` с метаданными `pluginVersion: 0.3.14`.
 - **Цель и статус:** Устранение избыточного раскрытия задач и паразитных кнопок `See more (1 completed)` внутри вызовов генераций, внедрение однострочных хлебных крошек для одиночных вызовов тулов, свёрнутости по умолчанию для задач с несколькими дочерними элементами и ограничение раскрытия истории строго корневым уровнем списка. Статус: **PASS (VERIFIED)**.
 - **Устранённые дефекты и архитектурные решения:**
   1. *[Однострочные хлебные крошки (Single-Child Breadcrumbs)]:*
