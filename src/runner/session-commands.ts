@@ -85,6 +85,15 @@ export async function handleActiveSessionCommand(
 			respond.success(cmd.id, "abort");
 			break;
 		}
+		case "abort_task": {
+			if (typeof cmd.taskId !== "number") {
+				respond.error(cmd.id, "abort_task", "Missing taskId");
+				return;
+			}
+			await durable.harness.abortTask(cmd.taskId as any, BACKGROUND_CONTEXT);
+			respond.success(cmd.id, "abort_task", { ok: true });
+			break;
+		}
 		case "compact": {
 			await durable.controller.compact(cmd.instructions);
 			respond.success(cmd.id, "compact");

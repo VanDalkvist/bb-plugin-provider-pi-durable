@@ -218,22 +218,22 @@ ${prompt}`;
         }, context);
       },
       hold: async (_task, runtime, context) => {
-        const watch = await runtime.watchDoc(SubagentsDoc, runtime.conversationId, context);
-        if (watch === void 0 || watch.value?.deliveryHold === void 0) {
-          await watch?.stop();
+        const watch2 = await runtime.watchDoc(SubagentsDoc, runtime.conversationId, context);
+        if (watch2 === void 0 || watch2.value?.deliveryHold === void 0) {
+          await watch2?.stop();
           await runtime.commit(() => ({ status: "running", checkpoint: { phase: "next" } }), context);
           return;
         }
         try {
           await new Promise((resolve2, reject) => {
-            watch.start((v) => {
+            watch2.start((v) => {
               if (v?.deliveryHold === void 0) resolve2();
               return Promise.resolve();
             });
-            void watch.closed.then(() => reject(new Error("Courier hold watch ended")));
+            void watch2.closed.then(() => reject(new Error("Courier hold watch ended")));
           });
         } finally {
-          await watch.stop();
+          await watch2.stop();
         }
         await runtime.commit(() => ({ status: "running", checkpoint: { phase: "next" } }), context);
       }
@@ -3418,6 +3418,15 @@ async function handleActiveSessionCommand(cmd, durable, modelRuntime, args2, res
       respond.success(cmd.id, "abort");
       break;
     }
+    case "abort_task": {
+      if (typeof cmd.taskId !== "number") {
+        respond.error(cmd.id, "abort_task", "Missing taskId");
+        return;
+      }
+      await durable.harness.abortTask(cmd.taskId, BACKGROUND_CONTEXT3);
+      respond.success(cmd.id, "abort_task", { ok: true });
+      break;
+    }
     case "compact": {
       await durable.controller.compact(cmd.instructions);
       respond.success(cmd.id, "compact");
@@ -3488,7 +3497,7 @@ var wireContextSchema = z2.object({
 
 // src/contracts/runner-command.ts
 var runnerCommandSchema = z3.object({
-  type: z3.enum(["prompt", "steer", "abort", "compact", "set_subagent_policy", "get_available_models", "set_model", "set_thinking_level", "get_state", "get_session_stats", "register_binding", "get_all_bindings"]),
+  type: z3.enum(["prompt", "steer", "abort", "abort_task", "compact", "set_subagent_policy", "get_available_models", "set_model", "set_thinking_level", "get_state", "get_session_stats", "register_binding", "get_all_bindings"]),
   id: z3.string().optional(),
   message: z3.string().optional(),
   images: z3.array(z3.object({ type: z3.literal("image"), data: z3.string(), mimeType: z3.string() })).optional(),
@@ -3501,7 +3510,8 @@ var runnerCommandSchema = z3.object({
   bbThreadId: z3.string().optional(),
   parentThreadId: z3.string().optional(),
   sessionId: z3.string().optional(),
-  policyRecord: z3.unknown().optional()
+  policyRecord: z3.unknown().optional(),
+  taskId: z3.number().int().positive().optional()
 }).passthrough();
 var knownCommandTypes = new Set(runnerCommandSchema.shape.type.options);
 var runnerRequestHeaderSchema = z3.object({ type: z3.string().min(1), id: z3.string().optional() }).passthrough();
@@ -3645,7 +3655,7 @@ function extractChildConversationId(event) {
   return void 0;
 }
 async function startSubagentWatcher(harness, adapter, getCurrentView, options) {
-  const watch = options?.watchEventsFn ?? defaultWatchEvents;
+  const watch2 = options?.watchEventsFn ?? defaultWatchEvents;
   const attached = /* @__PURE__ */ new Set();
   const activeStreams = /* @__PURE__ */ new Map();
   const attach = async (conversationId, parentCallId) => {
@@ -3654,7 +3664,7 @@ async function startSubagentWatcher(harness, adapter, getCurrentView, options) {
     const isChild = parentCallId !== void 0;
     const childAdapter = isChild ? adapter.createChildAdapter(parentCallId, conversationId) : void 0;
     try {
-      const stream = await watch(harness, conversationId, BACKGROUND_CONTEXT4);
+      const stream = await watch2(harness, conversationId, BACKGROUND_CONTEXT4);
       activeStreams.set(conversationId, stream);
       stream.start(async (batch) => {
         try {
@@ -4690,6 +4700,62 @@ async function flushWireStdout() {
   }
 }
 
+// src/runner/control-channel.ts
+import { existsSync as existsSync4, readFileSync as readFileSync4, watch } from "node:fs";
+import { join as join4 } from "node:path";
+import { BACKGROUND_CONTEXT as BACKGROUND_CONTEXT5 } from "@earendil-works/chord/context";
+function startRunnerControlChannel(sessionDir, harness, onNotice) {
+  const controlFile = join4(sessionDir, "control.jsonl");
+  let fileOffset = 0;
+  let isClosed = false;
+  let watcher = null;
+  const processPendingLines = async () => {
+    if (isClosed || !existsSync4(controlFile)) return;
+    try {
+      const content = readFileSync4(controlFile, "utf8");
+      if (content.length <= fileOffset) return;
+      const newChunk = content.slice(fileOffset);
+      fileOffset = content.length;
+      const lines = newChunk.split("\n");
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        try {
+          const msg = JSON.parse(trimmed);
+          if (msg.type === "abort_task" && typeof msg.taskId === "number") {
+            await harness.abortTask(msg.taskId, BACKGROUND_CONTEXT5);
+            onNotice?.(`Aborted task #${msg.taskId} via control channel`);
+          }
+        } catch (parseErr) {
+          console.warn(`[ControlChannel] Failed to process command: ${parseErr}`);
+        }
+      }
+    } catch (err) {
+      console.warn(`[ControlChannel] Error reading control file: ${err}`);
+    }
+  };
+  try {
+    watcher = watch(sessionDir, (_event, filename) => {
+      if (filename === "control.jsonl" || !filename) {
+        void processPendingLines();
+      }
+    });
+  } catch (watchErr) {
+    console.warn(`[ControlChannel] fs.watch not supported: ${watchErr}`);
+  }
+  void processPendingLines();
+  return {
+    close: () => {
+      if (isClosed) return;
+      isClosed = true;
+      if (watcher) {
+        watcher.close();
+        watcher = null;
+      }
+    }
+  };
+}
+
 // src/runner/index.ts
 var argv = process.argv.slice(2);
 if (argv.includes("--version") || argv.includes("-v")) {
@@ -4707,36 +4773,33 @@ async function main() {
   let activeWatcher = null;
   let activeTaskBridge = null;
   let activeGraphSource = null;
+  let activeControlChannel = null;
   let isTerminating = false;
   const handleExit = async (signalOrReason) => {
     if (isTerminating) return;
     isTerminating = true;
-    if (activeGraphSource) {
-      try {
-        activeGraphSource.teardown();
-      } catch {
-      }
+    try {
+      activeControlChannel?.close();
+    } catch {
     }
-    if (activeTaskBridge) {
-      try {
-        activeTaskBridge.unsubscribe();
-      } catch (err) {
-        console.warn(`[Runner] Error unsubscribing task graph bridge on ${signalOrReason}: ${err instanceof Error ? err.message : String(err)}`);
-      }
+    try {
+      activeGraphSource?.teardown();
+    } catch {
     }
-    if (activeWatcher) {
-      try {
-        activeWatcher.close();
-      } catch (err) {
-        console.warn(`[Runner] Error closing subagent watcher on ${signalOrReason}: ${err instanceof Error ? err.message : String(err)}`);
-      }
+    try {
+      activeTaskBridge?.unsubscribe();
+    } catch (err) {
+      console.warn(`[Runner] Error unsubscribing task graph bridge on ${signalOrReason}: ${err instanceof Error ? err.message : String(err)}`);
     }
-    if (activeDurable) {
-      try {
-        await activeDurable.close();
-      } catch (err) {
-        console.error(`[Runner] Error releasing durable lock on ${signalOrReason}:`, err);
-      }
+    try {
+      activeWatcher?.close();
+    } catch (err) {
+      console.warn(`[Runner] Error closing subagent watcher on ${signalOrReason}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    try {
+      await activeDurable?.close();
+    } catch (err) {
+      console.error(`[Runner] Error releasing durable lock on ${signalOrReason}:`, err);
     }
     try {
       await flushWireStdout();
@@ -4744,11 +4807,8 @@ async function main() {
     }
     process.exit(0);
   };
-  process.on("SIGTERM", () => {
-    void handleExit("SIGTERM");
-  });
-  process.on("SIGINT", () => {
-    void handleExit("SIGINT");
+  for (const sig of ["SIGTERM", "SIGINT"]) process.on(sig, () => {
+    void handleExit(sig);
   });
   process.stdin.on("end", () => {
     void handleExit("stdin.end");
@@ -4799,24 +4859,15 @@ async function main() {
     });
     return;
   }
-  const durableOptions = {
+  const durable = await openDurable({
     cwd: args.cwd,
     continueSession: args.continueSession,
     session: args.session,
-    cli: {
-      provider: args.provider,
-      model: args.model,
-      thinking: args.thinking,
-      skills: args.skills,
-      extension: args.extension
-    },
-    prompt: {
-      systemPromptPath: args.systemPromptPath,
-      appendSystemPromptPath: args.appendSystemPromptPath
-    }
-  };
-  const durable = await openDurable(durableOptions);
+    cli: { provider: args.provider, model: args.model, thinking: args.thinking, skills: args.skills, extension: args.extension },
+    prompt: { systemPromptPath: args.systemPromptPath, appendSystemPromptPath: args.appendSystemPromptPath }
+  });
   activeDurable = durable;
+  activeControlChannel = startRunnerControlChannel(durable.view.current().session.directory, durable.harness);
   const adapter = new BBEventAdapter(
     (evt) => output(evt),
     (provider, modelId) => {

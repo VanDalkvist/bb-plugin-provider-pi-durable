@@ -25,6 +25,15 @@ export const rpcContract = defineRpcContract({
       record: subagentPolicyRecordSchema,
     }),
   },
+  task_abort: {
+    input: z.object({
+      threadId: z.string(),
+      taskId: z.number().int().positive(),
+    }),
+    output: z.object({
+      ok: z.boolean(),
+    }),
+  },
 });
 
 export type PiRpcContract = typeof rpcContract;

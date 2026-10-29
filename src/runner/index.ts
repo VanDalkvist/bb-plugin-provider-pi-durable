@@ -14,6 +14,7 @@ import { startTaskGraphBridge, type TaskGraphBridgeController } from "./task-gra
 import { RuntimeGraphSource } from "./runtime-graph-source.ts";
 import { ROOT_CONVERSATION_ID } from "@earendil-works/pi-durable";
 import { setupRunnerStdoutGuard, writeWireStdout, flushWireStdout } from "./stdout-guard.ts";
+import { startRunnerControlChannel, type ControlChannelController } from "./control-channel.ts";
 
 const argv = process.argv.slice(2);
 
@@ -38,35 +39,28 @@ async function main() {
 	let activeWatcher: SubagentWatcherController | null = null;
 	let activeTaskBridge: TaskGraphBridgeController | null = null;
 	let activeGraphSource: RuntimeGraphSource | null = null;
+	let activeControlChannel: ControlChannelController | null = null;
 	let isTerminating = false;
 
 	const handleExit = async (signalOrReason: string) => {
 		if (isTerminating) return;
 		isTerminating = true;
-		if (activeGraphSource) {
-			try { activeGraphSource.teardown(); } catch {}
+		try { activeControlChannel?.close(); } catch {}
+		try { activeGraphSource?.teardown(); } catch {}
+		try { activeTaskBridge?.unsubscribe(); } catch (err) {
+			console.warn(`[Runner] Error unsubscribing task graph bridge on ${signalOrReason}: ${err instanceof Error ? err.message : String(err)}`);
 		}
-		if (activeTaskBridge) {
-			try { activeTaskBridge.unsubscribe(); } catch (err) {
-				console.warn(`[Runner] Error unsubscribing task graph bridge on ${signalOrReason}: ${err instanceof Error ? err.message : String(err)}`);
-			}
+		try { activeWatcher?.close(); } catch (err) {
+			console.warn(`[Runner] Error closing subagent watcher on ${signalOrReason}: ${err instanceof Error ? err.message : String(err)}`);
 		}
-		if (activeWatcher) {
-			try { activeWatcher.close(); } catch (err) {
-				console.warn(`[Runner] Error closing subagent watcher on ${signalOrReason}: ${err instanceof Error ? err.message : String(err)}`);
-			}
-		}
-		if (activeDurable) {
-			try { await activeDurable.close(); } catch (err) {
-				console.error(`[Runner] Error releasing durable lock on ${signalOrReason}:`, err);
-			}
+		try { await activeDurable?.close(); } catch (err) {
+			console.error(`[Runner] Error releasing durable lock on ${signalOrReason}:`, err);
 		}
 		try { await flushWireStdout(); } catch {}
 		process.exit(0);
 	};
 
-	process.on("SIGTERM", () => { void handleExit("SIGTERM"); });
-	process.on("SIGINT", () => { void handleExit("SIGINT"); });
+	for (const sig of ["SIGTERM", "SIGINT"] as const) process.on(sig, () => { void handleExit(sig); });
 	process.stdin.on("end", () => { void handleExit("stdin.end"); });
 
 	const cwd = args.cwd ?? process.cwd();
@@ -122,26 +116,15 @@ async function main() {
 		return;
 	}
 
-	// Active durable session mode
-	const durableOptions: OpenDurableOptions = {
+	const durable = await openDurable({
 		cwd: args.cwd,
 		continueSession: args.continueSession,
 		session: args.session,
-		cli: {
-			provider: args.provider,
-			model: args.model,
-			thinking: args.thinking,
-			skills: args.skills,
-			extension: args.extension,
-		},
-		prompt: {
-			systemPromptPath: args.systemPromptPath,
-			appendSystemPromptPath: args.appendSystemPromptPath,
-		},
-	};
-
-	const durable = await openDurable(durableOptions);
+		cli: { provider: args.provider, model: args.model, thinking: args.thinking, skills: args.skills, extension: args.extension },
+		prompt: { systemPromptPath: args.systemPromptPath, appendSystemPromptPath: args.appendSystemPromptPath },
+	});
 	activeDurable = durable;
+	activeControlChannel = startRunnerControlChannel(durable.view.current().session.directory, durable.harness);
 
 	// Setup native Pi Durable event stream adapter with subagent multiplexing
 	const adapter = new BBEventAdapter(

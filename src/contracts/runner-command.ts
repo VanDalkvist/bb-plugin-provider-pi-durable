@@ -7,7 +7,7 @@ export interface CommandResponder {
 }
 
 export const runnerCommandSchema = z.object({
-	type: z.enum(["prompt", "steer", "abort", "compact", "set_subagent_policy", "get_available_models", "set_model", "set_thinking_level", "get_state", "get_session_stats", "register_binding", "get_all_bindings"]),
+	type: z.enum(["prompt", "steer", "abort", "abort_task", "compact", "set_subagent_policy", "get_available_models", "set_model", "set_thinking_level", "get_state", "get_session_stats", "register_binding", "get_all_bindings"]),
 	id: z.string().optional(), message: z.string().optional(),
 	images: z.array(z.object({ type: z.literal("image"), data: z.string(), mimeType: z.string() })).optional(),
 	streamingBehavior: z.enum(["steer", "followUp"]).optional(),
@@ -15,6 +15,7 @@ export const runnerCommandSchema = z.object({
 	level: z.enum(["off", "minimal", "low", "medium", "high", "xhigh"]).optional(),
 	conversationId: conversationIdSchema.optional(), bbThreadId: z.string().optional(),
 	parentThreadId: z.string().optional(), sessionId: z.string().optional(), policyRecord: z.unknown().optional(),
+	taskId: z.number().int().positive().optional(),
 }).passthrough();
 export type RunnerCommandPayload = z.infer<typeof runnerCommandSchema>;
 export const knownCommandTypes: ReadonlySet<string> = new Set(runnerCommandSchema.shape.type.options);

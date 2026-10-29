@@ -1,3 +1,5 @@
+import { appendFileSync, existsSync } from "node:fs";
+import { join } from "node:path";
 import {
   type BbPluginApi,
   type PluginProviderOptionsContext,
@@ -5,6 +7,7 @@ import {
 } from "@get-bb/plugin-sdk";
 import { rpcContract } from "./src/rpc/contract.ts";
 import { inspectPiEnvironment } from "./src/host/diagnostics.ts";
+import { resolveSessionFilePath } from "./src/host/paths.ts";
 import { SubagentPolicyStore } from "./src/policy/store.ts";
 import {
   SubagentPolicyInvalidError,
@@ -54,6 +57,19 @@ export default async function plugin(bb: BbPluginApi) {
         }
         throw error;
       }
+    },
+    task_abort: async (input) => {
+      const sessionDir = resolveSessionFilePath(input.threadId);
+      const ownerFile = join(sessionDir, "session.owner.json");
+      if (!existsSync(ownerFile)) {
+        throw new experimental_PluginRpcRefusal({
+          code: "not_found",
+          message: `Thread ${input.threadId} does not have an active session`,
+        });
+      }
+      const controlFile = join(sessionDir, "control.jsonl");
+      appendFileSync(controlFile, JSON.stringify({ type: "abort_task", taskId: input.taskId }) + "\n", "utf8");
+      return { ok: true };
     },
   });
 

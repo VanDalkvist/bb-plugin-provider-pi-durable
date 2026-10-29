@@ -10,9 +10,10 @@ export interface RuntimeGraphDetailsProps {
 	readonly now?: number;
 	readonly onClose?: () => void;
 	readonly onSelectTaskId?: (taskId: number) => void;
+	readonly onAbortTask?: (taskId: number) => void;
 }
 
-export const RuntimeGraphDetails: FC<RuntimeGraphDetailsProps> = ({ selectedItem, now, onClose, onSelectTaskId }) => {
+export const RuntimeGraphDetails: FC<RuntimeGraphDetailsProps> = ({ selectedItem, now, onClose, onSelectTaskId, onAbortTask }) => {
 	const DetailRow = experimental_DetailRow;
 	const InfoSection = experimental_InfoSection;
 	const Icon = experimental_Icon;
@@ -33,11 +34,24 @@ export const RuntimeGraphDetails: FC<RuntimeGraphDetailsProps> = ({ selectedItem
 	const isSubagent = kind.includes("subagent") || liveNode?.toolName === "subagent" || receipt?.toolName === "subagent";
 	const subagentTask = isSubagent ? (receipt?.preview ?? liveNode?.targetHint ?? receipt?.targetHint) : undefined;
 	const tokensStr = formatDetailedTokens(liveNode?.tokens ?? receipt?.tokens);
+	const canAbort = (isActive || Boolean(liveNode)) && !liveNode?.abortRequested && !receipt;
 
 	return (
 		<div className="flex flex-col h-full min-h-0 text-xs">
 			<div className="flex items-center justify-between pb-1.5 px-0.5 border-b border-border flex-shrink-0">
-				<span className="font-semibold text-xs text-foreground">Task Details</span>
+				<div className="flex items-center gap-2">
+					<span className="font-semibold text-xs text-foreground">Task Details</span>
+					{canAbort && onAbortTask ? (
+						<button
+							type="button"
+							aria-label={`Abort task #${id}`}
+							onClick={() => onAbortTask(id)}
+							className="px-1.5 py-0.5 rounded text-[10px] bg-red-500/10 hover:bg-red-500/20 text-red-600 dark:text-red-400 font-medium cursor-pointer transition-colors focus:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+						>
+							Abort task
+						</button>
+					) : null}
+				</div>
 				{onClose ? (
 					<button
 						type="button"
@@ -58,24 +72,13 @@ export const RuntimeGraphDetails: FC<RuntimeGraphDetailsProps> = ({ selectedItem
 					<DetailRow label="Conversation"><span className="font-mono">#{conversationId}</span></DetailRow>
 					<DetailRow label="Owner">
 						{ownerId !== undefined && onSelectTaskId ? (
-							<button
-								type="button"
-								aria-label={`Select owner task #${ownerId}`}
-								onClick={() => onSelectTaskId(ownerId)}
-								className="font-mono text-blue-500 hover:underline font-medium cursor-pointer focus:outline-none"
-								title={`Select owner task #${ownerId}`}
-							>
+							<button type="button" aria-label={`Select owner task #${ownerId}`} onClick={() => onSelectTaskId(ownerId)} className="font-mono text-blue-500 hover:underline font-medium cursor-pointer focus:outline-none" title={`Select owner task #${ownerId}`}>
 								#{ownerId}
 							</button>
-						) : (
-							<span className="font-mono">{ownerId !== undefined ? `#${ownerId}` : "— (root)"}</span>
-						)}
+						) : <span className="font-mono">{ownerId !== undefined ? `#${ownerId}` : "— (root)"}</span>}
 					</DetailRow>
 
-					{liveNode?.toolName || receipt?.toolName ? (
-						<DetailRow label="Tool"><span className="font-mono">{liveNode?.toolName ?? receipt?.toolName}</span></DetailRow>
-					) : null}
-
+					{liveNode?.toolName || receipt?.toolName ? <DetailRow label="Tool"><span className="font-mono">{liveNode?.toolName ?? receipt?.toolName}</span></DetailRow> : null}
 					{liveNode?.targetHint || receipt?.targetHint ? (
 						<DetailRow label="Target">
 							<span className="font-mono break-words break-all [overflow-wrap:anywhere] min-w-0" title={liveNode?.targetHint ?? receipt?.targetHint}>
@@ -83,32 +86,12 @@ export const RuntimeGraphDetails: FC<RuntimeGraphDetailsProps> = ({ selectedItem
 							</span>
 						</DetailRow>
 					) : null}
-
-					{liveNode?.model ? (
-						<DetailRow label="Model"><span className="font-mono">{liveNode.model.provider}/{liveNode.model.modelId}</span></DetailRow>
-					) : null}
-
-					{liveNode?.thinkingLevel ? (
-						<DetailRow label="Thinking"><span className="font-mono">{liveNode.thinkingLevel}</span></DetailRow>
-					) : null}
-
-					{tokensStr ? (
-						<DetailRow label="Tokens"><span className="font-mono text-[11px]">{tokensStr}</span></DetailRow>
-					) : null}
-
-					{isActive ? (
-						<DetailRow label="Runtime status">
-							<span className="font-medium text-blue-500">Running in background</span>
-						</DetailRow>
-					) : projectedLive ? (
-						<DetailRow label="Runtime status">
-							<span className="font-medium text-blue-500">{projectedLive.label}</span>
-						</DetailRow>
-					) : null}
-
-					{liveNode?.state && "phase" in liveNode.state && liveNode.state.phase ? (
-						<DetailRow label="Execution phase"><span className="font-mono">{liveNode.state.phase}</span></DetailRow>
-					) : null}
+					{liveNode?.model ? <DetailRow label="Model"><span className="font-mono">{liveNode.model.provider}/{liveNode.model.modelId}</span></DetailRow> : null}
+					{liveNode?.thinkingLevel ? <DetailRow label="Thinking"><span className="font-mono">{liveNode.thinkingLevel}</span></DetailRow> : null}
+					{tokensStr ? <DetailRow label="Tokens"><span className="font-mono text-[11px]">{tokensStr}</span></DetailRow> : null}
+					{isActive ? <DetailRow label="Runtime status"><span className="font-medium text-blue-500">Running in background</span></DetailRow>
+						: projectedLive ? <DetailRow label="Runtime status"><span className="font-medium text-blue-500">{projectedLive.label}</span></DetailRow> : null}
+					{liveNode?.state && "phase" in liveNode.state && liveNode.state.phase ? <DetailRow label="Execution phase"><span className="font-mono">{liveNode.state.phase}</span></DetailRow> : null}
 
 					{projectedLive?.waitingOn && projectedLive.waitingOn.length > 0 ? (
 						<DetailRow label="Waiting on tasks">

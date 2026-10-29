@@ -1,4 +1,6 @@
 import React, { type FC, useState, useEffect, useRef, useCallback } from "react";
+import { useRpc } from "@get-bb/plugin-sdk/app";
+import type { rpcContract } from "../../server.ts";
 import type { RuntimeGraphState, TaskTreeItem } from "./types.ts";
 import { useRuntimeGraphState } from "./use-runtime-graph-state.ts";
 import { RuntimeGraphTree } from "./tree.tsx";
@@ -56,6 +58,21 @@ export const RuntimeGraphSegmentDetails: FC<RuntimeGraphSegmentDetailsProps> = (
 	const { status, snapshot, tree, selectedTaskId, selectedItem, collapsedTaskIds, selectTask, toggleCollapse } = state;
 	const latestActiveId = findBestActiveTaskId(tree);
 	const now = useViewClock(latestActiveId !== null);
+	let rpc: ReturnType<typeof useRpc<typeof rpcContract>> | null = null;
+	try {
+		rpc = useRpc<typeof rpcContract>();
+	} catch {
+		rpc = null;
+	}
+
+	const handleAbortTask = useCallback(async (taskId: number) => {
+		if (!rpc) return;
+		try {
+			await rpc.call("task_abort", { threadId, taskId });
+		} catch (err) {
+			console.warn(`[RuntimeGraph] Abort task #${taskId} failed: ${err instanceof Error ? err.message : String(err)}`);
+		}
+	}, [rpc, threadId]);
 
 	const scrollToActive = useCallback(() => {
 		if (latestActiveId === null) return;
@@ -148,6 +165,7 @@ export const RuntimeGraphSegmentDetails: FC<RuntimeGraphSegmentDetailsProps> = (
 						now={now}
 						onClose={() => selectTask(null)}
 						onSelectTaskId={selectTask}
+						onAbortTask={handleAbortTask}
 					/>
 				</div>
 			) : null}
