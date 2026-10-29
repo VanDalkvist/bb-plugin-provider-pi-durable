@@ -23,8 +23,8 @@ export function sortTreeActiveFirst(items: readonly TaskTreeItem[]): TaskTreeIte
 		}
 	}
 
-	active.sort((a, b) => a.id - b.id);
-	finished.sort((a, b) => a.id - b.id);
+	active.sort((a, b) => b.id - a.id);
+	finished.sort((a, b) => b.id - a.id);
 
 	return [...active, ...finished];
 }

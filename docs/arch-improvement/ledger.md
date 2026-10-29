@@ -224,3 +224,30 @@
 - **Сборка (Build Receipt):**
   - Версия обновлена `0.3.14` → `0.3.15` в `package.json` и `package-lock.json`.
   - `npm run build` пересобрал бандлы: `dist/runner/index.js`, `dist/host.js`, `dist/server.js`, `dist/app.js`, `dist/app.css` с метаданными `pluginVersion: 0.3.15`.
+
+### Reverse Chronology in Task Graph & Preview (Cycle 85) — 2026-10-29 (Execution Receipt)
+- **Цель и статус:** Исправление порядка задач в таск-графе: инверсия в обратную хронологию (самые свежие задачи строго сверху по убыванию ID: `b.id - a.id`), сохранение активных задач в верхнем приоритете, и показ в превью 5 самых свежих завершённых задач с фолдингом старой истории вниз под кнопку `See more`. Статус: **PASS (VERIFIED)**.
+- **Устранённые дефекты и архитектурные решения:**
+  1. *[Инверсия сортировки в представлении графа (AP-010, AP-026)]:*
+     - В `src/ui/runtime-graph/tree-order.ts` (`sortTreeActiveFirst`): активные и завершённые задачи сортируются строго по убыванию ID (`b.id - a.id`).
+     - В `src/ui/runtime-graph/tree.tsx` (`renderBranch`): группы `active` и `finished` сортируются `b.id - a.id`. Самые новые задачи рендерятся первыми.
+  2. *[Превью 5 самых свежих завершённых задач (AP-026, AP-028)]:*
+     - В `src/ui/runtime-graph/tree-preview.ts` (`computePreviewFinishedIds`): `finished` сортируется `b.id - a.id`, поэтому в `previewSlice` попадают 5 самых последних завершённых задач (`targetFinishedCount`), а более ранние исторические задачи скрываются под кнопку `See more (N completed)`.
+     - При раскрытии истории (`See less`) список раскрывается от самых свежих к самым старым, а кнопка сворачивания находится внизу.
+  3. *[Сохранение интерактивности и фокуса инспектора]:*
+     - При клике на задачу из свернутой истории ветка раскрывается и фокус инспектора удерживается.
+- **TDD и доказательная база:**
+  - Обновлены и адаптированы тесты:
+    * `tests/ui/runtime-graph-active-first-and-folding.test.ts` (139 LOC < 200).
+    * `tests/ui/runtime-graph-preview.test.ts` (121 LOC < 200): проверено точное совпадение ID строк через `data-task-id` (для 100 задач в превью рендерятся строго #100, #99, #98, #97, #96).
+    * `tests/ui/runtime-graph-breakdown-spacing.test.ts` (94 LOC < 200).
+    * `tests/ui/runtime-graph-nine-point-geometry.test.ts` (164 LOC < 200).
+    * `tests/ui/runtime-graph-six-point-feedback.test.ts` (177 LOC < 200).
+  - Общий сьют: **655 тестов (556 backend + 99 UI): 655 pass, 0 fail**.
+  - Контракты: `npm run test:contracts` (Negative contract guard: TS2322 rejection pass).
+  - Ацикличность импортов: `node scripts/verify-import-graph.mjs` (141 файл, 0 циклов).
+  - Строгая типизация: `npx tsc --noEmit` (0 errors).
+  - Line budgets (AP-019): все файлы строго < 200 LOC.
+- **Сборка (Build Receipt):**
+  - Версия обновлена `0.3.15` → `0.3.16` в `package.json` и `package-lock.json`.
+  - `npm run build` пересобрал бандлы: `dist/server.js`, `dist/app.js`, `dist/host.js` с версией `0.3.16`.

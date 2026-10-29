@@ -16,13 +16,13 @@ test("Breakdown: disjoint breakdown of hidden tasks with multiple outcomes and t
 	// Hidden count will be 98 - 4 = 94 items
 	// Out of 94 hidden: 90 completed, 2 failed (1 has toolError), 1 aborted, 1 faulted
 	const active = [makeTask(1, false)];
-	const previewFinished = [2, 3, 4, 5].map((id) => makeTask(id, true, "completed"));
+	const previewFinished = [500, 501, 502, 503].map((id) => makeTask(id, true, "completed"));
 
 	const completed90 = Array.from({ length: 90 }, (_, i) => makeTask(100 + i, true, "completed"));
-	const failed1 = makeTask(300, true, "failed", [], true); // has tool error
-	const failed2 = makeTask(301, true, "failed", [], false);
-	const aborted1 = makeTask(302, true, "aborted");
-	const faulted1 = makeTask(303, true, "faulted");
+	const failed1 = makeTask(10, true, "failed", [], true); // has tool error
+	const failed2 = makeTask(11, true, "failed", [], false);
+	const aborted1 = makeTask(12, true, "aborted");
+	const faulted1 = makeTask(13, true, "faulted");
 
 	const tree = [...active, ...previewFinished, ...completed90, failed1, failed2, aborted1, faulted1];
 

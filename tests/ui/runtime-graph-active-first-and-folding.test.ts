@@ -43,8 +43,8 @@ test("Active-first recursive ordering: active tasks precede finished at every le
 	const tree = [t1, t2, t3, t4];
 	const sorted = sortTreeActiveFirst(tree);
 
-	// Root level: #2 and #3 are active, #1 and #4 are finished
-	assert.deepEqual(sorted.map((t) => t.id), [2, 3, 1, 4]);
+	// Root level: #2 and #3 are active (descending: #3, #2), #1 and #4 are finished (descending: #4, #1)
+	assert.deepEqual(sorted.map((t) => t.id), [3, 2, 4, 1]);
 
 	// Child level under #2: #22 is active, #21 is finished
 	const sortedT2 = sorted.find((t) => t.id === 2)!;
@@ -78,34 +78,34 @@ test("Finished-only siblings fold behind English See more and toggle with See le
 	}));
 
 	assert.ok(container.textContent?.includes("Task #1"));
-	// When folded by default (1 active + 6 finished), preview fills to 5 (active + 4 finished), remaining 2 go under See more (2 completed)
+	// When folded by default (1 active + 6 finished: 7..2), preview fills to 5 (active #1 + 4 finished: 7..4), remaining 2 (3..2) go under See more (2 completed)
 	const seeMoreBtn = container.querySelector("button[data-history-toggle='true']");
 	assert.ok(seeMoreBtn, "See more control should be rendered for finished siblings");
 	assert.ok(seeMoreBtn?.textContent?.includes("See more (2 completed)"));
-	assert.ok(container.textContent?.includes("Task #2"));
-	assert.ok(!container.textContent?.includes("Task #6"));
+	assert.ok(container.textContent?.includes("Task #7"));
+	assert.ok(!container.textContent?.includes("Task #2"));
 
 	// Click to expand
 	fireEvent.click(seeMoreBtn!);
-	assert.ok(container.textContent?.includes("Task #6"));
-	assert.ok(container.textContent?.includes("Task #7"));
+	assert.ok(container.textContent?.includes("Task #2"));
+	assert.ok(container.textContent?.includes("Task #3"));
 	assert.ok(container.textContent?.includes("See less"));
 
 	// Click See less to collapse again
 	const seeLessBtn = container.querySelector("button[data-history-toggle='true']");
 	fireEvent.click(seeLessBtn!);
-	assert.ok(!container.textContent?.includes("Task #6"));
+	assert.ok(!container.textContent?.includes("Task #2"));
 	assert.ok(container.textContent?.includes("See more (2 completed)"));
 });
 
 test("Folded history honestly reports terminal failures and tool errors", () => {
 	const active = makeTask(10, false);
-	const okTasks = [11, 12, 13, 14, 15].map((id) => makeTask(id, true, "completed"));
-	const failedTask = makeTask(16, true, "failed");
+	const failedTask = makeTask(11, true, "failed");
 	failedTask.receipt!.isToolError = true;
+	const okTasks = [12, 13, 14, 15, 16].map((id) => makeTask(id, true, "completed"));
 
 	const { container } = render(React.createElement(RuntimeGraphTree, {
-		tree: [active, ...okTasks, failedTask],
+		tree: [active, failedTask, ...okTasks],
 		selectedTaskId: null,
 		collapsedTaskIds: new Set(),
 		onSelectTask: () => {},

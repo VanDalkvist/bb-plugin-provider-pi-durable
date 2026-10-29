@@ -50,13 +50,13 @@ test("Requirement 1 RED: See less collapses history branch even when selected te
 	assert.ok(seeMoreBtn, "Should have See more button for 7 items");
 	fireEvent.click(seeMoreBtn);
 
-	// Select task #7 (a task genuinely hidden in history beyond preview of 5)
-	const task7Row = container.querySelector("[data-task-id='7']");
-	assert.ok(task7Row, "Task 7 row must be visible");
-	fireEvent.click(task7Row);
-	assert.equal(selectedId, 7, "Task 7 must be selected");
+	// Select task #1 (a task genuinely hidden in history beyond preview of 5: 7..3)
+	const task1Row = container.querySelector("[data-task-id='1']");
+	assert.ok(task1Row, "Task 1 row must be visible");
+	fireEvent.click(task1Row);
+	assert.equal(selectedId, 1, "Task 1 must be selected");
 
-	// Now click See less while task #7 is selected
+	// Now click See less while task #1 is selected
 	const seeLessBtn = container.querySelector("button[data-history-toggle='true']");
 	assert.ok(seeLessBtn?.textContent?.includes("See less"), "Button must now be See less");
 	fireEvent.click(seeLessBtn!);
@@ -64,11 +64,11 @@ test("Requirement 1 RED: See less collapses history branch even when selected te
 	// Crucial check: See less MUST collapse the branch!
 	const seeMoreAfter = container.querySelector("button[data-history-toggle='true']");
 	assert.ok(seeMoreAfter?.textContent?.includes("See more"), "Branch must collapse back to See more even when selected");
-	assert.equal(container.querySelector("[data-task-id='7']") === null, true, "Task 7 row must be folded away");
+	assert.equal(container.querySelector("[data-task-id='1']") === null, true, "Task 1 row must be folded away");
 });
 
 test("Requirement 2 RED: History disclosure stays neutral chevron even when group has failures", () => {
-	const tasks = [1, 2, 3, 4, 5, 6, 7].map((id) => makeTask(id, true, id === 7 ? "failed" : "completed"));
+	const tasks = [1, 2, 3, 4, 5, 6, 7].map((id) => makeTask(id, true, id === 1 ? "failed" : "completed"));
 	const { container } = render(React.createElement(RuntimeGraphTree, {
 		tree: tasks, selectedTaskId: null, collapsedTaskIds: new Set(),
 		onSelectTask: () => {}, onToggleCollapse: () => {},

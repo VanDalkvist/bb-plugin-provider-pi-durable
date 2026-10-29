@@ -23,11 +23,10 @@ test("Preview: 0 active + 100 finished -> 5 visible + 95 hidden under See more (
 		}),
 	);
 
-	const visibleRows = container.querySelectorAll("[data-task-id]");
-	assert.equal(visibleRows.length, 5, "Must render exactly 5 visible rows in preview");
-	assert.ok(container.textContent?.includes("Task #1"));
-	assert.ok(container.textContent?.includes("Task #5"));
-	assert.ok(!container.textContent?.includes("Task #6"));
+	const visibleRowIds = Array.from(container.querySelectorAll("[data-task-id]")).map((el) =>
+		Number(el.getAttribute("data-task-id")),
+	);
+	assert.deepEqual(visibleRowIds, [100, 99, 98, 97, 96], "Must render top 5 freshest finished rows");
 
 	const seeMore = container.querySelector("button[data-history-toggle='true']");
 	assert.ok(seeMore, "See more button must exist");
@@ -51,13 +50,10 @@ test("Preview: 2 active + 100 finished -> 2 + 3 visible (5 total) + 97 hidden", 
 		}),
 	);
 
-	const visibleRows = container.querySelectorAll("[data-task-id]");
-	assert.equal(visibleRows.length, 5, "Must render 2 active + 3 finished = 5 visible rows");
-	assert.ok(container.textContent?.includes("Task #1"));
-	assert.ok(container.textContent?.includes("Task #2"));
-	assert.ok(container.textContent?.includes("Task #10"));
-	assert.ok(container.textContent?.includes("Task #12"));
-	assert.ok(!container.textContent?.includes("Task #13"));
+	const visibleRowIds = Array.from(container.querySelectorAll("[data-task-id]")).map((el) =>
+		Number(el.getAttribute("data-task-id")),
+	);
+	assert.deepEqual(visibleRowIds, [2, 1, 109, 108, 107], "Must render 2 active (desc) + 3 freshest finished");
 
 	const seeMore = container.querySelector("button[data-history-toggle='true']");
 	assert.ok(seeMore?.textContent?.includes("See more (97 completed)"));

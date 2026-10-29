@@ -77,9 +77,9 @@ test("R4: 0..5 vs 6 boundary and terminal ancestor with active child", () => {
 	assert.ok(cNested.textContent?.includes("See more (1 completed)"));
 	assert.ok(cNested.querySelector("[data-task-id='100']"));
 	assert.ok(cNested.querySelector("[data-task-id='101']"));
-	assert.ok(cNested.querySelector("[data-task-id='1']"));
-	assert.ok(cNested.querySelector("[data-task-id='4']"));
-	assert.equal(cNested.querySelector("[data-task-id='5']") === null, true);
+	assert.ok(cNested.querySelector("[data-task-id='5']"));
+	assert.ok(cNested.querySelector("[data-task-id='2']"));
+	assert.equal(cNested.querySelector("[data-task-id='1']") === null, true);
 });
 
 test("R7 & R8: Inspector header remains fixed, only body scrolls, and X supports keyboard", () => {

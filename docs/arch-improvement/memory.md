@@ -140,3 +140,11 @@
 - Cause: Assigning conversation ownership to the caller tool task (`ownership: { kind: "task", taskId: api.taskId }`). Under Pi Durable Spec §5.5 Rule 4, a task cannot become `terminal` while any owned task is live (`#hasOwnedLive`). Because `api.taskId` owned the child conversation, the tool task was held in `completing` for the entire lifetime of the subagent, and the parent `pi.generation` was held in `waiting`, completely locking the parent conversation.
 - Use next time: Strictly follow Pi Durable's background canon (`test/examples/23-subagent-background.ts`). A background conversation must be owned by an `Anchor` task (`{ ownership: { kind: "conversation" }, background: true }`). This allows the foreground tool task to settle immediately to `terminal` in milliseconds, returning the parent conversation to `idle`, while the subagent runs asynchronously in the background. On the wire bridge, also emit `{ kind: "turn.open" }` on root input acceptance to disarm BB Core's 120s watchdog timer.
 - Evidence: `tests/subagent-background-unblock.test.ts`, `tests/turn-start-watchdog-prevention.test.ts`, `src/runner/subagent.ts`, `src/host/bridge-router.ts`.
+
+## 2026-10-29 - Task Graph Chronology Invariant: Freshest Work Strictly at the Top (b.id - a.id)
+- Context: Task list presentation and history folding in Beyond Boundaries Task Graph.
+- Symptom: Long-running threads displayed tasks in ascending ID order (`a.id - b.id`), showing initial stale turns (#1..#5) at the top, while the latest work (#100+) was pushed down or hidden under `See more`.
+- Cause: `sortTreeActiveFirst`, `renderBranch`, and `computePreviewFinishedIds` were implemented with `a.id - b.id` (ascending). In an agentic IDE, the user's focus is on the most recent turns and active progress.
+- Use next time: Task graphs and activity trees must order finished tasks in reverse chronology (`b.id - a.id`, newest at the top). History preview slices must pick the `targetFinishedCount` most recent items, folding older turns under `See more` at the bottom of the list.
+- Evidence: `src/ui/runtime-graph/tree-order.ts`, `src/ui/runtime-graph/tree-preview.ts`, `src/ui/runtime-graph/tree.tsx`, `tests/ui/runtime-graph-preview.test.ts`, Cycle 85.
+

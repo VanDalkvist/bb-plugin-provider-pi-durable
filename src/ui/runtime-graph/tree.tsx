@@ -102,8 +102,8 @@ export const RuntimeGraphTree: FC<RuntimeGraphTreeProps> = ({
 			if (hasActiveWork(item)) active.push(item);
 			else finished.push(item);
 		}
-		active.sort((a, b) => a.id - b.id);
-		finished.sort((a, b) => a.id - b.id);
+		active.sort((a, b) => b.id - a.id);
+		finished.sort((a, b) => b.id - a.id);
 
 		const isRoot = depth === 0;
 		const hiddenBreakdown = isRoot

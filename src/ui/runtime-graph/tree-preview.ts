@@ -54,7 +54,7 @@ export function computePreviewFinishedIds(
 	}
 
 	const finished = tree.filter((it) => !hasActiveWork(it)).slice();
-	finished.sort((a, b) => a.id - b.id);
+	finished.sort((a, b) => b.id - a.id);
 	const previewSlice = finished.slice(0, targetFinishedCount);
 	return new Set<number>(previewSlice.map((it) => it.id));
 }
