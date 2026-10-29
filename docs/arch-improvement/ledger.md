@@ -437,3 +437,29 @@
 - **Сборка (Build Receipt):**
   - Версия обновлена `0.3.23` → `0.3.24` в `package.json` и `package-lock.json`.
   - `npm run build` пересобрал бандлы: `dist/server.js`, `dist/app.js`, `dist/host.js`, `dist/runner/index.js` с версией `0.3.24`.
+
+### Deterministic Subagent Mirror Attachment & Clean Architecture Review (Cycle 96) — 2026-10-30
+
+- **Цель и статус:** Устранение стохастического падения зеркальных тредов субагентов `Cannot resolve native child conversation for thread <childId> under parent <parentThreadId>` при спавне через `subagent` tool с полным соблюдением Clean Architecture (без пустых catch, без нечётких эвристик, без избыточных фолбэков). Статус: **PASS (VERIFIED)**.
+- **Устранённые дефекты и первоисточники:**
+  - *Коренная причина (Race Condition):* Сервер BB при создании треда возвращает ответ CLI асинхронно до завершения `thread/start`. Если RPC `thread/start` поступает от демона раньше, чем `bb thread spawn` CLI вернёт `stdout` и вызовет `session.registerThread`, идентификатор `conversationId` в памяти сессии ещё отсутствует, а параметры RPC `params.input` и `params.task` пусты. В результате `SessionRegistry.createOrGet` не мог найти беседу и падал с фатальной ошибкой.
+  - *Архитектурный рефакторинг (Arch Improvement Loop & AP-012/AP-019/AP-026):*
+    1. `src/host/subthread-spawner.ts`: `resolveThreadContextFromDb` переведён на единый типизированный канонический запрос `SELECT project_id, environment_id, parent_thread_id, startup_context FROM threads WHERE id = ?`. Устранены двойные запросы, пустые catch-блоки и избыточное чтение таблицы events. Извлечение промпта валидирует контракт `request.input` и явно логирует structured warning при битом JSON.
+    2. `src/host/subagent-mirror.ts`: Устранена нечёткая эвристика `startsWith` и удалён метод `getUnboundConversationId`. Сопоставление задачи в `pendingByTask` строгое детерминированное (`task.trim()`).
+    3. `src/host/session-registry.ts`: Любой дочерний тред активного `parentThreadId` детерминированно привязывается к общей сессии родителя через `attachShared` без попыток создания конкурирующих раннеров. `targetConvId` вычисляется строго из трёх причинных источников: явный composite id -> сопоставление задачи из `startup_context` в `pendingByTask` -> связывание по threadId. Если ни один не сошёлся — сессия честно и детерминированно завершается с ошибкой (fail-closed).
+- **TDD и доказательная база:**
+  - В `tests/host-subthread-shared-session.test.ts` обновлены тесты на соответствие реальной схеме BB Core (`startup_context`):
+    * `createOrGet recovers targetConversationId and reuses parent session when thread/start arrives BEFORE CLI finishes` — PASS.
+    * `createOrGet fails closed when startup_context task cannot be matched to any pending subagent` — PASS.
+  - Общий сьют: **561 тест бэкенда pass + 117 тестов UI pass = 678 pass, 0 fail**.
+  - Контракты: `npm run test:contracts` (Negative contract guard: TS2322 rejection, pass).
+- **Line Budgets (AP-019):**
+  - `src/host/subthread-spawner.ts`: 162 строки (< 200)
+  - `src/host/subagent-mirror.ts`: 163 строки (< 200)
+  - `src/host/session-registry.ts`: 205 строк (< 250)
+  - `src/host/session.ts`: 199 строк (< 250)
+  - `src/host/session-subagent-handler.ts`: 178 строк (< 200)
+- **Сборка (Build Receipt):**
+  - Версия обновлена `0.3.26` → `0.3.27` в `package.json` и `package-lock.json`.
+  - `npm run build` пересобрал бандлы: `dist/server.js`, `dist/app.js`, `dist/host.js`, `dist/runner/index.js` с версией `0.3.27`.
+

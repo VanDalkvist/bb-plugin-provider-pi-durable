@@ -31,6 +31,28 @@ export interface ThreadContextRecord {
 	projectId?: string;
 	environmentId?: string;
 	parentThreadId?: string;
+	prompt?: string;
+}
+
+function extractPromptFromStartupContext(rawContext: unknown): string | undefined {
+	if (typeof rawContext !== "string" || !rawContext.trim()) return undefined;
+	try {
+		const parsed = JSON.parse(rawContext) as Record<string, unknown>;
+		const request = parsed.request && typeof parsed.request === "object" ? (parsed.request as Record<string, unknown>) : parsed;
+		const input = Array.isArray(request.input) ? request.input : undefined;
+		if (!input) return undefined;
+		const parts: string[] = [];
+		for (const item of input) {
+			if (item && typeof item === "object" && typeof (item as Record<string, unknown>).text === "string") {
+				const text = ((item as Record<string, unknown>).text as string).trim();
+				if (text) parts.push(text);
+			}
+		}
+		return parts.length > 0 ? parts.join("\n") : undefined;
+	} catch (err) {
+		console.warn(`[SubthreadSpawner] Failed to parse startup_context JSON: ${err}`);
+		return undefined;
+	}
 }
 
 export function resolveThreadContextFromDb(threadId: string): ThreadContextRecord | undefined {
@@ -39,7 +61,7 @@ export function resolveThreadContextFromDb(threadId: string): ThreadContextRecor
 		if (!existsSync(dbPath)) return undefined;
 		const db = new DatabaseSync(dbPath, { open: true, readOnly: true });
 		try {
-			const query = db.prepare("SELECT project_id, environment_id, parent_thread_id FROM threads WHERE id = ?");
+			const query = db.prepare("SELECT project_id, environment_id, parent_thread_id, startup_context FROM threads WHERE id = ?");
 			const row = query.get(threadId);
 			if (!row || typeof row !== "object") return undefined;
 			const r = row as Record<string, unknown>;
@@ -47,6 +69,7 @@ export function resolveThreadContextFromDb(threadId: string): ThreadContextRecor
 				projectId: typeof r.project_id === "string" ? r.project_id : undefined,
 				environmentId: typeof r.environment_id === "string" ? r.environment_id : undefined,
 				parentThreadId: typeof r.parent_thread_id === "string" ? r.parent_thread_id : undefined,
+				prompt: extractPromptFromStartupContext(r.startup_context),
 			};
 		} finally {
 			db.close();

@@ -65,7 +65,8 @@ test("createOrGet reuses existing parent PiThreadSession when parent is resolved
 			id text PRIMARY KEY,
 			project_id text,
 			environment_id text,
-			parent_thread_id text
+			parent_thread_id text,
+			startup_context text
 		);
 		INSERT INTO threads (id, project_id, environment_id, parent_thread_id)
 		VALUES ('thr_child_from_db', 'proj_1', 'env_1', 'thr_parent_db');
@@ -149,3 +150,129 @@ test("createOrGet resolves targetConversationId from task prompt via findSubagen
     assert.equal(childSession, mockParentSession);
     assert.deepEqual(registeredThreads, [{ threadId: "thr_child_task", conversationId: "conv_sub_security" }]);
 });
+
+test("createOrGet recovers targetConversationId and reuses parent session when thread/start arrives BEFORE CLI finishes", async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "bb-test-race-db-"));
+    const dbPath = join(tempDir, "bb.db");
+    const db = new DatabaseSync(dbPath, { open: true });
+    db.exec(`
+		CREATE TABLE threads (
+			id text PRIMARY KEY,
+			project_id text,
+			environment_id text,
+			parent_thread_id text,
+			startup_context text
+		);
+		INSERT INTO threads (id, project_id, environment_id, parent_thread_id, startup_context)
+		VALUES (
+			'thr_child_race',
+			'proj_1',
+			'env_1',
+			'thr_parent_race',
+			json_object('kind', 'dispatched', 'request', json_object('input', json_array(json_object('type', 'text', 'text', 'Perform live security audit'))))
+		);
+	`);
+    db.close();
+
+    const origDataDir = process.env.BB_DATA_DIR;
+    process.env.BB_DATA_DIR = tempDir;
+    try {
+        const registeredThreads: Array<{ threadId: string; conversationId?: string }> = [];
+        const mockParentSession = sessionFixture({
+            runner: { exited: false },
+            options: {
+                threadId: "thr_parent_race",
+                providerThreadId: "pi_durable_parent_race_100",
+            },
+            registerThread: (threadId: string, conversationId?: string) => {
+                registeredThreads.push({ threadId, conversationId });
+                return false;
+            },
+            getConversationIdForThread: (_threadId: string) => {
+                // CLI has NOT completed yet! So memory map does NOT have thr_child_race!
+                return undefined;
+            },
+            findSubagentConversationForTask: (task: string) => {
+                return task === "Perform live security audit" ? "conv_sub_security_race" : undefined;
+            },
+            getSubagentState: () => undefined,
+        });
+
+        const registry = new SessionRegistry(() => {});
+        registry.track("thr_parent_race", mockParentSession);
+
+        // Real BB thread/start payload: NO parentThreadId, NO task, NO conversationId, NO input!
+        const childSession = await registry.createOrGet("thr_child_race", "pi_durable_random_child_race_500", {
+            cwd: "/test",
+        });
+
+        assert.equal(childSession, mockParentSession, "Must attach to parent session");
+        assert.deepEqual(registeredThreads, [{ threadId: "thr_child_race", conversationId: "conv_sub_security_race" }]);
+    } finally {
+        if (origDataDir !== undefined) {
+            process.env.BB_DATA_DIR = origDataDir;
+        } else {
+            delete process.env.BB_DATA_DIR;
+        }
+        rmSync(tempDir, { recursive: true, force: true });
+    }
+});
+
+test("createOrGet fails closed when startup_context task cannot be matched to any pending subagent", async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "bb-test-mismatch-db-"));
+    const dbPath = join(tempDir, "bb.db");
+    const db = new DatabaseSync(dbPath, { open: true });
+    db.exec(`
+		CREATE TABLE threads (
+			id text PRIMARY KEY,
+			project_id text,
+			environment_id text,
+			parent_thread_id text,
+			startup_context text
+		);
+		INSERT INTO threads (id, project_id, environment_id, parent_thread_id, startup_context)
+		VALUES (
+			'thr_child_mismatch',
+			'proj_1',
+			'env_1',
+			'thr_parent_mismatch',
+			json_object('kind', 'dispatched', 'request', json_object('input', json_array(json_object('type', 'text', 'text', 'Unrelated foreign task'))))
+		);
+	`);
+    db.close();
+
+    const origDataDir = process.env.BB_DATA_DIR;
+    process.env.BB_DATA_DIR = tempDir;
+    try {
+        const mockParentSession = sessionFixture({
+            runner: { exited: false },
+            options: {
+                threadId: "thr_parent_mismatch",
+                providerThreadId: "pi_durable_parent_mismatch_100",
+            },
+            getConversationIdForThread: (_threadId: string) => undefined,
+            findSubagentConversationForTask: (_task: string) => undefined,
+            getSubagentState: () => undefined,
+        });
+
+        const registry = new SessionRegistry(() => {});
+        registry.track("thr_parent_mismatch", mockParentSession);
+
+        await assert.rejects(
+            async () => {
+                await registry.createOrGet("thr_child_mismatch", "pi_durable_random_child_mismatch_600", {
+                    cwd: "/test",
+                });
+            },
+            /Cannot resolve native child conversation for thread thr_child_mismatch under parent thr_parent_mismatch/
+        );
+    } finally {
+        if (origDataDir !== undefined) {
+            process.env.BB_DATA_DIR = origDataDir;
+        } else {
+            delete process.env.BB_DATA_DIR;
+        }
+        rmSync(tempDir, { recursive: true, force: true });
+    }
+});
+

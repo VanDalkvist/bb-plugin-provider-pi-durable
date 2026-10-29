@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.3.27] - 2026-10-30
+
+### Fixed
+- **Deterministic Subagent Mirror Attachment & Clean Architecture Review (Cycle 96)**: Fixed race condition where BB RPC `thread/start` arrives before CLI stdout returns `conversationId`, causing subagent mirror thread attachment failure (`Cannot resolve native child conversation`).
+- **Clean Database Context Recovery**: Resolved task prompt deterministically from `threads.startup_context` in `bb.db` using a single typed SQLite query, eliminating heuristic fallbacks and empty catch blocks.
+- **Strict Deterministic Attachment**: Child threads under an active parent session strictly attach to the shared parent session without spawning duplicate runners, matching tasks deterministically or failing closed with clear diagnostics.
+
+---
+
 ## [0.3.15] - 2026-10-28
 
 ### Added

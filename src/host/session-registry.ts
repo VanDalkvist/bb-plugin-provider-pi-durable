@@ -48,7 +48,9 @@ export class SessionRegistry {
 
 	private attachShared(threadId: string, providerThreadId: string, session: OwnedSessionPort, nativeChild: ReturnType<typeof detectNativeChild>, params: SessionCreationParams, parentThreadId?: string): OwnedSessionPort {
 		const text = extractInputText(params.input) || params.prompt?.trim() || params.task?.trim() || "";
-		const targetConvId = nativeChild.conversationId ?? (text && typeof session.findSubagentConversationForTask === "function" ? session.findSubagentConversationForTask(text) : undefined) ?? session.getConversationIdForThread?.(threadId);
+		const targetConvId = nativeChild.conversationId
+			?? (text && typeof session.findSubagentConversationForTask === "function" ? session.findSubagentConversationForTask(text) : undefined)
+			?? session.getConversationIdForThread?.(threadId);
 		if (parentThreadId && !targetConvId) {
 			throw new Error(`Cannot resolve native child conversation for thread ${threadId} under parent ${parentThreadId}`);
 		}
@@ -71,20 +73,22 @@ export class SessionRegistry {
 		if (existing && existing.runner?.exited) { this.sessions.delete(threadId); this.bindings.unbind(threadId); }
 
 		const rawParent = params.parentThreadId ?? params.options?.parentThreadId;
-		const parentThreadId = typeof rawParent === "string" && rawParent.trim() !== "" ? rawParent.trim() : resolveThreadContextFromDb(threadId)?.parentThreadId;
+		const dbContext = resolveThreadContextFromDb(threadId);
+		const parentThreadId = typeof rawParent === "string" && rawParent.trim() !== "" ? rawParent.trim() : dbContext?.parentThreadId;
 		const paramConvId = typeof params.conversationId === "string" && params.conversationId.trim() !== "" ? params.conversationId.trim() : undefined;
 		const parentSessionFilePath = parentThreadId ? resolveSessionFilePath(sessionKey) : undefined;
 		const nativeChild = detectNativeChild(threadId, conversationId, paramConvId, parentSessionFilePath);
+
+		if (!params.prompt && !params.task && dbContext?.prompt) {
+			params.prompt = dbContext.prompt;
+		}
 
 		let sharedSession: OwnedSessionPort | undefined;
 		if (parentThreadId && this.sessions.has(parentThreadId)) {
 			const candidate = this.sessions.get(parentThreadId);
 			if (candidate && !candidate.runner?.exited) {
 				this.bindings.validateChildAttachment(parentThreadId, candidate, providerThreadId, this.sessions.values());
-				const text = extractInputText(params.input) || params.prompt?.trim() || params.task?.trim() || "";
-				const taskConvId = text && typeof candidate.findSubagentConversationForTask === "function" ? candidate.findSubagentConversationForTask(text) : undefined;
-				const boundConvId = candidate.getConversationIdForThread?.(threadId);
-				if (nativeChild.isNative || taskConvId !== undefined || boundConvId !== undefined) sharedSession = candidate;
+				sharedSession = candidate;
 			}
 		}
 
@@ -125,7 +129,10 @@ export class SessionRegistry {
 				session.registerThread?.(parentThreadId);
 				const childAborted = admission.isParticipantAborted(threadId);
 				if (!childAborted) {
-					const resolvedConvId = nativeChild.conversationId ?? session.getConversationIdForThread?.(threadId);
+					const text = extractInputText(params.input) || params.prompt?.trim() || params.task?.trim() || "";
+					const resolvedConvId = nativeChild.conversationId
+						?? (text && typeof session.findSubagentConversationForTask === "function" ? session.findSubagentConversationForTask(text) : undefined)
+						?? session.getConversationIdForThread?.(threadId);
 					if (!resolvedConvId) {
 						throw new Error(`Cannot resolve native child conversation for thread ${threadId} under parent ${parentThreadId}`);
 					}
