@@ -46,6 +46,27 @@ export function formatDetailedTokens(tokens?: TaskTokensUsage): string | null {
 }
 
 /**
+ * Formats step token count cleanly without unit suffixes or plus signs (e.g. "320", "1.4k", "12k", "1.2M").
+ */
+export function formatStepTokens(tokens?: number): string | null {
+	if (tokens === undefined || tokens === null || tokens <= 0 || !Number.isFinite(tokens)) {
+		return null;
+	}
+	if (tokens < 1000) {
+		return `${Math.round(tokens)}`;
+	}
+	if (tokens < 10_000) {
+		const str = (tokens / 1000).toFixed(1);
+		return str.endsWith(".0") ? `${str.slice(0, -2)}k` : `${str}k`;
+	}
+	if (tokens < 1_000_000) {
+		return `${Math.round(tokens / 1000)}k`;
+	}
+	const str = (tokens / 1_000_000).toFixed(1);
+	return str.endsWith(".0") ? `${str.slice(0, -2)}M` : `${str}M`;
+}
+
+/**
  * Formats a token delta compactly for row display (e.g. "+1.4k", "+450", "+0", "-15k").
  */
 export function formatTokenDelta(delta?: number): string | null {

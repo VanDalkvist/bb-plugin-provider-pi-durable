@@ -155,4 +155,12 @@
 - Use next time: Row metrics must be tabular: dedicated fixed-width slots (`w-[4.25rem]`, `w-[3.25rem]`), `tabular-nums`, and left-aligned starts from invisible vertical lines separated by a static `·`. Display net context delta between consecutive steps ($T_i - T_{i-1}$) accompanied by a clean `SparklesIcon`, keeping total tokens in the hover title and inspector.
 - Evidence: `src/ui/runtime-graph/node-row-metrics.tsx`, `src/ui/runtime-graph/token-icon.tsx`, `src/ui/runtime-graph/tree-builder.ts`, `tests/ui/runtime-graph-tokens.test.ts`, Cycle 86.
 
+## 2026-10-29 - Direct Generation Output Tokens and Left-Icon Alignment (Cycle 87)
+- Context: Step token metrics presentation on `pi.generation` tasks.
+- Symptom: Task #785 showed `+0` in the row despite details displaying `320 out`, because prompt caching caused cross-task `total - prev` to equal zero. Suffix icons and `+` signs also caused horizontal wobbling.
+- Cause: Relying on cross-task cumulative context differences instead of the task's own generation output (`tokens.output`); putting the icon after digits with a leading `+` sign.
+- Use next time: For generation tasks, step token metrics must prioritize `tokens.output` directly, so the row number matches the `... out` metric in the inspector. In the row slot, place the `SparklesIcon` on the left in a muted color (`text-muted-foreground/60`) followed by the unsigned number (`✨ 320`) so every token row starts from the exact same vertical line without sign jitter.
+- Evidence: `src/ui/runtime-graph/token-format.ts`, `src/ui/runtime-graph/node-row-metrics.tsx`, `src/ui/runtime-graph/node-row.tsx`, `tests/ui/runtime-graph-tokens.test.ts`, Cycle 87.
+
+
 

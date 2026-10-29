@@ -2,7 +2,7 @@ import React, { type FC } from "react";
 import { experimental_Icon } from "@get-bb/plugin-sdk/app";
 import type { TaskTreeItem } from "./types.ts";
 import { hasActiveWork } from "./tree-order.ts";
-import { formatTokenDelta } from "./token-format.ts";
+import { formatStepTokens } from "./token-format.ts";
 import { NodeRowMetrics } from "./node-row-metrics.tsx";
 
 export interface RuntimeGraphNodeRowProps {
@@ -76,10 +76,15 @@ export const RuntimeGraphNodeRow: FC<RuntimeGraphNodeRowProps> = ({
 		? Math.max(0, (now ?? Date.now()) - startedAt)
 		: (item.liveNode?.durationMs ?? singleChild?.liveNode?.durationMs);
 	const duration = formatDuration(isActive ? liveElapsed : (item.receipt?.durationMs ?? singleChild?.receipt?.durationMs ?? liveElapsed));
-	const rawTokens = item.liveNode?.tokens?.total ?? item.receipt?.tokens?.total
-		?? singleChild?.liveNode?.tokens?.total ?? singleChild?.receipt?.tokens?.total;
-	const rawDelta = item.tokenDelta ?? singleChild?.tokenDelta;
-	const tokenDeltaStr = formatTokenDelta(rawDelta);
+	const tokensUsage = item.liveNode?.tokens ?? item.receipt?.tokens
+		?? singleChild?.liveNode?.tokens ?? singleChild?.receipt?.tokens;
+	const stepTokens = (typeof tokensUsage?.output === "number" && tokensUsage.output > 0)
+		? tokensUsage.output
+		: ((typeof item.tokenDelta === "number" && item.tokenDelta > 0)
+			? item.tokenDelta
+			: (tokensUsage?.total && tokensUsage.total > 0 ? tokensUsage.total : undefined));
+	const tokenCountStr = formatStepTokens(stepTokens);
+	const totalTokens = tokensUsage?.total;
 
 	const hasToolError = Boolean(item.receipt?.isToolError) || Boolean(singleChild?.receipt?.isToolError);
 	const waitingOn = (item.waitingOn && item.waitingOn.length > 0) ? item.waitingOn : singleChild?.waitingOn;
@@ -177,8 +182,8 @@ export const RuntimeGraphNodeRow: FC<RuntimeGraphNodeRowProps> = ({
 				) : null}
 
 				<NodeRowMetrics
-					tokenDeltaStr={tokenDeltaStr}
-					totalTokens={rawTokens}
+					tokenCountStr={tokenCountStr}
+					totalTokens={totalTokens}
 					duration={duration}
 				/>
 			</button>

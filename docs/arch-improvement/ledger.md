@@ -285,3 +285,33 @@
 - **Сборка (Build Receipt):**
   - Версия обновлена `0.3.16` → `0.3.17` в `package.json` и `package-lock.json`.
   - `npm run build` пересобрал бандлы: `dist/server.js`, `dist/app.js`, `dist/host.js` с версией `0.3.17`.
+
+### Direct Step Output Tokens & Muted Icon Alignment (Cycle 87) — 2026-10-29 (Execution Receipt)
+- **Цель и статус:** Устранение бага с ложным `+0` на задачах `pi.generation` (задача #785 генерировала 320 токенов, но из-за кросс-тасковой дельты `total - prev` отображался `0`), перенос иконки токенов `Sparkles` перед цифрами без знака `+` для устранения визуальных скачков ширины, и смягчение цвета иконки под цвет шрифта (`text-muted-foreground/60`). Статус: **PASS (VERIFIED)**.
+- **Устранённые дефекты и архитектурные решения:**
+  1. *[Точность подсчёта токенов генерации (AP-010, AP-026)]:*
+     - В `src/ui/runtime-graph/node-row.tsx`: токенное значение шага вычисляется напрямую из `tokensUsage.output` (фактический выхлоп генерации текущего хода). Для задачи #785 выводится точное значение `320`, полностью соответствующее строке `320 out` в инспекторе деталей, исключая ложные нули от неизменного кеша промпта.
+     - Сохранён фоллбек на дельту и total при отсутствии раздельного `output`.
+  2. *[Иконка перед цифрами и удаление знака `+` (AP-069)]:*
+     - В `src/ui/runtime-graph/token-format.ts`: добавлена функция `formatStepTokens(tokens)`, форматирующая число без знака `+` (`320`, `1.4k`, `17k`, `1.2M`).
+     - В `src/ui/runtime-graph/node-row-metrics.tsx`: иконка `SparklesIcon` перенесена **перед цифрами** (`✨ 320`).
+     - Все строки с токенами начинаются строго с иконки на левой невидимой линии слота `w-[3.75rem]`, исключая скачки ширины между строками.
+  3. *[Приглушённый цвет иконки (AP-069)]:*
+     - Цвет `SparklesIcon` изменён с акцентного `text-amber-500` на мягкий монохромный `text-muted-foreground/60` (hover: `text-foreground`), не перегружающий визуальную иерархию.
+- **TDD и доказательная база:**
+  - Обновлены и расширены тесты:
+    * `tests/ui/runtime-graph-tokens.test.ts` (162 LOC < 200): добавлены тесты `formatStepTokens`, рендеринг задачи #785 с 320 токенами без нуля, unsigned вид с левой иконкой.
+  - Общий сьют: **659 тестов (556 backend + 103 UI): 659 pass, 0 fail**.
+  - Контракты: `npm run test:contracts` (TS2322 negative guard pass).
+  - Ацикличность импортов: `node scripts/verify-import-graph.mjs` (143 файла, 0 циклов).
+  - Строгая типизация: `npx tsc --noEmit` (0 errors).
+  - Line budgets (AP-019): все файлы строго < 200 LOC:
+    * `src/ui/runtime-graph/node-row.tsx`: 192 LOC
+    * `src/ui/runtime-graph/node-row-metrics.tsx`: 52 LOC
+    * `src/ui/runtime-graph/token-icon.tsx`: 28 LOC
+    * `src/ui/runtime-graph/token-format.ts`: 89 LOC
+    * `src/ui/runtime-graph/tree-builder.ts`: 167 LOC
+    * `tests/ui/runtime-graph-tokens.test.ts`: 162 LOC
+- **Сборка (Build Receipt):**
+  - Версия обновлена `0.3.17` → `0.3.18` в `package.json` и `package-lock.json`.
+  - `npm run build` пересобрал бандлы: `dist/server.js`, `dist/app.js`, `dist/host.js` с версией `0.3.18`.

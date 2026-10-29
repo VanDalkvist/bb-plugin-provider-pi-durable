@@ -10,7 +10,7 @@ const { installTestPluginRuntime } = await import("@get-bb/plugin-sdk/testing/ap
 installTestPluginRuntime();
 const { RuntimeGraphTree } = await import("../../src/ui/runtime-graph/tree.tsx");
 const { RuntimeGraphDetails } = await import("../../src/ui/runtime-graph/details.tsx");
-const { formatTokens, formatDetailedTokens, formatTokenDelta } = await import("../../src/ui/runtime-graph/token-format.ts");
+const { formatTokens, formatDetailedTokens, formatTokenDelta, formatStepTokens } = await import("../../src/ui/runtime-graph/token-format.ts");
 const { extractLiveTokens, extractTerminalTokens } = await import("../../src/runner/task-tokens.ts");
 
 test.afterEach(() => {
@@ -86,7 +86,17 @@ test("formatTokenDelta: formats positive, zero, and negative deltas with k/M suf
 	assert.equal(formatTokenDelta(1200000), "+1.2M");
 });
 
-test("RuntimeGraphTree: renders token delta with icon and fixed separator before duration", () => {
+test("formatStepTokens: formats token counts compactly without + sign", () => {
+	assert.equal(formatStepTokens(undefined), null);
+	assert.equal(formatStepTokens(null as any), null);
+	assert.equal(formatStepTokens(0), null);
+	assert.equal(formatStepTokens(320), "320");
+	assert.equal(formatStepTokens(1420), "1.4k");
+	assert.equal(formatStepTokens(16500), "17k");
+	assert.equal(formatStepTokens(1200000), "1.2M");
+});
+
+test("RuntimeGraphTree: renders token count with icon and fixed separator before duration", () => {
 	const completedTurn: TaskTreeItem = {
 		id: 50, kind: "assistant turn", label: "assistant turn · gemini-3.8-flash (high)",
 		conversationId: 1, isTerminal: true, children: [],
@@ -99,16 +109,36 @@ test("RuntimeGraphTree: renders token delta with icon and fixed separator before
 
 	const row = container.querySelector("div[data-task-id='50']");
 	assert.ok(row, "Row must exist");
-	assert.ok(row.textContent?.includes("+1.4k"), "Must display formatted token delta");
+	assert.ok(row.textContent?.includes("1.4k"), "Must display formatted token count without plus");
+	assert.ok(!row.textContent?.includes("+1.4k"), "Must not include plus sign");
 	assert.ok(row.textContent?.includes("·"), "Must display separator between tokens and duration");
 	assert.ok(row.textContent?.includes("1.4s"), "Must display duration");
 	assert.ok(row.querySelector("svg[data-icon='sparkles']"), "Must render sparkles token icon");
 });
 
+test("RuntimeGraphTree: renders task with output tokens directly (e.g. task #785 with 320 output tokens)", () => {
+	const task785: TaskTreeItem = {
+		id: 785, kind: "pi.generation", label: "pi.generation #785",
+		conversationId: 1, isTerminal: true, children: [],
+		receipt: {
+			taskId: 785, conversationId: 1, kind: "pi.generation", outcome: "completed", endedAt: 2000, durationMs: 15600,
+			tokens: { total: 367315, input: 2231, output: 320, reasoning: 152, cacheRead: 364764 },
+		},
+	};
+	const { container } = render(
+		React.createElement(RuntimeGraphTree, { tree: [task785], selectedTaskId: null, collapsedTaskIds: new Set(), onSelectTask: () => {}, onToggleCollapse: () => {} }),
+	);
+
+	const row = container.querySelector("div[data-task-id='785']");
+	assert.ok(row, "Row must exist");
+	assert.ok(row.textContent?.includes("320"), "Must display 320 output tokens, never 0");
+	assert.ok(!row.textContent?.includes("+0"), "Must never display +0");
+	assert.ok(row.textContent?.includes("15.6s"), "Must display duration");
+});
+
 test("RuntimeGraphTree: renders live tokens on active generation", () => {
 	const activeTurn: TaskTreeItem = {
 		id: 51, kind: "assistant turn", label: "assistant turn", conversationId: 1, isTerminal: false, children: [],
-		tokenDelta: 850,
 		liveNode: { id: 51, kind: "pi.generation", conversationId: 1, background: false, abortRequested: false, state: { status: "running", phase: "request" }, label: "assistant turn", startedAt: 1000, tokens: { total: 850, output: 250 } },
 	};
 	const { container } = render(
@@ -117,7 +147,7 @@ test("RuntimeGraphTree: renders live tokens on active generation", () => {
 
 	const row = container.querySelector("div[data-task-id='51']");
 	assert.ok(row, "Active row must exist");
-	assert.ok(row.textContent?.includes("+850"), "Must display live token count");
+	assert.ok(row.textContent?.includes("250"), "Must display live token count");
 	assert.ok(row.textContent?.includes("2.0s"), "Must display ticking live duration");
 });
 
