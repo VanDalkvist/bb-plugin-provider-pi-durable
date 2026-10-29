@@ -29,6 +29,7 @@ export class RuntimeGraphSource {
 	private readonly epoch: string;
 	private readonly conversations: RuntimeGraphConversations;
 	private readonly nativeStartedAt = new Map<number, number>();
+	private readonly recentEntries = new Map<number, unknown>();
 
 	private revision = 0;
 	private previousNodes = new Map<number, { conversationId: number; kind: string }>();
@@ -53,13 +54,19 @@ export class RuntimeGraphSource {
 		if (this.harness?.subscribeCommits) {
 			this.unsubscribeCommits = this.harness.subscribeCommits((pub) => {
 				for (const ch of pub.changes as Array<{ type?: string; value?: any }>) {
-					if (ch?.type === "task") {
+					if (ch?.type === "entry" && ch.value) {
+						this.recentEntries.set(Number(ch.value.id), ch.value);
+						if (this.recentEntries.size > 256) {
+							const oldest = this.recentEntries.keys().next().value;
+							if (oldest !== undefined) this.recentEntries.delete(oldest);
+						}
+					} else if (ch?.type === "task") {
 						const taskVal = ch.value;
 						const idNum = Number(taskVal?.id);
 						if (taskVal?.startedAt) this.nativeStartedAt.set(idNum, Number(taskVal.startedAt));
 						if (taskVal?.state?.status === "terminal") {
 							this.learnNames();
-							recordTerminalWithDetails(this.receipts, taskVal, this.names, this.nativeStartedAt, this.viewSource.current());
+							recordTerminalWithDetails(this.receipts, taskVal, this.names, this.nativeStartedAt, this.viewSource.current(), this.recentEntries);
 						}
 						this.schedule();
 					} else if (ch?.type === "conversation" && ch.value) {
@@ -69,7 +76,13 @@ export class RuntimeGraphSource {
 				}
 			});
 		}
-		this.unsubscribeView = this.viewSource.subscribe(() => this.schedule());
+		this.unsubscribeView = this.viewSource.subscribe(() => {
+			const cur = this.viewSource.current() as any;
+			if (cur?.conversation?.entries) {
+				this.receipts.backfillTokensFromEntries(cur.conversation.entries);
+			}
+			this.schedule();
+		});
 		this.schedule();
 	}
 
@@ -168,7 +181,7 @@ export class RuntimeGraphSource {
 					void this.harness.getTask(prevId).then((task) => {
 						if (task && task.state?.status === "terminal") {
 							this.learnNames();
-							recordTerminalWithDetails(this.receipts, task, this.names, this.nativeStartedAt, this.viewSource.current());
+							recordTerminalWithDetails(this.receipts, task, this.names, this.nativeStartedAt, this.viewSource.current(), this.recentEntries);
 							this.schedule();
 						}
 					}).catch(() => {});

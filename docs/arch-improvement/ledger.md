@@ -343,3 +343,31 @@
 - **Сборка (Build Receipt):**
   - Версия обновлена `0.3.18` → `0.3.19` в `package.json` и `package-lock.json`.
   - `npm run build` пересобрал бандлы: `dist/server.js`, `dist/app.js`, `dist/host.js` с версией `0.3.19`.
+
+### Eliminate Token Fallback & Exact Entry Binding (Cycle 89) — 2026-10-29 (Execution Receipt)
+- **Цель и статус:** Устранение критического дефекта дублирования токенов между последовательными задачами генерации («токен в токен», например таски #9148 и #9153 в `@thread:thr_axjptvcdki` обе показывали 350,834 total / 11k): вырезание слепого фоллбека на последнее ассистентское сообщение, привязка записей напрямую из стрима коммитов (`pub.changes`, `type: "entry"`) и автоматический бекфилл по `entryId` при обновлении вью. Статус: **PASS (VERIFIED)**.
+- **Устранённые дефекты и архитектурные решения:**
+  1. *[Искоренение слепого фоллбека (AP-026)]:*
+     - В `src/runner/task-tokens.ts`: полностью удалён цикл-фоллбек, бравший последнее ассистентское сообщение при отсутствии `entryId`. Если запись ещё не найдена, честно возвращается `undefined`, исключая присвоение чужих токенов.
+     - Поиск по `entryId` теперь проверяет `recentEntries` и `cur.conversation.entries` строго по точному равенству идентификатора.
+  2. *[Захват свежих записей из коммит-публикаций (AP-010, AP-026)]:*
+     - В `src/runner/runtime-graph-source.ts`: добавлен буфер `recentEntries` (Map до 256 записей). При получении `pub.changes` с `type: "entry"` сущность сохраняется синхронно.
+     - При коммите терминальной таски `recentEntries` передаётся в `recordTerminalWithDetails`, исключая задержку между коммитом таски и обновлением реактивного вью `viewSource`.
+  3. *[Бекфилл токенов при обновлении вью (AP-026)]:*
+     - В `src/runner/runtime-graph-receipts.ts`: добавлен метод `backfillTokensFromEntries(entries)` и трекинг `pendingEntryIds`. Если на момент коммита таски запись ещё не была прочитана, при первом же тике обновления вью точные токены извлекаются по сохранённому `entryId` без дублирования.
+- **TDD и доказательная база:**
+  - Обновлены и расширены тесты:
+    * `tests/ui/runtime-graph-tokens.test.ts` (188 LOC < 200): добавлен негативный тест AP-026 (возврат `undefined` при отсутствии `entryId` в массиве вместо воровства старой записи) и позитивный тест разрешения из `recentEntries`.
+  - Общий сьют: **662 теста (556 backend + 106 UI): 662 pass, 0 fail**.
+  - Контракты: `npm run test:contracts` (TS2322 negative guard pass).
+  - Ацикличность импортов: `node scripts/verify-import-graph.mjs` (143 файла, 0 циклов).
+  - Строгая типизация: `npx tsc --noEmit` (0 errors).
+  - Line budgets (AP-019): все файлы строго < 200 LOC:
+    * `src/runner/task-tokens.ts`: 80 LOC
+    * `src/runner/runtime-graph-source.ts`: 193 LOC
+    * `src/runner/runtime-graph-mapper.ts`: 197 LOC
+    * `src/runner/runtime-graph-receipts.ts`: 191 LOC
+    * `tests/ui/runtime-graph-tokens.test.ts`: 188 LOC
+- **Сборка (Build Receipt):**
+  - Версия обновлена `0.3.19` → `0.3.20` в `package.json` и `package-lock.json`.
+  - `npm run build` пересобрал бандлы: `dist/server.js`, `dist/app.js`, `dist/host.js` с версией `0.3.20`.

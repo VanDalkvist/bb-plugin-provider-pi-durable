@@ -75,6 +75,20 @@ test("extractTerminalTokens: extracts usage from AssistantEntry via outcome entr
 	assert.equal(tokens.cacheRead, 500);
 });
 
+test("extractTerminalTokens: returns undefined when entryId is missing from entries (AP-026 negative guard)", () => {
+	const task: any = { id: 21, kind: "pi.generation", state: { status: "terminal", outcome: { status: "completed", result: { entryId: 106 } } } };
+	const current = { conversation: { entries: [{ id: 104, kind: "pi.user" }, { id: 105, kind: "pi.assistant", model: [{ usage: { totalTokens: 2400, input: 1800, output: 600 } }] }] } };
+	assert.equal(extractTerminalTokens(task, current), undefined, "Must return undefined instead of stealing previous assistant entry");
+});
+
+test("extractTerminalTokens: resolves usage from recentEntries map when view is lagging", () => {
+	const task: any = { id: 22, kind: "pi.generation", state: { status: "terminal", outcome: { status: "completed", result: { entryId: 107 } } } };
+	const recentEntries = new Map<number, unknown>([[107, { id: 107, record: { kind: "pi.assistant", model: [{ usage: { totalTokens: 3100, input: 2000, output: 1100 } }] } }]]);
+	const tokens = extractTerminalTokens(task, {}, recentEntries);
+	assert.ok(tokens);
+	assert.equal(tokens.total, 3100);
+});
+
 test("formatTokenDelta: formats positive, zero, and negative deltas with k/M suffixes", () => {
 	assert.equal(formatTokenDelta(undefined), null);
 	assert.equal(formatTokenDelta(null as any), null);

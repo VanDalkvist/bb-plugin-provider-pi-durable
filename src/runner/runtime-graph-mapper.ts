@@ -140,6 +140,7 @@ export function recordTerminalWithDetails(
 	names: TaskNames,
 	nativeStartedAt: Map<number, number>,
 	current?: unknown,
+	recentEntries?: ReadonlyMap<number, unknown>,
 ): void {
 	const id = Number(task.id);
 	const details = names.getDetails(String(id));
@@ -147,11 +148,14 @@ export function recordTerminalWithDetails(
 	const toolName = details?.toolName ?? (subMeta ? "subagent" : undefined);
 	const targetHint = details?.targetHint ?? (subMeta ? (subMeta.name || subMeta.task) : undefined);
 	const preview = subMeta?.task ?? details?.preview ?? names.get(String(id));
+	const state = task.state as any;
+	const rawEntryId = state?.outcome?.result?.entryId;
+	const entryId = rawEntryId !== undefined ? Number(rawEntryId) : undefined;
 
 	receipts.recordTerminal(task, {
-		preview, toolName, targetHint,
+		preview, toolName, targetHint, entryId,
 		startedAt: nativeStartedAt.get(id),
-		tokens: extractTerminalTokens(task, current),
+		tokens: extractTerminalTokens(task, current, recentEntries),
 	});
 }
 

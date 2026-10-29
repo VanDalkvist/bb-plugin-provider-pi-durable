@@ -1,6 +1,7 @@
 import type { TaskRecord } from "@earendil-works/pi-durable";
 import type { RuntimeTaskReceipt, TaskOutcomeName, TaskTokensUsage } from "../runtime-graph/types.ts";
 import { MAX_RECEIPTS, MAX_PREVIEW_LENGTH } from "../runtime-graph/schema.ts";
+import { normalizeUsage } from "./task-tokens.ts";
 
 export const MAX_ERROR_MESSAGE_LENGTH = 1024;
 export const MAX_ERROR_CODE_LENGTH = 64;
@@ -13,6 +14,7 @@ export interface TerminalOptions {
 	readonly targetHint?: string;
 	readonly startedAt?: number;
 	readonly tokens?: TaskTokensUsage;
+	readonly entryId?: number;
 }
 
 /**
@@ -23,6 +25,7 @@ export class RuntimeGraphReceiptsCollector {
 	private readonly capacity: number;
 	private readonly receipts: RuntimeTaskReceipt[] = [];
 	private readonly knownTaskIds = new Set<number>();
+	private readonly pendingEntryIds = new Map<number, number>();
 
 	constructor(capacity: number = MAX_RECEIPTS) {
 		this.capacity = capacity;
@@ -115,6 +118,12 @@ export class RuntimeGraphReceiptsCollector {
 			tokens: options?.tokens,
 		};
 
+		if (options?.entryId && !options.tokens) {
+			this.pendingEntryIds.set(taskId, options.entryId);
+		} else if (options?.tokens) {
+			this.pendingEntryIds.delete(taskId);
+		}
+
 		this.pushReceipt(receipt);
 		return receipt;
 	}
@@ -133,6 +142,32 @@ export class RuntimeGraphReceiptsCollector {
 
 	hasReceipt(taskId: number): boolean {
 		return this.knownTaskIds.has(taskId);
+	}
+
+	updateReceiptTokens(taskId: number, tokens: TaskTokensUsage): boolean {
+		const existingIndex = this.receipts.findIndex((r) => r.taskId === taskId);
+		if (existingIndex !== -1) {
+			this.receipts[existingIndex] = { ...this.receipts[existingIndex], tokens };
+			this.pendingEntryIds.delete(taskId);
+			return true;
+		}
+		return false;
+	}
+
+	backfillTokensFromEntries(entries: readonly unknown[]): boolean {
+		if (this.pendingEntryIds.size === 0 || !Array.isArray(entries)) return false;
+		let updated = false;
+		for (const [taskId, entryId] of this.pendingEntryIds) {
+			const target = entries.find((e: any) => Number(e?.id) === entryId) as any;
+			const usage = target?.model?.[0]?.usage ?? target?.record?.model?.[0]?.usage;
+			if (usage) {
+				const tokens = normalizeUsage(usage);
+				if (tokens && this.updateReceiptTokens(taskId, tokens)) {
+					updated = true;
+				}
+			}
+		}
+		return updated;
 	}
 
 	private pushReceipt(receipt: RuntimeTaskReceipt): void {

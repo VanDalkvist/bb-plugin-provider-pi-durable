@@ -4052,6 +4052,62 @@ var runtimeGraphSnapshotSchema = z5.object({
   { message: "Runtime graph snapshot exceeds 1 MiB payload limit" }
 );
 
+// src/runner/task-tokens.ts
+function normalizeUsage(raw) {
+  if (!raw || typeof raw !== "object") return void 0;
+  const u = raw;
+  const total = typeof u.totalTokens === "number" ? u.totalTokens : typeof u.total === "number" ? u.total : void 0;
+  const input = typeof u.input === "number" ? u.input : typeof u.inputTokens === "number" ? u.inputTokens : void 0;
+  const output2 = typeof u.output === "number" ? u.output : typeof u.outputTokens === "number" ? u.outputTokens : void 0;
+  const reasoning = typeof u.reasoning === "number" ? u.reasoning : void 0;
+  const cacheRead = typeof u.cacheRead === "number" ? u.cacheRead : typeof u.cachedInputTokens === "number" ? u.cachedInputTokens : void 0;
+  const computedTotal = total ?? (input ?? 0) + (output2 ?? 0);
+  if (computedTotal <= 0 && (output2 ?? 0) <= 0) return void 0;
+  return {
+    total: computedTotal,
+    input,
+    output: output2,
+    reasoning,
+    cacheRead
+  };
+}
+function extractLiveTokens(node, current) {
+  if (node.kind !== "pi.generation") return void 0;
+  const cur = current;
+  if (!cur || typeof cur !== "object") return void 0;
+  const liveDoc = cur?.conversation?.docs?.["pi.live"];
+  if (liveDoc?.generation?.message?.usage) {
+    const usage = normalizeUsage(liveDoc.generation.message.usage);
+    if (usage) return usage;
+  }
+  return void 0;
+}
+function extractTerminalTokens(task, current, recentEntries) {
+  if (task.kind !== "pi.generation") return void 0;
+  const state = task.state;
+  const outcome = state?.outcome;
+  const entryId = outcome?.result?.entryId;
+  if (entryId === void 0) return void 0;
+  const entryIdNum = Number(entryId);
+  if (recentEntries) {
+    const rawEntry = recentEntries.get(entryIdNum);
+    const usage = rawEntry?.record?.model?.[0]?.usage ?? rawEntry?.model?.[0]?.usage;
+    if (usage) {
+      const normalized = normalizeUsage(usage);
+      if (normalized) return normalized;
+    }
+  }
+  const cur = current;
+  const entries = cur?.conversation?.entries;
+  if (Array.isArray(entries)) {
+    const target = entries.find((e) => Number(e?.id) === entryIdNum);
+    if (target?.model?.[0]?.usage) {
+      return normalizeUsage(target.model[0].usage);
+    }
+  }
+  return void 0;
+}
+
 // src/runner/runtime-graph-receipts.ts
 var MAX_ERROR_MESSAGE_LENGTH = 1024;
 var MAX_ERROR_CODE_LENGTH = 64;
@@ -4059,6 +4115,7 @@ var RuntimeGraphReceiptsCollector = class {
   capacity;
   receipts = [];
   knownTaskIds = /* @__PURE__ */ new Set();
+  pendingEntryIds = /* @__PURE__ */ new Map();
   constructor(capacity = MAX_RECEIPTS) {
     this.capacity = capacity;
   }
@@ -4126,6 +4183,11 @@ var RuntimeGraphReceiptsCollector = class {
       targetHint,
       tokens: options?.tokens
     };
+    if (options?.entryId && !options.tokens) {
+      this.pendingEntryIds.set(taskId, options.entryId);
+    } else if (options?.tokens) {
+      this.pendingEntryIds.delete(taskId);
+    }
     this.pushReceipt(receipt);
     return receipt;
   }
@@ -4141,6 +4203,30 @@ var RuntimeGraphReceiptsCollector = class {
   }
   hasReceipt(taskId) {
     return this.knownTaskIds.has(taskId);
+  }
+  updateReceiptTokens(taskId, tokens) {
+    const existingIndex = this.receipts.findIndex((r) => r.taskId === taskId);
+    if (existingIndex !== -1) {
+      this.receipts[existingIndex] = { ...this.receipts[existingIndex], tokens };
+      this.pendingEntryIds.delete(taskId);
+      return true;
+    }
+    return false;
+  }
+  backfillTokensFromEntries(entries) {
+    if (this.pendingEntryIds.size === 0 || !Array.isArray(entries)) return false;
+    let updated = false;
+    for (const [taskId, entryId] of this.pendingEntryIds) {
+      const target = entries.find((e) => Number(e?.id) === entryId);
+      const usage = target?.model?.[0]?.usage ?? target?.record?.model?.[0]?.usage;
+      if (usage) {
+        const tokens = normalizeUsage(usage);
+        if (tokens && this.updateReceiptTokens(taskId, tokens)) {
+          updated = true;
+        }
+      }
+    }
+    return updated;
   }
   pushReceipt(receipt) {
     const existingIndex = this.receipts.findIndex((r) => r.taskId === receipt.taskId);
@@ -4197,61 +4283,6 @@ var RuntimeGraphConversations = class {
     return Object.fromEntries(this.known);
   }
 };
-
-// src/runner/task-tokens.ts
-function normalizeUsage(raw) {
-  if (!raw || typeof raw !== "object") return void 0;
-  const u = raw;
-  const total = typeof u.totalTokens === "number" ? u.totalTokens : typeof u.total === "number" ? u.total : void 0;
-  const input = typeof u.input === "number" ? u.input : typeof u.inputTokens === "number" ? u.inputTokens : void 0;
-  const output2 = typeof u.output === "number" ? u.output : typeof u.outputTokens === "number" ? u.outputTokens : void 0;
-  const reasoning = typeof u.reasoning === "number" ? u.reasoning : void 0;
-  const cacheRead = typeof u.cacheRead === "number" ? u.cacheRead : typeof u.cachedInputTokens === "number" ? u.cachedInputTokens : void 0;
-  const computedTotal = total ?? (input ?? 0) + (output2 ?? 0);
-  if (computedTotal <= 0 && (output2 ?? 0) <= 0) return void 0;
-  return {
-    total: computedTotal,
-    input,
-    output: output2,
-    reasoning,
-    cacheRead
-  };
-}
-function extractLiveTokens(node, current) {
-  if (node.kind !== "pi.generation") return void 0;
-  const cur = current;
-  if (!cur || typeof cur !== "object") return void 0;
-  const liveDoc = cur?.conversation?.docs?.["pi.live"];
-  if (liveDoc?.generation?.message?.usage) {
-    const usage = normalizeUsage(liveDoc.generation.message.usage);
-    if (usage) return usage;
-  }
-  return void 0;
-}
-function extractTerminalTokens(task, current) {
-  if (task.kind !== "pi.generation") return void 0;
-  const cur = current;
-  if (!cur || typeof cur !== "object") return void 0;
-  const state = task.state;
-  const outcome = state?.outcome;
-  const entryId = outcome?.result?.entryId;
-  const entries = cur?.conversation?.entries;
-  if (Array.isArray(entries)) {
-    if (entryId !== void 0) {
-      const target = entries.find((e) => e?.id === entryId || Number(e?.id) === Number(entryId));
-      if (target?.model?.[0]?.usage) {
-        return normalizeUsage(target.model[0].usage);
-      }
-    }
-    for (let i = entries.length - 1; i >= 0; i--) {
-      const e = entries[i];
-      if (e?.kind === "pi.assistant" && e?.model?.[0]?.usage) {
-        return normalizeUsage(e.model[0].usage);
-      }
-    }
-  }
-  return void 0;
-}
 
 // src/runner/runtime-graph-mapper.ts
 function extractTaskModelMeta(node, current, rootConvId) {
@@ -4342,19 +4373,23 @@ function buildMappedNode(node, current, rootConvId, names, nativeStartedAt, cloc
     tokens: extractLiveTokens(node, current)
   };
 }
-function recordTerminalWithDetails(receipts, task, names, nativeStartedAt, current) {
+function recordTerminalWithDetails(receipts, task, names, nativeStartedAt, current, recentEntries) {
   const id = Number(task.id);
   const details = names.getDetails(String(id));
   const subMeta = findSubagentMeta(current, id);
   const toolName = details?.toolName ?? (subMeta ? "subagent" : void 0);
   const targetHint = details?.targetHint ?? (subMeta ? subMeta.name || subMeta.task : void 0);
   const preview = subMeta?.task ?? details?.preview ?? names.get(String(id));
+  const state = task.state;
+  const rawEntryId = state?.outcome?.result?.entryId;
+  const entryId = rawEntryId !== void 0 ? Number(rawEntryId) : void 0;
   receipts.recordTerminal(task, {
     preview,
     toolName,
     targetHint,
+    entryId,
     startedAt: nativeStartedAt.get(id),
-    tokens: extractTerminalTokens(task, current)
+    tokens: extractTerminalTokens(task, current, recentEntries)
   });
 }
 function extractTaskGraph(current) {
@@ -4404,6 +4439,7 @@ var RuntimeGraphSource = class {
   epoch;
   conversations;
   nativeStartedAt = /* @__PURE__ */ new Map();
+  recentEntries = /* @__PURE__ */ new Map();
   revision = 0;
   previousNodes = /* @__PURE__ */ new Map();
   lastStructuralJson = "";
@@ -4425,13 +4461,19 @@ var RuntimeGraphSource = class {
     if (this.harness?.subscribeCommits) {
       this.unsubscribeCommits = this.harness.subscribeCommits((pub) => {
         for (const ch of pub.changes) {
-          if (ch?.type === "task") {
+          if (ch?.type === "entry" && ch.value) {
+            this.recentEntries.set(Number(ch.value.id), ch.value);
+            if (this.recentEntries.size > 256) {
+              const oldest = this.recentEntries.keys().next().value;
+              if (oldest !== void 0) this.recentEntries.delete(oldest);
+            }
+          } else if (ch?.type === "task") {
             const taskVal = ch.value;
             const idNum = Number(taskVal?.id);
             if (taskVal?.startedAt) this.nativeStartedAt.set(idNum, Number(taskVal.startedAt));
             if (taskVal?.state?.status === "terminal") {
               this.learnNames();
-              recordTerminalWithDetails(this.receipts, taskVal, this.names, this.nativeStartedAt, this.viewSource.current());
+              recordTerminalWithDetails(this.receipts, taskVal, this.names, this.nativeStartedAt, this.viewSource.current(), this.recentEntries);
             }
             this.schedule();
           } else if (ch?.type === "conversation" && ch.value) {
@@ -4441,7 +4483,13 @@ var RuntimeGraphSource = class {
         }
       });
     }
-    this.unsubscribeView = this.viewSource.subscribe(() => this.schedule());
+    this.unsubscribeView = this.viewSource.subscribe(() => {
+      const cur = this.viewSource.current();
+      if (cur?.conversation?.entries) {
+        this.receipts.backfillTokensFromEntries(cur.conversation.entries);
+      }
+      this.schedule();
+    });
     this.schedule();
   }
   subscribe(listener) {
@@ -4535,7 +4583,7 @@ var RuntimeGraphSource = class {
           void this.harness.getTask(prevId).then((task) => {
             if (task && task.state?.status === "terminal") {
               this.learnNames();
-              recordTerminalWithDetails(this.receipts, task, this.names, this.nativeStartedAt, this.viewSource.current());
+              recordTerminalWithDetails(this.receipts, task, this.names, this.nativeStartedAt, this.viewSource.current(), this.recentEntries);
               this.schedule();
             }
           }).catch(() => {

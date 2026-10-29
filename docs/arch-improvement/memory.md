@@ -169,6 +169,14 @@
 - Use next time: Step token metrics must equal the honest active sum of uncached tokens for that turn: `(input ?? 0) + (output ?? 0) + (reasoning ?? 0)`. When prompt caching is active, this equals `total - cacheRead`. Provide the exact breakdown in the hover tooltip (`N step tokens (X in · Y out · Z reasoning) · T total`) and in the details inspector.
 - Evidence: `src/ui/runtime-graph/token-format.ts`, `src/ui/runtime-graph/node-row.tsx`, `tests/ui/runtime-graph-tokens.test.ts`, Cycle 88.
 
+## 2026-10-29 - Ban on Fallback Extraction and Asynchronous Entry Backfill (Cycle 89)
+- Context: Resolving terminal task receipts and assistant entries in `extractTerminalTokens`.
+- Symptom: In long threads with tool calls, pairs of consecutive tasks showed identical tokens ("токен в токен", e.g. #9148 and #9153 both showed 350,834 total).
+- Cause: `extractTerminalTokens` contained a forbidden fallback loop that took the last assistant entry when `outcome.result.entryId` was missing from the lagging conversation view, causing newer tasks to steal previous tasks' tokens.
+- Use next time: Strictly ban silent fallbacks (AP-026). If `entryId` is not found, return `undefined` honestly. In commit subscribers, capture `{ type: "entry", value: record }` into a bounded `recentEntries` cache to resolve entries synchronously with task completion, and backfill receipts via `backfillTokensFromEntries` when the view snapshot catches up.
+- Evidence: `src/runner/task-tokens.ts`, `src/runner/runtime-graph-source.ts`, `src/runner/runtime-graph-receipts.ts`, `tests/ui/runtime-graph-tokens.test.ts`, Cycle 89.
+
+
 
 
 

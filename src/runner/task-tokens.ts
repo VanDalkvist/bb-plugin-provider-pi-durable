@@ -1,7 +1,7 @@
 import type { TaskGraphNode, TaskRecord } from "@earendil-works/pi-durable";
 import type { TaskTokensUsage } from "../runtime-graph/types.ts";
 
-function normalizeUsage(raw: unknown): TaskTokensUsage | undefined {
+export function normalizeUsage(raw: unknown): TaskTokensUsage | undefined {
 	if (!raw || typeof raw !== "object") return undefined;
 	const u = raw as Record<string, unknown>;
 	const total = typeof u.totalTokens === "number" ? u.totalTokens : (typeof u.total === "number" ? u.total : undefined);
@@ -41,32 +41,38 @@ export function extractLiveTokens(node: TaskGraphNode, current: unknown): TaskTo
 
 /**
  * Extracts terminal tokens usage for a completed task (specifically pi.generation).
+ * Strictly requires entryId to match target entry. NEVER silently falls back to another entry (AP-026).
  */
 export function extractTerminalTokens(
 	task: TaskRecord<unknown, unknown, unknown>,
 	current: unknown,
+	recentEntries?: ReadonlyMap<number, unknown>,
 ): TaskTokensUsage | undefined {
 	if (task.kind !== "pi.generation") return undefined;
-	const cur = current as any;
-	if (!cur || typeof cur !== "object") return undefined;
 
 	const state = task.state as any;
 	const outcome = state?.outcome;
 	const entryId = outcome?.result?.entryId;
+	if (entryId === undefined) return undefined;
+	const entryIdNum = Number(entryId);
 
+	// 1. Check recent entries captured from commit publication first
+	if (recentEntries) {
+		const rawEntry = recentEntries.get(entryIdNum) as any;
+		const usage = rawEntry?.record?.model?.[0]?.usage ?? rawEntry?.model?.[0]?.usage;
+		if (usage) {
+			const normalized = normalizeUsage(usage);
+			if (normalized) return normalized;
+		}
+	}
+
+	// 2. Check conversation view entries strictly by entryId
+	const cur = current as any;
 	const entries = cur?.conversation?.entries;
 	if (Array.isArray(entries)) {
-		if (entryId !== undefined) {
-			const target = entries.find((e: any) => e?.id === entryId || Number(e?.id) === Number(entryId));
-			if (target?.model?.[0]?.usage) {
-				return normalizeUsage(target.model[0].usage);
-			}
-		}
-		for (let i = entries.length - 1; i >= 0; i--) {
-			const e = entries[i];
-			if (e?.kind === "pi.assistant" && e?.model?.[0]?.usage) {
-				return normalizeUsage(e.model[0].usage);
-			}
+		const target = entries.find((e: any) => Number(e?.id) === entryIdNum);
+		if (target?.model?.[0]?.usage) {
+			return normalizeUsage(target.model[0].usage);
 		}
 	}
 
