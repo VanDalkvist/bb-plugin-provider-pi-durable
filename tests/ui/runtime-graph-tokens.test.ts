@@ -10,7 +10,7 @@ const { installTestPluginRuntime } = await import("@get-bb/plugin-sdk/testing/ap
 installTestPluginRuntime();
 const { RuntimeGraphTree } = await import("../../src/ui/runtime-graph/tree.tsx");
 const { RuntimeGraphDetails } = await import("../../src/ui/runtime-graph/details.tsx");
-const { formatTokens, formatDetailedTokens, formatTokenDelta, formatStepTokens } = await import("../../src/ui/runtime-graph/token-format.ts");
+const { formatTokens, formatDetailedTokens, formatTokenDelta, formatStepTokens, calculateStepTokens } = await import("../../src/ui/runtime-graph/token-format.ts");
 const { extractLiveTokens, extractTerminalTokens } = await import("../../src/runner/task-tokens.ts");
 
 test.afterEach(() => {
@@ -101,7 +101,7 @@ test("RuntimeGraphTree: renders token count with icon and fixed separator before
 		id: 50, kind: "assistant turn", label: "assistant turn · gemini-3.8-flash (high)",
 		conversationId: 1, isTerminal: true, children: [],
 		tokenDelta: 1420,
-		receipt: { taskId: 50, conversationId: 1, kind: "pi.generation", outcome: "completed", endedAt: 2000, durationMs: 1400, tokens: { total: 156420, input: 155000, output: 1420 } },
+		receipt: { taskId: 50, conversationId: 1, kind: "pi.generation", outcome: "completed", endedAt: 2000, durationMs: 1400, tokens: { total: 156420, input: 0, output: 1420, cacheRead: 155000 } },
 	};
 	const { container } = render(
 		React.createElement(RuntimeGraphTree, { tree: [completedTurn], selectedTaskId: null, collapsedTaskIds: new Set(), onSelectTask: () => {}, onToggleCollapse: () => {} }),
@@ -116,23 +116,35 @@ test("RuntimeGraphTree: renders token count with icon and fixed separator before
 	assert.ok(row.querySelector("svg[data-icon='sparkles']"), "Must render sparkles token icon");
 });
 
-test("RuntimeGraphTree: renders task with output tokens directly (e.g. task #785 with 320 output tokens)", () => {
-	const task785: TaskTreeItem = {
-		id: 785, kind: "pi.generation", label: "pi.generation #785",
+test("calculateStepTokens: sums active uncached tokens (in + out + reasoning)", () => {
+	assert.equal(calculateStepTokens(undefined), undefined);
+	// 2,891 in + 85 out + 29 reasoning = 3,005
+	const usage1 = { total: 367740, input: 2891, output: 85, reasoning: 29, cacheRead: 364764 };
+	assert.equal(calculateStepTokens(usage1), 3005);
+	// 2,231 in + 320 out + 152 reasoning = 2,703
+	const usage2 = { total: 367315, input: 2231, output: 320, reasoning: 152, cacheRead: 364764 };
+	assert.equal(calculateStepTokens(usage2), 2703);
+	// Only output recorded
+	assert.equal(calculateStepTokens({ total: 320, output: 320 }), 320);
+});
+
+test("RuntimeGraphTree: renders task with active sum of in + out + reasoning tokens", () => {
+	const task: TaskTreeItem = {
+		id: 790, kind: "pi.generation", label: "pi.generation #790",
 		conversationId: 1, isTerminal: true, children: [],
 		receipt: {
-			taskId: 785, conversationId: 1, kind: "pi.generation", outcome: "completed", endedAt: 2000, durationMs: 15600,
-			tokens: { total: 367315, input: 2231, output: 320, reasoning: 152, cacheRead: 364764 },
+			taskId: 790, conversationId: 1, kind: "pi.generation", outcome: "completed", endedAt: 2000, durationMs: 15600,
+			tokens: { total: 367740, input: 2891, output: 85, reasoning: 29, cacheRead: 364764 },
 		},
 	};
 	const { container } = render(
-		React.createElement(RuntimeGraphTree, { tree: [task785], selectedTaskId: null, collapsedTaskIds: new Set(), onSelectTask: () => {}, onToggleCollapse: () => {} }),
+		React.createElement(RuntimeGraphTree, { tree: [task], selectedTaskId: null, collapsedTaskIds: new Set(), onSelectTask: () => {}, onToggleCollapse: () => {} }),
 	);
 
-	const row = container.querySelector("div[data-task-id='785']");
+	const row = container.querySelector("div[data-task-id='790']");
 	assert.ok(row, "Row must exist");
-	assert.ok(row.textContent?.includes("320"), "Must display 320 output tokens, never 0");
-	assert.ok(!row.textContent?.includes("+0"), "Must never display +0");
+	assert.ok(row.textContent?.includes("3k"), "Must display 3k (2891 + 85 + 29 = 3005), never 85");
+	assert.ok(!row.textContent?.includes(" 85 "), "Must not display 85 alone");
 	assert.ok(row.textContent?.includes("15.6s"), "Must display duration");
 });
 

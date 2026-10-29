@@ -3,7 +3,7 @@ import { SparklesIcon } from "./token-icon.tsx";
 
 export interface NodeRowMetricsProps {
 	readonly tokenCountStr?: string | null;
-	readonly totalTokens?: number;
+	readonly tokenTitle?: string;
 	readonly duration?: string | null;
 }
 
@@ -15,15 +15,11 @@ export interface NodeRowMetricsProps {
  */
 export const NodeRowMetrics: FC<NodeRowMetricsProps> = ({
 	tokenCountStr,
-	totalTokens,
+	tokenTitle,
 	duration,
 }) => {
 	const hasMetrics = Boolean(tokenCountStr || duration);
 	if (!hasMetrics) return null;
-
-	const tokenTitle = totalTokens
-		? (tokenCountStr ? `${totalTokens.toLocaleString()} total tokens (${tokenCountStr} output)` : `${totalTokens.toLocaleString()} total tokens`)
-		: undefined;
 
 	return (
 		<div className="ml-auto flex items-center flex-shrink-0 text-[10px] font-mono tabular-nums pl-2 select-none">

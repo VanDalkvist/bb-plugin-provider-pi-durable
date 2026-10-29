@@ -315,3 +315,31 @@
 - **Сборка (Build Receipt):**
   - Версия обновлена `0.3.17` → `0.3.18` в `package.json` и `package-lock.json`.
   - `npm run build` пересобрал бандлы: `dist/server.js`, `dist/app.js`, `dist/host.js` с версией `0.3.18`.
+
+### Active Step Tokens Sum (Cycle 88) — 2026-10-29 (Execution Receipt)
+- **Цель и статус:** Исправление расчёта токенов шага: вместо изолированного `output` вычисляется честная сумма всех активных (некешированных) токенов текущего шага (`input + output + reasoning`). Для таски с `2,891 in · 85 out · 29 reasoning` отображается `3k` (2891 + 85 + 29 = 3005), а в тултипе выводится полный расклад. Статус: **PASS (VERIFIED)**.
+- **Устранённые дефекты и архитектурные решения:**
+  1. *[Честная сумма активных токенов шага (AP-010, AP-026)]:*
+     - В `src/ui/runtime-graph/token-format.ts`: добавлена функция `calculateStepTokens(usage)`, вычисляющая `(input ?? 0) + (output ?? 0) + (reasoning ?? 0)`.
+     - При наличии кеша (`cacheRead`), эта сумма в точности равна всем новым токенам, отправленным и сгенерированным в рамках этого хода (`total - cacheRead`).
+     - Сохранены безопасные фоллбеки на `total - cacheRead` и `total`.
+  2. *[Детализированный тултип на строке (AP-069)]:*
+     - В `src/ui/runtime-graph/node-row.tsx`: формируется точный тултип: `3,005 step tokens (2,891 in · 85 out · 29 reasoning) · 367,740 total`.
+     - Значение в строке (`✨ 3k`) полностью согласуется с числами в инспекторе деталей.
+- **TDD и доказательная база:**
+  - Обновлены и расширены тесты:
+    * `tests/ui/runtime-graph-tokens.test.ts` (174 LOC < 200): проверены `calculateStepTokens`, сумма `2891 in + 85 out + 29 reasoning = 3005` (`3k`).
+  - Общий сьют: **660 тестов (556 backend + 104 UI): 660 pass, 0 fail**.
+  - Контракты: `npm run test:contracts` (TS2322 negative guard pass).
+  - Ацикличность импортов: `node scripts/verify-import-graph.mjs` (143 файла, 0 циклов).
+  - Строгая типизация: `npx tsc --noEmit` (0 errors).
+  - Line budgets (AP-019): все файлы строго < 200 LOC:
+    * `src/ui/runtime-graph/node-row.tsx`: 196 LOC
+    * `src/ui/runtime-graph/node-row-metrics.tsx`: 48 LOC
+    * `src/ui/runtime-graph/token-icon.tsx`: 28 LOC
+    * `src/ui/runtime-graph/token-format.ts`: 109 LOC
+    * `src/ui/runtime-graph/tree-builder.ts`: 167 LOC
+    * `tests/ui/runtime-graph-tokens.test.ts`: 174 LOC
+- **Сборка (Build Receipt):**
+  - Версия обновлена `0.3.18` → `0.3.19` в `package.json` и `package-lock.json`.
+  - `npm run build` пересобрал бандлы: `dist/server.js`, `dist/app.js`, `dist/host.js` с версией `0.3.19`.

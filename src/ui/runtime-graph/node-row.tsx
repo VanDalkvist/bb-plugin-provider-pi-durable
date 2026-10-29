@@ -2,7 +2,7 @@ import React, { type FC } from "react";
 import { experimental_Icon } from "@get-bb/plugin-sdk/app";
 import type { TaskTreeItem } from "./types.ts";
 import { hasActiveWork } from "./tree-order.ts";
-import { formatStepTokens } from "./token-format.ts";
+import { formatStepTokens, calculateStepTokens } from "./token-format.ts";
 import { NodeRowMetrics } from "./node-row-metrics.tsx";
 
 export interface RuntimeGraphNodeRowProps {
@@ -78,13 +78,18 @@ export const RuntimeGraphNodeRow: FC<RuntimeGraphNodeRowProps> = ({
 	const duration = formatDuration(isActive ? liveElapsed : (item.receipt?.durationMs ?? singleChild?.receipt?.durationMs ?? liveElapsed));
 	const tokensUsage = item.liveNode?.tokens ?? item.receipt?.tokens
 		?? singleChild?.liveNode?.tokens ?? singleChild?.receipt?.tokens;
-	const stepTokens = (typeof tokensUsage?.output === "number" && tokensUsage.output > 0)
-		? tokensUsage.output
-		: ((typeof item.tokenDelta === "number" && item.tokenDelta > 0)
-			? item.tokenDelta
-			: (tokensUsage?.total && tokensUsage.total > 0 ? tokensUsage.total : undefined));
+	const stepTokens = calculateStepTokens(tokensUsage)
+		?? ((typeof item.tokenDelta === "number" && item.tokenDelta > 0) ? item.tokenDelta : undefined);
 	const tokenCountStr = formatStepTokens(stepTokens);
-	const totalTokens = tokensUsage?.total;
+	const tokenTitle = stepTokens && tokensUsage ? (() => {
+		const parts: string[] = [];
+		if (tokensUsage.input) parts.push(`${tokensUsage.input.toLocaleString()} in`);
+		if (tokensUsage.output) parts.push(`${tokensUsage.output.toLocaleString()} out`);
+		if (tokensUsage.reasoning) parts.push(`${tokensUsage.reasoning.toLocaleString()} reasoning`);
+		const bd = parts.length > 0 ? ` (${parts.join(" · ")})` : "";
+		const totalStr = typeof tokensUsage.total === "number" ? ` · ${tokensUsage.total.toLocaleString()} total` : "";
+		return `${stepTokens.toLocaleString()} step tokens${bd}${totalStr}`;
+	})() : undefined;
 
 	const hasToolError = Boolean(item.receipt?.isToolError) || Boolean(singleChild?.receipt?.isToolError);
 	const waitingOn = (item.waitingOn && item.waitingOn.length > 0) ? item.waitingOn : singleChild?.waitingOn;
@@ -183,7 +188,7 @@ export const RuntimeGraphNodeRow: FC<RuntimeGraphNodeRowProps> = ({
 
 				<NodeRowMetrics
 					tokenCountStr={tokenCountStr}
-					totalTokens={totalTokens}
+					tokenTitle={tokenTitle}
 					duration={duration}
 				/>
 			</button>

@@ -162,5 +162,13 @@
 - Use next time: For generation tasks, step token metrics must prioritize `tokens.output` directly, so the row number matches the `... out` metric in the inspector. In the row slot, place the `SparklesIcon` on the left in a muted color (`text-muted-foreground/60`) followed by the unsigned number (`✨ 320`) so every token row starts from the exact same vertical line without sign jitter.
 - Evidence: `src/ui/runtime-graph/token-format.ts`, `src/ui/runtime-graph/node-row-metrics.tsx`, `src/ui/runtime-graph/node-row.tsx`, `tests/ui/runtime-graph-tokens.test.ts`, Cycle 87.
 
+## 2026-10-29 - Active Step Tokens Sum Invariant (Cycle 88)
+- Context: Metric computation for generation tasks with prompt caching.
+- Symptom: Displaying only `output` tokens (e.g. 85) on a turn that received 2,891 input tokens created confusion and falsely hid 97% of the turn's active context work.
+- Cause: Treating generation step tokens as output-only instead of the full active work performed on that step.
+- Use next time: Step token metrics must equal the honest active sum of uncached tokens for that turn: `(input ?? 0) + (output ?? 0) + (reasoning ?? 0)`. When prompt caching is active, this equals `total - cacheRead`. Provide the exact breakdown in the hover tooltip (`N step tokens (X in · Y out · Z reasoning) · T total`) and in the details inspector.
+- Evidence: `src/ui/runtime-graph/token-format.ts`, `src/ui/runtime-graph/node-row.tsx`, `tests/ui/runtime-graph-tokens.test.ts`, Cycle 88.
+
+
 
 
