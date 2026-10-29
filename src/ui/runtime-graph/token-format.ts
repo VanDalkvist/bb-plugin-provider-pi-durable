@@ -44,3 +44,25 @@ export function formatDetailedTokens(tokens?: TaskTokensUsage): string | null {
 	const totalStr = `${total.toLocaleString()} total`;
 	return parts.length > 0 ? `${totalStr} (${parts.join(" · ")})` : totalStr;
 }
+
+/**
+ * Formats a token delta compactly for row display (e.g. "+1.4k", "+450", "+0", "-15k").
+ */
+export function formatTokenDelta(delta?: number): string | null {
+	if (delta === undefined || delta === null || !Number.isFinite(delta)) {
+		return null;
+	}
+	const sign = delta >= 0 ? "+" : "-";
+	const abs = Math.abs(delta);
+	if (abs < 1000) {
+		return `${sign}${Math.round(abs)}`;
+	}
+	if (abs < 10_000) {
+		return `${sign}${(abs / 1000).toFixed(1)}k`;
+	}
+	if (abs < 1_000_000) {
+		return `${sign}${Math.round(abs / 1000)}k`;
+	}
+	return `${sign}${(abs / 1_000_000).toFixed(1)}M`;
+}
+

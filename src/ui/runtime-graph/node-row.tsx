@@ -2,7 +2,8 @@ import React, { type FC } from "react";
 import { experimental_Icon } from "@get-bb/plugin-sdk/app";
 import type { TaskTreeItem } from "./types.ts";
 import { hasActiveWork } from "./tree-order.ts";
-import { formatTokens } from "./token-format.ts";
+import { formatTokenDelta } from "./token-format.ts";
+import { NodeRowMetrics } from "./node-row-metrics.tsx";
 
 export interface RuntimeGraphNodeRowProps {
 	readonly item: TaskTreeItem;
@@ -77,7 +78,8 @@ export const RuntimeGraphNodeRow: FC<RuntimeGraphNodeRowProps> = ({
 	const duration = formatDuration(isActive ? liveElapsed : (item.receipt?.durationMs ?? singleChild?.receipt?.durationMs ?? liveElapsed));
 	const rawTokens = item.liveNode?.tokens?.total ?? item.receipt?.tokens?.total
 		?? singleChild?.liveNode?.tokens?.total ?? singleChild?.receipt?.tokens?.total;
-	const tokens = formatTokens(rawTokens);
+	const rawDelta = item.tokenDelta ?? singleChild?.tokenDelta;
+	const tokenDeltaStr = formatTokenDelta(rawDelta);
 
 	const hasToolError = Boolean(item.receipt?.isToolError) || Boolean(singleChild?.receipt?.isToolError);
 	const waitingOn = (item.waitingOn && item.waitingOn.length > 0) ? item.waitingOn : singleChild?.waitingOn;
@@ -174,17 +176,11 @@ export const RuntimeGraphNodeRow: FC<RuntimeGraphNodeRowProps> = ({
 					<span className="text-[10px] px-1 py-0.2 bg-muted text-muted-foreground rounded">aborted</span>
 				) : null}
 
-				{tokens ? (
-					<span className="ml-auto text-[10px] text-muted-foreground/80 pr-1 flex-shrink-0 font-mono">
-						{tokens}
-					</span>
-				) : null}
-
-				{duration ? (
-					<span className={`${tokens ? "" : "ml-auto "}text-[10px] text-muted-foreground pl-1 flex-shrink-0`}>
-						{duration}
-					</span>
-				) : null}
+				<NodeRowMetrics
+					tokenDeltaStr={tokenDeltaStr}
+					totalTokens={rawTokens}
+					duration={duration}
+				/>
 			</button>
 		</div>
 	);

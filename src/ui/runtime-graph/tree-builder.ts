@@ -15,6 +15,7 @@ interface MutableTreeItem {
 	liveNode?: RuntimeTaskNode;
 	receipt?: RuntimeTaskReceipt;
 	waitingOn?: readonly number[];
+	tokenDelta?: number;
 	children: MutableTreeItem[];
 }
 
@@ -123,7 +124,23 @@ export function buildTaskTree(snapshot: RuntimeGraphSnapshot): TaskTreeItem[] {
 		}
 	}
 
-	// 4. Stable sort by id
+	// 4. Compute token deltas per conversation in chronological order
+	const itemsWithTokens = Array.from(itemsMap.values())
+		.filter((it) => {
+			const total = it.liveNode?.tokens?.total ?? it.receipt?.tokens?.total;
+			return typeof total === "number" && Number.isFinite(total) && total > 0;
+		})
+		.sort((a, b) => a.id - b.id);
+
+	const prevTokensByConv = new Map<number, number>();
+	for (const item of itemsWithTokens) {
+		const total = (item.liveNode?.tokens?.total ?? item.receipt?.tokens?.total)!;
+		const prev = prevTokensByConv.get(item.conversationId);
+		item.tokenDelta = prev !== undefined ? total - prev : total;
+		prevTokensByConv.set(item.conversationId, total);
+	}
+
+	// 5. Stable sort by id
 	const sortItems = (items: MutableTreeItem[]) => {
 		items.sort((a, b) => a.id - b.id);
 		for (const child of items) {

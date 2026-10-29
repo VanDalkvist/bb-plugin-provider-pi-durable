@@ -148,3 +148,11 @@
 - Use next time: Task graphs and activity trees must order finished tasks in reverse chronology (`b.id - a.id`, newest at the top). History preview slices must pick the `targetFinishedCount` most recent items, folding older turns under `See more` at the bottom of the list.
 - Evidence: `src/ui/runtime-graph/tree-order.ts`, `src/ui/runtime-graph/tree-preview.ts`, `src/ui/runtime-graph/tree.tsx`, `tests/ui/runtime-graph-preview.test.ts`, Cycle 85.
 
+## 2026-10-29 - Tabular Alignment and Token Delta Invariant (Cycle 86)
+- Context: Task row metrics presentation (tokens and durations).
+- Symptom: Varying character lengths of total tokens (`178k tok`, `1.4k tok`) and durations (`4.4s`, `121.9s`) caused horizontal wobbling ("волнами туда-сюда"), and displaying cumulative context window size hid the actual per-step cost.
+- Cause: Placing dynamic inline text in flex rows without fixed slot widths or tabular numbers; displaying cumulative total tokens instead of step context delta.
+- Use next time: Row metrics must be tabular: dedicated fixed-width slots (`w-[4.25rem]`, `w-[3.25rem]`), `tabular-nums`, and left-aligned starts from invisible vertical lines separated by a static `·`. Display net context delta between consecutive steps ($T_i - T_{i-1}$) accompanied by a clean `SparklesIcon`, keeping total tokens in the hover title and inspector.
+- Evidence: `src/ui/runtime-graph/node-row-metrics.tsx`, `src/ui/runtime-graph/token-icon.tsx`, `src/ui/runtime-graph/tree-builder.ts`, `tests/ui/runtime-graph-tokens.test.ts`, Cycle 86.
+
+

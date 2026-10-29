@@ -251,3 +251,37 @@
 - **Сборка (Build Receipt):**
   - Версия обновлена `0.3.15` → `0.3.16` в `package.json` и `package-lock.json`.
   - `npm run build` пересобрал бандлы: `dist/server.js`, `dist/app.js`, `dist/host.js` с версией `0.3.16`.
+
+### Task Row Tabular Alignment & Token Delta (Cycle 86) — 2026-10-29 (Execution Receipt)
+- **Цель и статус:** Исправление отображения цифр в строках таск-графа: замена общего накопленного числа токенов на честный прирост с прошлого шага (`+1.4k`, `+450`, `+0`), замена текста `tok` на аккуратную иконку `Sparkles` (искры), и фиксация позиций секунд и токенов в моноширинных табличных слотах с разделителем `·`, начинающихся строго от одной невидимой вертикальной линии. Статус: **PASS (VERIFIED)**.
+- **Устранённые дефекты и архитектурные решения:**
+  1. *[Честная дельта контекста между шагами (AP-010, AP-026)]:*
+     - В `src/ui/runtime-graph/tree-builder.ts`: дельта токенов вычисляется хронологически по возрастанию ID внутри каждой `conversationId` ($T_i - T_{i-1}$, для первого шага $T_1 = total$).
+     - В `src/ui/runtime-graph/types.ts`: добавлено опциональное поле `tokenDelta?: number` в `TaskTreeItem`.
+     - В `src/ui/runtime-graph/token-format.ts`: добавлена функция `formatTokenDelta(delta)` (`+1.4k`, `+450`, `+0`, `-15k`).
+  2. *[Иконка Sparkles вместо слова `tok` (AP-069)]:*
+     - Создан изолированный компонент `src/ui/runtime-graph/token-icon.tsx` (`SparklesIcon`, 28 LOC < 200).
+     - Текст `tok` заменён на значок искр `Sparkles`, цвет `text-amber-500/80` (аккуратный золотистый оттенок AI).
+  3. *[Табличное выравнивание и устранение волн (AP-019, AP-069)]:*
+     - Создан компонент `src/ui/runtime-graph/node-row-metrics.tsx` (51 LOC < 200).
+     - Колонка токенов: фиксированный слот `w-[4.25rem]`, выравнивание `justify-start` (цифры `+1.4k` начинаются строго от одной вертикальной линии).
+     - Разделитель: фиксированный `·` (`text-muted-foreground/30 px-1.5`).
+     - Колонка секунд: фиксированный слот `w-[3.25rem]`, выравнивание `justify-start` (цифры секунд начинаются строго от одной вертикальной линии).
+     - При отсутствии токенов на строке (например, тул без модели) слот токенов остаётся пустым, а разделитель и секунды остаются на тех же координатах.
+- **TDD и доказательная база:**
+  - Обновлены и расширены тесты:
+    * `tests/ui/runtime-graph-tokens.test.ts` (132 LOC < 200): проверены `formatTokenDelta`, рендеринг `SparklesIcon`, дельта, разделитель и длительность.
+    * `tests/ui/runtime-graph-tree-builder.test.ts` (98 LOC < 200): проверен хронологический расчёт дельты по шагам.
+  - Общий сьют: **657 тестов (556 backend + 101 UI): 657 pass, 0 fail**.
+  - Контракты: `npm run test:contracts` (Negative contract guard: TS2322 pass).
+  - Ацикличность импортов: `node scripts/verify-import-graph.mjs` (143 файла, 0 циклов).
+  - Строгая типизация: `npx tsc --noEmit` (0 errors).
+  - Line budgets (AP-019): все файлы строго < 200 LOC:
+    * `src/ui/runtime-graph/node-row.tsx`: 187 LOC
+    * `src/ui/runtime-graph/node-row-metrics.tsx`: 51 LOC
+    * `src/ui/runtime-graph/token-icon.tsx`: 28 LOC
+    * `src/ui/runtime-graph/token-format.ts`: 68 LOC
+    * `src/ui/runtime-graph/tree-builder.ts`: 167 LOC
+- **Сборка (Build Receipt):**
+  - Версия обновлена `0.3.16` → `0.3.17` в `package.json` и `package-lock.json`.
+  - `npm run build` пересобрал бандлы: `dist/server.js`, `dist/app.js`, `dist/host.js` с версией `0.3.17`.

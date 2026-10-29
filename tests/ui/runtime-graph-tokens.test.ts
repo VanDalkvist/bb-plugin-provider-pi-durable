@@ -10,7 +10,7 @@ const { installTestPluginRuntime } = await import("@get-bb/plugin-sdk/testing/ap
 installTestPluginRuntime();
 const { RuntimeGraphTree } = await import("../../src/ui/runtime-graph/tree.tsx");
 const { RuntimeGraphDetails } = await import("../../src/ui/runtime-graph/details.tsx");
-const { formatTokens, formatDetailedTokens } = await import("../../src/ui/runtime-graph/token-format.ts");
+const { formatTokens, formatDetailedTokens, formatTokenDelta } = await import("../../src/ui/runtime-graph/token-format.ts");
 const { extractLiveTokens, extractTerminalTokens } = await import("../../src/runner/task-tokens.ts");
 
 test.afterEach(() => {
@@ -75,11 +75,23 @@ test("extractTerminalTokens: extracts usage from AssistantEntry via outcome entr
 	assert.equal(tokens.cacheRead, 500);
 });
 
-test("RuntimeGraphTree: renders token badge before duration in task row", () => {
+test("formatTokenDelta: formats positive, zero, and negative deltas with k/M suffixes", () => {
+	assert.equal(formatTokenDelta(undefined), null);
+	assert.equal(formatTokenDelta(null as any), null);
+	assert.equal(formatTokenDelta(0), "+0");
+	assert.equal(formatTokenDelta(450), "+450");
+	assert.equal(formatTokenDelta(1420), "+1.4k");
+	assert.equal(formatTokenDelta(16500), "+17k");
+	assert.equal(formatTokenDelta(-15200), "-15k");
+	assert.equal(formatTokenDelta(1200000), "+1.2M");
+});
+
+test("RuntimeGraphTree: renders token delta with icon and fixed separator before duration", () => {
 	const completedTurn: TaskTreeItem = {
 		id: 50, kind: "assistant turn", label: "assistant turn · gemini-3.8-flash (high)",
 		conversationId: 1, isTerminal: true, children: [],
-		receipt: { taskId: 50, conversationId: 1, kind: "pi.generation", outcome: "completed", endedAt: 2000, durationMs: 1400, tokens: { total: 1420, input: 1100, output: 320 } },
+		tokenDelta: 1420,
+		receipt: { taskId: 50, conversationId: 1, kind: "pi.generation", outcome: "completed", endedAt: 2000, durationMs: 1400, tokens: { total: 156420, input: 155000, output: 1420 } },
 	};
 	const { container } = render(
 		React.createElement(RuntimeGraphTree, { tree: [completedTurn], selectedTaskId: null, collapsedTaskIds: new Set(), onSelectTask: () => {}, onToggleCollapse: () => {} }),
@@ -87,15 +99,16 @@ test("RuntimeGraphTree: renders token badge before duration in task row", () => 
 
 	const row = container.querySelector("div[data-task-id='50']");
 	assert.ok(row, "Row must exist");
-	assert.ok(row.textContent?.includes("1.4k tok"), "Must display formatted tokens");
+	assert.ok(row.textContent?.includes("+1.4k"), "Must display formatted token delta");
+	assert.ok(row.textContent?.includes("·"), "Must display separator between tokens and duration");
 	assert.ok(row.textContent?.includes("1.4s"), "Must display duration");
-	const html = row.innerHTML;
-	assert.ok(html.indexOf("1.4k tok") < html.indexOf("1.4s"), "Token badge must appear before duration");
+	assert.ok(row.querySelector("svg[data-icon='sparkles']"), "Must render sparkles token icon");
 });
 
 test("RuntimeGraphTree: renders live tokens on active generation", () => {
 	const activeTurn: TaskTreeItem = {
 		id: 51, kind: "assistant turn", label: "assistant turn", conversationId: 1, isTerminal: false, children: [],
+		tokenDelta: 850,
 		liveNode: { id: 51, kind: "pi.generation", conversationId: 1, background: false, abortRequested: false, state: { status: "running", phase: "request" }, label: "assistant turn", startedAt: 1000, tokens: { total: 850, output: 250 } },
 	};
 	const { container } = render(
@@ -104,7 +117,7 @@ test("RuntimeGraphTree: renders live tokens on active generation", () => {
 
 	const row = container.querySelector("div[data-task-id='51']");
 	assert.ok(row, "Active row must exist");
-	assert.ok(row.textContent?.includes("850 tok"), "Must display live token count");
+	assert.ok(row.textContent?.includes("+850"), "Must display live token count");
 	assert.ok(row.textContent?.includes("2.0s"), "Must display ticking live duration");
 });
 

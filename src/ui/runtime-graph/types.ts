@@ -14,6 +14,7 @@ export interface TaskTreeItem {
 	readonly liveNode?: RuntimeTaskNode;
 	readonly receipt?: RuntimeTaskReceipt;
 	readonly waitingOn?: readonly number[];
+	readonly tokenDelta?: number;
 	readonly children: TaskTreeItem[];
 }
 
