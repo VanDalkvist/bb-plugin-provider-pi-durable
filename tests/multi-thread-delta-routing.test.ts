@@ -68,10 +68,11 @@ test("PiThreadSession routes deltas to child threadId when conversation is regis
 		};
 		await (session as any).handleRunnerEvent(subagentEvent);
 
-		const subagentDeltas = notifications.filter(n => n.params.threadId === "thr_parent");
-		const lastDelta = subagentDeltas.at(-1)?.params.deltas as any[];
-		assert.ok(lastDelta, "Subagent delta must route to thr_parent");
-		assert.equal(lastDelta[0].key?.parentRef, "call_subagent_1");
+		const subagentTextDeltas = notifications
+			.filter(n => n.params.threadId === "thr_parent")
+			.flatMap(n => (n.params.deltas as any[]) || [])
+			.filter(d => d.text === "Subagent thoughts");
+		assert.equal(subagentTextDeltas.length, 0, "Subagent detail deltas must not leak into parent transcript");
 
 		// 4. Unregistering child thread cleans up mapping
 		session.unregisterThread("thr_child");

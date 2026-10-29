@@ -116,6 +116,7 @@ test("SessionRegistry: concurrent root and child createOrGet on same sessionKey 
 		start: async () => {
 			await new Promise((r) => setTimeout(r, 20));
 		},
+		getSubagentState: () => ({ status: "running", task: "task" }),
 	});
 
 	const registry = new SessionRegistry(

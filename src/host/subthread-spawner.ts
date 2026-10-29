@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { getBbDataDir } from "./paths.ts";
 import { nativeChildTitle } from "../shared/child-title.ts";
+import { formatSubagentMirrorPrompt } from "../shared/subagent-envelope.ts";
 
 const execFileAsync = promisify(execFile);
 
@@ -14,6 +15,7 @@ export interface SubthreadSpawnArgs {
 	parentThreadId: string;
 	title: string;
 	task: string;
+	sessionKey?: string;
 	conversationId?: string;
 	actualModel?: { provider: string; modelId: string };
 	thinkingLevel?: string;
@@ -97,6 +99,11 @@ export function buildSpawnArgs(args: SubthreadSpawnArgs): string[] {
 		process.env.BB_ENVIRONMENT_ID ||
 		dbContext?.environmentId;
 
+	const prompt =
+		args.sessionKey && args.conversationId
+			? formatSubagentMirrorPrompt(args.sessionKey, args.parentThreadId, args.conversationId, args.task)
+			: args.task;
+
 	const cliArgs = [
 		"thread",
 		"spawn",
@@ -107,7 +114,7 @@ export function buildSpawnArgs(args: SubthreadSpawnArgs): string[] {
 		"--title",
 		nativeChildTitle(args.title),
 		"--prompt",
-		args.task,
+		prompt,
 		"--provider",
 		"pi-durable",
 		"--json",

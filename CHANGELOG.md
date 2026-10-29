@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.3.28] - 2026-10-30
+
+### Fixed
+- **Subagent Mirror Correlation & Independent Child Threads (Cycle 97)**: Decoupled ordinary Beyond Boundaries child threads (manual user subthreads, forks, visual-workflows) from native Pi Durable subagent mirrors, allowing non-mirror child threads to spawn independent isolated runner sessions instead of failing with `Cannot resolve native child conversation`.
+- **Versioned Mirror Envelope**: Introduced typed adapter envelope `[bb:pi-subagent-mirror:v1 session=<sKey> parent=<pId> conv=<cId>]` for deterministic correlation across CLI spawn and RPC start, eliminating task-text collision and thread hijacking. Envelope is stripped cleanly before prompt execution.
+- **Parent Transcript Stream Isolation**: Confined child conversation events (`conv >= 2`) exclusively to mirror threads (buffered when binding is late), ensuring the parent timeline receives only clean delegation summary cards without leaked raw child text, reasoning, or lifecycle turns.
+- **Identity & Anti-Theft Guard**: Validated conversation ownership and session keys across all attach branches (resident, wait, cold), preventing conversation stealing (`boundThread === threadId`) and rejecting root aliases (`conv=1, 01`) fail-closed.
+- **In-Flight Admission Coalescing**: Fixed admission coordination so concurrent ordinary children do not coalesce into parent admission promises or get cancelled when a parent stops.
+
+---
+
 ## [0.3.27] - 2026-10-30
 
 ### Fixed

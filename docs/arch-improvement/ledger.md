@@ -438,6 +438,33 @@
   - Версия обновлена `0.3.23` → `0.3.24` в `package.json` и `package-lock.json`.
   - `npm run build` пересобрал бандлы: `dist/server.js`, `dist/app.js`, `dist/host.js`, `dist/runner/index.js` с версией `0.3.24`.
 
+
+### Subagent Mirror Correlation, Stream Isolation & Child Thread Independence (Cycle 97) — 2026-10-30
+
+- **Цель и статус:** Разделение жизненного цикла обычных дочерних тредов Beyond Boundaries (пользовательские сабтреды, форки, visual-workflows) и нативных зеркал субагентов Pi Durable; детерминированная корреляция через версионированный конверт; полная изоляция дочерних событий от родительского таймлайна (summary only). Статус: **PASS (VERIFIED)**.
+- **Устранённые дефекты и первоисточники:**
+  - *Захват и падение обычных дочерних тредов (AP-011, AP-026):* В `SessionRegistry.createOrGet` любой тред с `parent_thread_id` безусловно трактовался как зеркало субагента и пытался привязаться к сессии родителя. Обычные дочерние треды пользователей не имели записи субагента в памяти родителя и крашились с `Cannot resolve native child conversation`. Решение: не-зеркальные дочерние треды теперь детерминированно порождают автономные изолированные сессии раннера без падения и захвата сессии родителя.
+  - *Коллизии одинаковых промптов и подделка сессий (AP-034, AP-048):* Введён типизированный конверт `[bb:pi-subagent-mirror:v1 session=<sKey> parent=<pId> conv=<cId>]`, связывающий тред со своей дочерней беседой без зависимости от порядка вывода CLI и без коллизий при идентичных текстах задач. Конверт проверяется строгим regex (`SAFE_SESSION_KEY_REGEX`), отвергает подделку корневых бесед (`conv >= 2`, запрет `conv=01`) и чисто срезается до отправки в модель Pi.
+  - *Утечка детских событий и turn_start в родителя (AP-010, AP-021, AP-023):* `session-subagent-handler.ts` изолирует все события дочерних бесед (`conv >= 2`) строго в зеркальный тред (с буферизацией при отложенной привязке). В родительский таймлайн передаётся только карточка инструмента `delegation` со сводкой `summary`, что устраняет непарные `turn.open` и поломку отображения чата в BB.
+  - *Изоляция отмены и совместного старта (AP-012, AP-026):* В `SessionAdmissionCoordinator` обычные дочерние треды не передают `parentThreadId`, что предотвращает ошибочное объединение промисов с родителем и случайный abort дочернего треда при остановке родителя.
+- **TDD и доказательная база:**
+  - Приёмочные пробы координатора (`identity-probes.mjs`): 5 из 5 PASS (проверены изоляция обычного ребёнка, отказ неизвестной беседы, защита от кражи чужой беседы, холодный старт и запрет корневых псевдонимов `conv=01`).
+  - Таргетированный сьют: 58 тестов в 15 файлах — 100% PASS.
+  - Полный сьют тестов: **580 тестов бэкенда pass + 117 тестов UI pass = 697 pass, 0 fail**.
+  - Контракты и типизация: `npm run test:contracts` (0 errors), `npx tsc --noEmit` (0 errors).
+  - Ацикличность импортов: `node scripts/verify-import-graph.mjs` (0 циклов, 57 файлов).
+- **Line Budgets (AP-019):**
+  - `src/shared/subagent-envelope.ts`: 92 строки (< 200)
+  - `src/host/subthread-spawner.ts`: 168 строк (< 200)
+  - `src/host/session-subagent-handler.ts`: 188 строк (< 200)
+  - `src/host/session-registry.ts`: 241 строка (< 250 hard limit)
+  - `src/host/bridge-router.ts`: 199 строк (< 200)
+  - `src/host/child-turn-guard.ts`: 189 строк (< 200)
+  - Все тестовые файлы (включая распиленный `host-subthread-envelope.test.ts` и `host-subthread-envelope-errors.test.ts`) строго < 250 строк.
+- **Сборка (Build Receipt):**
+  - Версия обновлена `0.3.27` → `0.3.28` в `package.json` и `package-lock.json`.
+  - `npm run build` пересобрал дистрибутивы: `dist/server.js`, `dist/app.js`, `dist/host.js`, `dist/runner/index.js` с версией `0.3.28`.
+
 ### Deterministic Subagent Mirror Attachment & Clean Architecture Review (Cycle 96) — 2026-10-30
 
 - **Цель и статус:** Устранение стохастического падения зеркальных тредов субагентов `Cannot resolve native child conversation for thread <childId> under parent <parentThreadId>` при спавне через `subagent` tool с полным соблюдением Clean Architecture (без пустых catch, без нечётких эвристик, без избыточных фолбэков). Статус: **PASS (VERIFIED)**.

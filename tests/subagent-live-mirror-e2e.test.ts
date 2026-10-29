@@ -8,6 +8,7 @@ import { PiThreadSession } from "../src/host/session.ts";
 import { SessionRegistry } from "../src/host/session-registry.ts";
 import { handleTurnStart } from "../src/host/bridge-router.ts";
 import type { RunnerEvent } from "../src/host/types.ts";
+import { sessionFixture } from "./fixtures/mirror.ts";
 
 test("End-to-End Mirror Sync: Subagent execution events stream into child BB thread without duplicate prompt or empty transcript", async () => {
     const notifications: Array<{
@@ -38,7 +39,10 @@ test("End-to-End Mirror Sync: Subagent execution events stream into child BB thr
         promptedText = text;
         promptedConvId = convId;
     };
-    const registry = new SessionRegistry((method, params) => notifications.push({ method, params }));
+    const registry = new SessionRegistry(
+        (method, params) => notifications.push({ method, params }),
+        () => sessionFixture({ runner: { exited: false }, options: { threadId: "dummy" } }),
+    );
     registry.track("thr_parent_live", session);
     const ctx = {
         registry,
@@ -76,7 +80,7 @@ test("End-to-End Mirror Sync: Subagent execution events stream into child BB thr
             threadId: "thr_bb_child_77",
             providerThreadId: "pi_durable_child_rand_999",
             parentThreadId: "thr_parent_live",
-            input: [{ type: "text", text: "Perform deep analysis" }],
+            input: [{ type: "text", text: "[bb:pi-subagent-mirror:v1 session=pi_durable_live parent=thr_parent_live conv=77]\nPerform deep analysis" }],
             clientRequestId: "creq_23456789ab",
         }, ctx);
         // Verify Active Subagent Guard prevented duplicate prompt!
@@ -141,16 +145,17 @@ test("End-to-End Mirror Sync: Subagent execution events stream into child BB thr
         assert.ok(childToolClose, "Child thread must receive tool execution item.close");
         assert.equal(childToolClose.status, "completed");
         assert.ok(updatedChildDeltas.some((d) => d.kind === "turn.boundary" && d.status === "completed"), "Child thread MUST receive turn.boundary completed!");
-        // Verify parent thread also received card updates with parentRef
-        const parentDeltas = notifications
+        // Verify parent thread did NOT receive child detail deltas (approved UX: delegation summary only)
+        const parentChildDeltas = notifications
             .filter((n) => n.method === "thread/delta" && n.params.threadId === "thr_parent_live")
-            .flatMap((n) => n.params.deltas as any[]);
-        assert.ok(parentDeltas.some((d) => d.key?.parentRef === "call_sub_1"), "Parent thread MUST receive in-place card deltas with parentRef!");
+            .flatMap((n) => n.params.deltas as any[])
+            .filter((d) => d.kind === "item.textDelta" || d.text || d.key?.parentRef === "call_sub_1");
+        assert.equal(parentChildDeltas.length, 0, "Parent thread must not receive child text or tool detail deltas");
         // --- PHASE 6: Continuation in child thread ---
         // User types "Explain step 1" in the child thread thr_bb_child_77
         await handleTurnStart("req_bb_turn_2", {
             threadId: "thr_bb_child_77",
-            providerThreadId: "pi_durable_child_rand_999",
+            providerThreadId: "pi_durable_live:77",
             parentThreadId: "thr_parent_live",
             input: [{ type: "text", text: "Explain step 1" }],
             clientRequestId: "creq_3456789abc",

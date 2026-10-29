@@ -1,6 +1,6 @@
 import React, { type FC, useState, useEffect, useRef, useCallback } from "react";
 import { useRpc } from "@get-bb/plugin-sdk/app";
-import type { rpcContract } from "../../server.ts";
+import type { rpcContract } from "../../../server.ts";
 import type { RuntimeGraphState, TaskTreeItem } from "./types.ts";
 import { useRuntimeGraphState } from "./use-runtime-graph-state.ts";
 import { RuntimeGraphTree } from "./tree.tsx";

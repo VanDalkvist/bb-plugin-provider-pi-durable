@@ -86,7 +86,8 @@ export class ProviderBridge {
 						? params.providerThreadId
 						: `pi_durable_${Date.now()}`;
 					await this.registry.createOrGet(threadId, providerThreadId, params);
-					this.sendResult(id, { providerThreadId, sessionRestorable: true });
+					const boundProviderThreadId = this.registry.getBoundProviderThreadId(threadId) ?? providerThreadId;
+					this.sendResult(id, { providerThreadId: boundProviderThreadId, sessionRestorable: true });
 					break;
 				}
 

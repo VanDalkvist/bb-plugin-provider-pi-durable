@@ -65,6 +65,39 @@ test("buildSpawnArgs appends --environment when environmentId is explicitly pass
 	}
 });
 
+test("buildSpawnArgs embeds versioned mirror envelope when sessionKey and conversationId are provided", () => {
+	const origEnv = process.env.BB_ENVIRONMENT_ID;
+	delete process.env.BB_ENVIRONMENT_ID;
+	try {
+		const args = buildSpawnArgs({
+			projectId: "proj_personal",
+			parentThreadId: "thr_parent_123",
+			sessionKey: "pi_durable_session_root_456",
+			conversationId: "789",
+			title: "Subagent: Fix security leak",
+			task: "Fix security leak in auth controller",
+		});
+
+		assert.deepEqual(args, [
+			"thread",
+			"spawn",
+			"--project",
+			"proj_personal",
+			"--parent-thread",
+			"thr_parent_123",
+			"--title",
+			"Subagent: Fix security leak",
+			"--prompt",
+			"[bb:pi-subagent-mirror:v1 session=pi_durable_session_root_456 parent=thr_parent_123 conv=789]\nFix security leak in auth controller",
+			"--provider",
+			"pi-durable",
+			"--json",
+		]);
+	} finally {
+		if (origEnv !== undefined) process.env.BB_ENVIRONMENT_ID = origEnv;
+	}
+});
+
 test("spawnSubthreadInBb registers thread when CLI returns thread JSON", async () => {
     let registered: {
         threadId: string;

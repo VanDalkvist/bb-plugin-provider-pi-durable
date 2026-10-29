@@ -3,6 +3,7 @@ import { adoptInitialMirror } from "./mirror-adoption.ts";
 import { extractPiPromptInput, isCompactCommand, extractCompactInstructions } from "./prompt-input.ts";
 import { reconcileSessionOptions } from "./session-reconcile.ts";
 import { isChildTurn, validateChildTurn, sendInputAccepted, resolveTargetConversationId, synthesizeCompletionDeltas } from "./child-turn-guard.ts";
+import { stripSubagentMirrorEnvelope } from "../shared/subagent-envelope.ts";
 
 export interface BridgeRouterContext {
 	registry: SessionRegistryPort;
@@ -60,7 +61,14 @@ export async function handleTurnStart(id: string | number, params: TurnStartPara
 			ctx.sendError(id, -32602, "Missing input text");
 			return;
 		}
-		const { text, images } = promptInput;
+		let text = promptInput.text;
+		try {
+			text = stripSubagentMirrorEnvelope(text);
+		} catch (err) {
+			ctx.sendError(id, -32602, err instanceof Error ? err.message : String(err));
+			return;
+		}
+		const { images } = promptInput;
 		const targetConversationId = resolveTargetConversationId(params, session)
 			?? (typeof session.findSubagentConversationForTask === "function" ? session.findSubagentConversationForTask(text) : undefined);
 
@@ -125,7 +133,14 @@ export async function handleTurnStart(id: string | number, params: TurnStartPara
 		ctx.sendError(id, -32602, "Missing input text");
 		return;
 	}
-	const { text, images } = promptInput;
+	let text = promptInput.text;
+	try {
+		text = stripSubagentMirrorEnvelope(text);
+	} catch (err) {
+		ctx.sendError(id, -32602, err instanceof Error ? err.message : String(err));
+		return;
+	}
+	const { images } = promptInput;
 
 	await reconcileSessionOptions(session, params.options, params.providerOptions);
 	await session.prompt({ text, images });

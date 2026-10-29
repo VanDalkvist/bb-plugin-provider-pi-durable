@@ -1,10 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
 import { DurableBindingManager } from "../src/host/durable-binding-store.ts";
 import { SessionRegistry } from "../src/host/session-registry.ts";
+import { resolveSessionFilePath } from "../src/host/paths.ts";
 import type { OwnedSessionPort } from "../src/host/session-port.ts";
 
 function createTmpDir(prefix: string): string {
@@ -33,6 +34,11 @@ test("SessionRegistry: child arriving before parent boots parent and binds child
 	const dir = createTmpDir("child-before-parent-test");
 	const notifications: Array<{ method: string; params: Record<string, unknown> }> = [];
 	try {
+		const sessDir = resolveSessionFilePath("pi_durable_parent_test");
+		rmSync(sessDir, { recursive: true, force: true });
+		mkdirSync(sessDir, { recursive: true });
+		writeFileSync(join(sessDir, "session.sqlite"), "");
+
 		const manifestFile = join(dir, "adapter-bindings.json");
 		writeFileSync(manifestFile, JSON.stringify([
 			{ bbThreadId: "thr_child_cold", conversationId: "26015", parentThreadId: "thr_parent_main" },
@@ -91,7 +97,7 @@ test("SessionRegistry: child arriving before parent boots parent and binds child
 	}
 });
 
-test("SessionRegistry: child with unresolved identity fails closed, never creates standalone root", async () => {
+test("SessionRegistry: child claiming native mirror identity with missing session database fails closed", async () => {
 	const dir = createTmpDir("child-fail-closed-test");
 	try {
 		const mockSession: OwnedSessionPort = {
@@ -131,16 +137,77 @@ test("SessionRegistry: child with unresolved identity fails closed, never create
 
 		await assert.rejects(
 			async () => {
-				await registry.createOrGet("thr_child_unknown", "pi_durable_parent_unresolved", {
+				await registry.createOrGet("thr_child_unknown", "pi_durable_parent_unresolved:99999", {
 					parentThreadId: "thr_parent_only",
 				});
 			},
 			(err: Error) => {
-				assert.match(err.message, /Cannot resolve|Unresolved parent owner thread/i);
+				assert.match(err.message, /SESSION_OWNER_CONFLICT|Cannot resolve|Unresolved parent owner thread/i);
 				return true;
 			},
-			"Child with ambiguous identity must fail closed, never become standalone root",
+			"Child with missing parent session database must fail closed",
 		);
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test("SessionRegistry: cold mirror claiming unknown conversation rejected even when session.sqlite exists", async () => {
+	const dir = createTmpDir("child-cold-unknown-test");
+	try {
+		const sessDir = resolveSessionFilePath("pi_durable_cold_reject_test");
+		rmSync(sessDir, { recursive: true, force: true });
+		mkdirSync(sessDir, { recursive: true });
+		writeFileSync(join(sessDir, "session.sqlite"), "");
+
+		const mockSession: OwnedSessionPort = {
+			options: {
+				threadId: "thr_parent_cold_reject",
+				providerThreadId: "pi_durable_cold_reject_test",
+				cwd: dir,
+			},
+			runner: { exited: false, requestOk: async () => ({}) },
+			async start() {},
+			async closeGracefully() {},
+			kill() {},
+			unregisterThread() {},
+			async prompt() {},
+			async steer() {},
+			async abort() {},
+			async compact() {},
+			async refreshContextUsage() {},
+			getLastCheckpointId: () => null,
+			registerThread: () => false,
+			getConversationIdForThread: () => undefined,
+			getSubagentState: () => undefined,
+			findSubagentConversationForTask: () => undefined,
+			getMirrorOutputText: () => "",
+			markInitialMirrorTurnConsumed() {},
+			consumeCompletedMirror() {},
+			async setModel() {},
+			async setThinkingLevel() {},
+			async setSubagentPolicy() {},
+			getAcknowledgedSubagentPolicyRevision: () => undefined,
+		};
+
+		const registry = new SessionRegistry(
+			() => {},
+			() => mockSession,
+		);
+
+		await assert.rejects(
+			async () => {
+				await registry.createOrGet("thr_child_cold_unknown", "pi_durable_cold_reject_test:99999", {
+					parentThreadId: "thr_parent_cold_reject",
+				});
+			},
+			(err: Error) => {
+				assert.match(err.message, /SESSION_OWNER_CONFLICT/i);
+				return true;
+			},
+			"Child with unknown conversation in cold session must fail closed",
+		);
+		assert.equal(mockSession.getConversationIdForThread("thr_child_cold_unknown"), undefined);
 	} finally {
 		rmSync(dir, { recursive: true, force: true });
 	}

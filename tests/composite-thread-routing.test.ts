@@ -47,6 +47,7 @@ test("SessionRegistry shares active session across composite child threadIds", a
         unregisterThread: (threadId: string) => {
             unregisteredThreads.push(threadId);
         },
+        getSubagentState: () => ({ status: "running", task: "Subagent task" }),
         closeGracefully: async () => {
             closeCalled = true;
         },

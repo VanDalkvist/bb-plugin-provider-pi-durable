@@ -7,6 +7,7 @@ import { sessionFixture } from "./fixtures/mirror.ts";
 test("SessionIdentityGuard: legitimate child attaches to parent with own alias providerThreadId", async () => {
 	const sessionParent = sessionFixture({
 		options: { threadId: "thr_parent_legit", providerThreadId: "pi_parent_root" },
+		getSubagentState: (id: string) => (id === "conv_sub_1" ? { status: "running", task: "..." } : undefined),
 	});
 	const registry = new SessionRegistry(() => {}, () => sessionParent);
 	await registry.createOrGet("thr_parent_legit", "pi_parent_root");
@@ -90,6 +91,7 @@ test("SessionIdentityGuard: same-thread identity replacement on root thread thro
 test("SessionIdentityGuard: attached child thread rejects foreign root sessionKey", async () => {
 	const sessionParent = sessionFixture({
 		options: { threadId: "thr_p_sub", providerThreadId: "pi_p_root" },
+		getSubagentState: (id: string) => (id === "conv_c" ? { status: "running", task: "..." } : undefined),
 	});
 	const registry = new SessionRegistry(() => {}, () => sessionParent);
 	await registry.createOrGet("thr_p_sub", "pi_p_root");

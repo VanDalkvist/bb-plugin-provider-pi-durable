@@ -78,13 +78,16 @@ test("handleTurnStart: running mirror emits turn.open to prevent 120s timeout", 
     }> = [];
     const mockSession = sessionFixture({
         runner: { exited: false },
-        options: { threadId: "thr_parent" },
-        findSubagentConversationForTask: () => "conv_running_1",
-        getSubagentState: (id: string) => (id === "conv_running_1" ? { status: "running", task: "Audit" } : undefined),
+        options: { threadId: "thr_parent", providerThreadId: "pi_durable_parent" },
+        findSubagentConversationForTask: () => "101",
+        getSubagentState: (id: string) => (id === "101" ? { status: "running", task: "Audit" } : undefined),
         markInitialMirrorTurnConsumed: () => { },
         registerThread: () => false,
     });
-    const registry = new SessionRegistry(() => { });
+    const registry = new SessionRegistry(
+        () => {},
+        () => sessionFixture({ runner: { exited: false }, options: { threadId: "dummy" } }),
+    );
     registry.track("thr_parent", mockSession);
     const ctx = {
         registry,
@@ -95,7 +98,7 @@ test("handleTurnStart: running mirror emits turn.open to prevent 120s timeout", 
     await handleTurnStart("req_run_1", {
         threadId: "thr_child_run",
         parentThreadId: "thr_parent",
-        input: [{ type: "text", text: "Audit" }],
+        input: [{ type: "text", text: "[bb:pi-subagent-mirror:v1 session=pi_durable_parent parent=thr_parent conv=101]\nAudit" }],
         clientRequestId: "creq_23456789ab",
     }, ctx);
     // Results acknowledged
@@ -120,15 +123,18 @@ test("handleTurnStart: completed mirror emits turn.open, accumulated text, and t
     }> = [];
     const mockSession = sessionFixture({
         runner: { exited: false },
-        options: { threadId: "thr_parent" },
-        findSubagentConversationForTask: () => "conv_done_1",
-        getSubagentState: (id: string) => (id === "conv_done_1" ? { status: "completed", task: "Quick Task", result: "Task complete result!" } : undefined),
+        options: { threadId: "thr_parent", providerThreadId: "pi_durable_parent" },
+        findSubagentConversationForTask: () => "102",
+        getSubagentState: (id: string) => (id === "102" ? { status: "completed", task: "Quick Task", result: "Task complete result!" } : undefined),
         getMirrorOutputText: () => "Task complete result!",
         consumeCompletedMirror: () => { },
         markInitialMirrorTurnConsumed: () => { },
         registerThread: () => false,
     });
-    const registry = new SessionRegistry(() => { });
+    const registry = new SessionRegistry(
+        () => {},
+        () => sessionFixture({ runner: { exited: false }, options: { threadId: "dummy" } }),
+    );
     registry.track("thr_parent", mockSession);
     const ctx = {
         registry,
@@ -139,7 +145,7 @@ test("handleTurnStart: completed mirror emits turn.open, accumulated text, and t
     await handleTurnStart("req_done_1", {
         threadId: "thr_child_done",
         parentThreadId: "thr_parent",
-        input: [{ type: "text", text: "Quick Task" }],
+        input: [{ type: "text", text: "[bb:pi-subagent-mirror:v1 session=pi_durable_parent parent=thr_parent conv=102]\nQuick Task" }],
         clientRequestId: "creq_23456789ab",
     }, ctx);
     // Results acknowledged

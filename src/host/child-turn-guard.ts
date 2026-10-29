@@ -1,5 +1,6 @@
 import { ROOT_CONVERSATION_ID } from "@earendil-works/pi-durable";
 import { parseProviderThreadId } from "./composite-id.ts";
+import { SessionIdentityMismatchError } from "./session-errors.ts";
 
 export interface ChildTurnSessionLike {
 	options?: { threadId?: string; model?: { provider: string; id: string }; thinkingLevel?: string };
@@ -25,11 +26,18 @@ export function resolveTargetConversationId(
 	params: { threadId: string; providerThreadId?: string },
 	session: { options?: { threadId?: string; providerThreadId?: string }; getConversationIdForThread?: (t: string) => string | undefined },
 ): string | undefined {
+	const bound = session.getConversationIdForThread?.(params.threadId);
 	if (params.providerThreadId) {
 		const parsed = parseProviderThreadId(params.providerThreadId).conversationId;
-		if (parsed && parsed !== ROOT_CONVERSATION_ID_STR) return parsed;
+		if (parsed && parsed !== ROOT_CONVERSATION_ID_STR) {
+			if (bound && bound !== ROOT_CONVERSATION_ID_STR && parsed !== bound) {
+				throw new SessionIdentityMismatchError(
+					`SESSION_IDENTITY_MISMATCH: thread ${params.threadId} is bound to conversation ${bound}, requested ${parsed}`,
+				);
+			}
+			return parsed;
+		}
 	}
-	const bound = session.getConversationIdForThread?.(params.threadId);
 	if (bound && bound !== ROOT_CONVERSATION_ID_STR) return bound;
 	if (!session.options?.threadId || params.threadId === session.options.threadId) {
 		const parsed = parseProviderThreadId(session.options?.providerThreadId ?? params.threadId).conversationId;

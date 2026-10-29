@@ -1,3 +1,5 @@
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { resolveSessionFilePath } from "./paths.ts";
 import { parseProviderThreadId } from "./composite-id.ts";
 import { PiThreadSession } from "./session.ts";
@@ -7,8 +9,9 @@ import { resolveThreadContextFromDb } from "./subthread-spawner.ts";
 import { extractInputText } from "./prompt-input.ts";
 import { detectNativeChild } from "./session-owner.ts";
 import { SessionAdmissionCoordinator, buildSessionOptions } from "./session-admission.ts";
-import { SessionCreationAbortedError, SessionOwnerConflictError } from "./session-errors.ts";
+import { SessionCreationAbortedError, SessionOwnerConflictError, SessionIdentityMismatchError } from "./session-errors.ts";
 import { SessionBindingTracker } from "./session-binding.ts";
+import { parseSubagentMirrorPrompt } from "../shared/subagent-envelope.ts";
 
 export type SessionFactory = (options: SessionOptions, sendNotification: (method: string, params: Record<string, unknown>) => void) => OwnedSessionPort;
 
@@ -46,18 +49,27 @@ export class SessionRegistry {
 		return session;
 	}
 
-	private attachShared(threadId: string, providerThreadId: string, session: OwnedSessionPort, nativeChild: ReturnType<typeof detectNativeChild>, params: SessionCreationParams, parentThreadId?: string): OwnedSessionPort {
-		const text = extractInputText(params.input) || params.prompt?.trim() || params.task?.trim() || "";
-		const targetConvId = nativeChild.conversationId
-			?? (text && typeof session.findSubagentConversationForTask === "function" ? session.findSubagentConversationForTask(text) : undefined)
-			?? session.getConversationIdForThread?.(threadId);
-		if (parentThreadId && !targetConvId) {
-			throw new Error(`Cannot resolve native child conversation for thread ${threadId} under parent ${parentThreadId}`);
+	private async validateMirrorTarget(session: OwnedSessionPort, threadId: string, targetConvId: string, expectedSessionKey?: string): Promise<void> {
+		if (expectedSessionKey) {
+			const k = parseProviderThreadId(session.options.providerThreadId).sessionKey;
+			if (k !== expectedSessionKey) throw new SessionIdentityMismatchError(`SESSION_IDENTITY_MISMATCH: parent thread ${session.options.threadId} is bound to ${k}, requested ${expectedSessionKey}`);
 		}
+		const boundThread = session.getThreadIdForConversation?.(targetConvId);
+		const boundConv = session.getConversationIdForThread?.(threadId);
+		const isBoundToThis = boundThread === threadId || boundConv === targetConvId;
+		if (boundThread && !isBoundToThis) throw new SessionOwnerConflictError();
+		const subagentState = session.getSubagentState?.(targetConvId);
+		if (!subagentState && !isBoundToThis) throw new SessionOwnerConflictError();
+	}
+
+	private async attachShared(threadId: string, providerThreadId: string, session: OwnedSessionPort, targetConvId?: string, expectedSessionKey?: string): Promise<OwnedSessionPort> {
+		if (targetConvId) await this.validateMirrorTarget(session, threadId, targetConvId, expectedSessionKey);
+		const sKey = parseProviderThreadId(session.options.providerThreadId).sessionKey;
+		const boundProviderThreadId = targetConvId ? `${sKey}:${targetConvId}` : providerThreadId;
 		this.track(threadId, session);
 		this.bindings.bind(threadId, providerThreadId);
 		session.registerThread?.(threadId, targetConvId);
-		this.sendNotification("thread/identity", { threadId, providerThreadId, sessionRestorable: true });
+		this.sendNotification("thread/identity", { threadId, providerThreadId: boundProviderThreadId, sessionRestorable: true });
 		this.sendNotification("thread/delta", { threadId, deltas: [{ kind: "session.reset" }] });
 		return session;
 	}
@@ -66,57 +78,81 @@ export class SessionRegistry {
 		const { sessionKey, conversationId } = parseProviderThreadId(providerThreadId);
 
 		const existing = this.sessions.get(threadId);
-		if (existing && !existing.runner?.exited) {
-			this.bindings.validateExistingThread(threadId, existing, providerThreadId);
-			return existing;
+		if (existing) {
+			if (!existing.runner?.exited) { this.bindings.validateExistingThread(threadId, existing, providerThreadId); return existing; }
+			this.sessions.delete(threadId); this.bindings.unbind(threadId);
 		}
-		if (existing && existing.runner?.exited) { this.sessions.delete(threadId); this.bindings.unbind(threadId); }
 
 		const rawParent = params.parentThreadId ?? params.options?.parentThreadId;
 		const dbContext = resolveThreadContextFromDb(threadId);
 		const parentThreadId = typeof rawParent === "string" && rawParent.trim() !== "" ? rawParent.trim() : dbContext?.parentThreadId;
-		const paramConvId = typeof params.conversationId === "string" && params.conversationId.trim() !== "" ? params.conversationId.trim() : undefined;
-		const parentSessionFilePath = parentThreadId ? resolveSessionFilePath(sessionKey) : undefined;
-		const nativeChild = detectNativeChild(threadId, conversationId, paramConvId, parentSessionFilePath);
+		const rawInputText = extractInputText(params.input) || params.prompt?.trim() || params.task?.trim() || dbContext?.prompt || "";
+		const parsedEnvelope = parseSubagentMirrorPrompt(rawInputText);
 
-		if (!params.prompt && !params.task && dbContext?.prompt) {
-			params.prompt = dbContext.prompt;
-		}
+		let targetConvId: string | undefined;
+		let effectiveParentThreadId = parentThreadId;
+		let effectiveSessionKey = sessionKey;
 
-		let sharedSession: OwnedSessionPort | undefined;
-		if (parentThreadId && this.sessions.has(parentThreadId)) {
-			const candidate = this.sessions.get(parentThreadId);
-			if (candidate && !candidate.runner?.exited) {
-				this.bindings.validateChildAttachment(parentThreadId, candidate, providerThreadId, this.sessions.values());
-				sharedSession = candidate;
+		if (parsedEnvelope.isMirror) {
+			if (parentThreadId && parentThreadId !== parsedEnvelope.parentThreadId) throw new SessionOwnerConflictError();
+			effectiveParentThreadId = parsedEnvelope.parentThreadId;
+			effectiveSessionKey = parsedEnvelope.sessionKey;
+			targetConvId = parsedEnvelope.conversationId;
+			params.prompt = parsedEnvelope.task;
+			params.task = parsedEnvelope.task;
+		} else {
+			const paramConvId = typeof params.conversationId === "string" && params.conversationId.trim() !== "" ? params.conversationId.trim() : undefined;
+			const parentPath = effectiveParentThreadId ? resolveSessionFilePath(effectiveSessionKey) : undefined;
+			const native = detectNativeChild(threadId, conversationId, paramConvId, parentPath);
+			if (native.isNative && native.conversationId) {
+				targetConvId = native.conversationId;
+			} else if (effectiveParentThreadId && this.sessions.has(effectiveParentThreadId)) {
+				const bound = this.sessions.get(effectiveParentThreadId)?.getConversationIdForThread?.(threadId);
+				if (bound && bound !== "1") targetConvId = bound;
 			}
 		}
 
-		if (!sharedSession) {
-			for (const active of this.sessions.values()) {
-				if (!active.runner?.exited && parseProviderThreadId(active.options.providerThreadId).sessionKey === sessionKey) {
-					if (nativeChild.isNative || active.options.threadId === threadId) {
-						sharedSession = active;
-						break;
-					}
+		if (!effectiveParentThreadId) {
+			for (const a of this.sessions.values()) {
+				if (!a.runner?.exited && parseProviderThreadId(a.options.providerThreadId).sessionKey === effectiveSessionKey) {
+					effectiveParentThreadId = a.options.threadId; break;
 				}
 			}
 		}
 
-		if (sharedSession) return this.attachShared(threadId, providerThreadId, sharedSession, nativeChild, params, parentThreadId);
+		if (targetConvId && targetConvId !== "1") {
+			if (!effectiveParentThreadId) throw new Error(`Unresolved parent owner thread for subagent conversation ${targetConvId}`);
+			const expectedSessionKey = parsedEnvelope.isMirror ? parsedEnvelope.sessionKey : undefined;
+			let sharedSession: OwnedSessionPort | undefined;
+			if (this.sessions.has(effectiveParentThreadId)) {
+				const candidate = this.sessions.get(effectiveParentThreadId);
+				if (candidate && !candidate.runner?.exited) {
+					this.bindings.validateChildAttachment(effectiveParentThreadId, candidate, providerThreadId, this.sessions.values());
+					await this.validateMirrorTarget(candidate, threadId, targetConvId, expectedSessionKey);
+					sharedSession = candidate;
+				}
+			}
 
-		const acquisition = this.admission.acquire(threadId, sessionKey, parentThreadId);
-		if (acquisition.kind === "wait") {
-			const created = await acquisition.promise;
-			if (this.sessions.get(threadId) === created) return created;
-			return this.attachShared(threadId, providerThreadId, created, nativeChild, params, parentThreadId);
-		}
+			if (sharedSession) {
+				return await this.attachShared(threadId, providerThreadId, sharedSession, targetConvId, expectedSessionKey);
+			}
 
-		const { admission } = acquisition;
-		try {
-			if (nativeChild.isNative || parentThreadId) {
-				if (!parentThreadId) throw new Error(`Unresolved parent owner thread for subagent conversation ${nativeChild.conversationId}`);
-				const options = buildSessionOptions(parentThreadId, providerThreadId, sessionKey, params, this.sharedSkillRoots, true);
+			const acquisition = this.admission.acquire(threadId, effectiveSessionKey, effectiveParentThreadId);
+			if (acquisition.kind === "wait") {
+				const created = await acquisition.promise;
+				if (this.sessions.get(threadId) === created) return created;
+				return await this.attachShared(threadId, providerThreadId, created, targetConvId, expectedSessionKey);
+			}
+
+			const sessionDbPath = join(resolveSessionFilePath(effectiveSessionKey), "session.sqlite");
+			if (!existsSync(sessionDbPath)) {
+				this.admission.reject(acquisition.admission, new SessionOwnerConflictError());
+				throw new SessionOwnerConflictError();
+			}
+
+			const { admission } = acquisition;
+			try {
+				const options = buildSessionOptions(effectiveParentThreadId, providerThreadId, effectiveSessionKey, params, this.sharedSkillRoots, true);
 				const session = this.sessionFactory(options, this.sendNotification);
 				this.admission.setSession(admission, session);
 				await session.start();
@@ -125,28 +161,24 @@ export class SessionRegistry {
 					this.admission.reject(admission, new SessionCreationAbortedError());
 					throw new SessionCreationAbortedError();
 				}
-				this.track(parentThreadId, session);
-				session.registerThread?.(parentThreadId);
+				this.track(effectiveParentThreadId, session);
+				session.registerThread?.(effectiveParentThreadId);
 				const childAborted = admission.isParticipantAborted(threadId);
-				if (!childAborted) {
-					const text = extractInputText(params.input) || params.prompt?.trim() || params.task?.trim() || "";
-					const resolvedConvId = nativeChild.conversationId
-						?? (text && typeof session.findSubagentConversationForTask === "function" ? session.findSubagentConversationForTask(text) : undefined)
-						?? session.getConversationIdForThread?.(threadId);
-					if (!resolvedConvId) {
-						throw new Error(`Cannot resolve native child conversation for thread ${threadId} under parent ${parentThreadId}`);
-					}
-					this.track(threadId, session);
-					this.bindings.bind(threadId, providerThreadId);
-					session.registerThread?.(threadId, resolvedConvId);
-					this.sendNotification("thread/identity", { threadId, providerThreadId, sessionRestorable: true });
-					this.sendNotification("thread/delta", { threadId, deltas: [{ kind: "session.reset" }] });
-				}
+				if (!childAborted) await this.attachShared(threadId, providerThreadId, session, targetConvId, expectedSessionKey);
 				this.admission.release(admission, session);
 				if (childAborted) throw new SessionCreationAbortedError();
 				return session;
+			} catch (err) {
+				if (!admission.released) this.admission.reject(admission, err);
+				throw err;
 			}
+		}
 
+		const acquisition = this.admission.acquire(threadId, sessionKey, undefined);
+		if (acquisition.kind === "wait") return acquisition.promise;
+
+		const { admission } = acquisition;
+		try {
 			const options = buildSessionOptions(threadId, providerThreadId, sessionKey, params, this.sharedSkillRoots, false);
 			const session = this.sessionFactory(options, this.sendNotification);
 			this.admission.setSession(admission, session);
@@ -157,13 +189,7 @@ export class SessionRegistry {
 				throw new SessionCreationAbortedError();
 			}
 			const creatorAborted = admission.isParticipantAborted(threadId);
-			if (!creatorAborted) {
-				session.registerThread?.(threadId, conversationId);
-				this.track(threadId, session);
-				this.bindings.bind(threadId, providerThreadId);
-				this.sendNotification("thread/identity", { threadId, providerThreadId, sessionRestorable: true });
-				this.sendNotification("thread/delta", { threadId, deltas: [{ kind: "session.reset" }] });
-			}
+			if (!creatorAborted) await this.attachShared(threadId, providerThreadId, session, conversationId);
 			this.admission.release(admission, session);
 			if (creatorAborted) throw new SessionCreationAbortedError();
 			return session;

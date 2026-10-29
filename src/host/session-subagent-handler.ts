@@ -1,6 +1,7 @@
 import { DeltaTranslator } from "./delta-translator.ts";
 import { SubagentMirrorManager, type SubagentMirrorRecord } from "./subagent-mirror.ts";
 import { spawnSubthreadInBb } from "./subthread-spawner.ts";
+import { parseProviderThreadId } from "./composite-id.ts";
 import type { RunnerEvent, SessionOptions } from "./types.ts";
 
 export interface SubagentSessionContext {
@@ -88,8 +89,12 @@ export class SessionSubagentHandler {
 
 				this.markActive(convId, { task, parentToolCallId, actualModel, thinkingLevel, source, policyRevision });
 				if (isNew && task) {
+					const parentSessionKey = session.options.providerThreadId
+						? parseProviderThreadId(session.options.providerThreadId).sessionKey
+						: session.options.threadId;
 					void spawnSubthreadInBb({
 						parentThreadId: session.options.threadId,
+						sessionKey: parentSessionKey,
 						environmentId: session.options.environmentId || process.env.BB_ENVIRONMENT_ID,
 						title: task.trim().slice(0, 80) || "Subagent",
 						task,
@@ -139,7 +144,10 @@ export class SessionSubagentHandler {
 			return false;
 		}
 
-		const isChildEvent = event.conversationId !== undefined && event.conversationId !== null;
+		const isChildEvent =
+			event.conversationId !== undefined &&
+			event.conversationId !== null &&
+			String(event.conversationId) !== "1";
 		const childThreadId = isChildEvent
 			? session.getThreadIdForConversation(event.conversationId as string | number)
 			: undefined;
@@ -166,13 +174,17 @@ export class SessionSubagentHandler {
 			if (event.type === "agent_end") {
 				this.markCompleted(event.conversationId as string | number);
 			}
-		} else if (isChildEvent) {
+			return true;
+		}
+
+		if (isChildEvent) {
 			this.mirrors.bufferEvent(event.conversationId as string | number, event);
 			if (event.type === "agent_end") {
 				this.markCompleted(event.conversationId as string | number);
 			}
+			return true;
 		}
 
-		return isChildEvent && (!event.parentRef || event.type === "agent_end");
+		return false;
 	}
 }

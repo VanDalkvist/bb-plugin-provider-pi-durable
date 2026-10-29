@@ -30,15 +30,18 @@ test("handleTurnStart intercepts running subagent turn on child thread and suppr
         prompt: async () => {
             promptCalls++;
         },
-        findSubagentConversationForTask: (task: string) => (task === "Run background test" ? "conv_sub_bg" : undefined),
-        getSubagentState: (convId: string) => (convId === "conv_sub_bg" ? { status: "running", task: "Run background test" } : undefined),
+        findSubagentConversationForTask: (task: string) => (task === "Run background test" ? "200" : undefined),
+        getSubagentState: (convId: string) => (convId === "200" ? { status: "running", task: "Run background test" } : undefined),
         markInitialMirrorTurnConsumed: () => { },
         registerThread: (threadId: string, conversationId?: string) => {
             registeredThreads.push({ threadId, conversationId });
             return false;
         },
     });
-    const registry = new SessionRegistry(() => { });
+    const registry = new SessionRegistry(
+        () => {},
+        () => sessionFixture({ runner: { exited: false }, options: { threadId: "dummy" } }),
+    );
     registry.track("thr_parent", mockParentSession);
     const ctx = {
         registry,
@@ -50,13 +53,13 @@ test("handleTurnStart intercepts running subagent turn on child thread and suppr
         threadId: "thr_child_spawn",
         providerThreadId: "pi_durable_child_random_500",
         parentThreadId: "thr_parent",
-        input: [{ type: "text", text: "Run background test" }],
+        input: [{ type: "text", text: "[bb:pi-subagent-mirror:v1 session=pi_durable_root parent=thr_parent conv=200]\nRun background test" }],
         clientRequestId: "creq_23456789ab",
     }, ctx);
     // 1. Duplicate prompt was NOT called
     assert.equal(promptCalls, 0, "session.prompt must not be called for an actively running subagent");
     // 2. Thread was registered with the parent session under the subagent conversationId
-    assert.ok(registeredThreads.some((r) => r.threadId === "thr_child_spawn" && r.conversationId === "conv_sub_bg"), "Child thread must be registered with conversationId");
+    assert.ok(registeredThreads.some((r) => r.threadId === "thr_child_spawn" && r.conversationId === "200"), "Child thread must be registered with conversationId");
     // 3. Turn was acknowledged to BB
     assert.equal(results.length, 1);
     assert.equal(results[0].id, "req_spawn_child_1");

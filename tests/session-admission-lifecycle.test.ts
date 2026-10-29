@@ -1,5 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { resolveSessionFilePath } from "../src/host/paths.ts";
 import { SessionRegistry } from "../src/host/session-registry.ts";
 import { sessionFixture } from "./fixtures/mirror.ts";
 import { SessionCreationAbortedError, SessionIdentityMismatchError } from "../src/host/session-errors.ts";
@@ -52,6 +55,7 @@ test("Finding 2A (P1): stop child waiter cancels wait, does not attach later, do
 		start: async () => {
 			await new Promise((r) => setTimeout(r, 40));
 		},
+		getSubagentState: () => ({ status: "running", task: "task" }),
 		registerThread: (threadId: string) => {
 			boundThreads.push(threadId);
 			return false;
@@ -83,33 +87,41 @@ test("Finding 2A (P1): stop child waiter cancels wait, does not attach later, do
 });
 
 test("Finding 2B (P1): child initiates creation before root: stop child creator does NOT kill shared root", async () => {
-	let killed = false;
-	const mockSession = sessionFixture({
-		options: { threadId: "thr_root", providerThreadId: "pi_sess_3" },
-		start: async () => {
-			await new Promise((r) => setTimeout(r, 40));
-		},
-		kill: () => {
-			killed = true;
-		},
-	});
+	const sessDir = resolveSessionFilePath("pi_sess_3");
+	mkdirSync(sessDir, { recursive: true });
+	writeFileSync(join(sessDir, "session.sqlite"), "");
+	try {
+		let killed = false;
+		const mockSession = sessionFixture({
+			options: { threadId: "thr_root", providerThreadId: "pi_sess_3" },
+			start: async () => {
+				await new Promise((r) => setTimeout(r, 40));
+			},
+			getSubagentState: () => ({ status: "running", task: "task" }),
+			kill: () => {
+				killed = true;
+			},
+		});
 
-	const registry = new SessionRegistry(() => {}, () => mockSession);
+		const registry = new SessionRegistry(() => {}, () => mockSession);
 
-	const childPromise = registry.createOrGet("thr_child_creator", "pi_sess_3:2", { parentThreadId: "thr_root" });
-	const rootPromise = registry.createOrGet("thr_root", "pi_sess_3");
+		const childPromise = registry.createOrGet("thr_child_creator", "pi_sess_3:2", { parentThreadId: "thr_root" });
+		const rootPromise = registry.createOrGet("thr_root", "pi_sess_3");
 
-	const childRejection = assert.rejects(childPromise, /SESSION_CREATION_ABORTED/);
+		const childRejection = assert.rejects(childPromise, /SESSION_CREATION_ABORTED/);
 
-	await new Promise((r) => setTimeout(r, 5));
-	await registry.stop("thr_child_creator");
-	await childRejection;
+		await new Promise((r) => setTimeout(r, 5));
+		await registry.stop("thr_child_creator");
+		await childRejection;
 
-	const rootSession = await rootPromise;
-	assert.equal(killed, false, "Shared root session must NOT be killed when child creator stops");
-	assert.equal(rootSession, mockSession);
-	assert.equal(registry.get("thr_root"), mockSession);
-	assert.equal(registry.get("thr_child_creator"), undefined);
+		const rootSession = await rootPromise;
+		assert.equal(killed, false, "Shared root session must NOT be killed when child creator stops");
+		assert.equal(rootSession, mockSession);
+		assert.equal(registry.get("thr_root"), mockSession);
+		assert.equal(registry.get("thr_child_creator"), undefined);
+	} finally {
+		rmSync(sessDir, { recursive: true, force: true });
+	}
 });
 
 test("Finding 2C (P1): dispose/stopAll rejects all affected requests with safe typed error and does not return killed runner", async () => {
