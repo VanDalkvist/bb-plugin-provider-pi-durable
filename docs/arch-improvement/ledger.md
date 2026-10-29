@@ -411,3 +411,6 @@
   - `src/ui/runtime-graph/tree.tsx`: delegates `expandableChildren = singleChild ? singleChild.children : item.children`, honors `hasActiveWork(singleChild ?? item)` for default collapse state, and renders `renderBranch(expandableChildren, depth + 1)`.
 - Verification: 666 tests pass (558 backend + 108 UI). Verified with real live thread snapshots (`thr_axjptvcdki`). Leaf tool breadcrumbs remain 1-line compact without chevrons, while nested tool calls display chevrons and expand all subtasks indented.
 - Line budgets: `node-row.tsx` (196 LOC), `tree.tsx` (188 LOC) strictly < 200 LOC.
+- **Сборка (Build Receipt):**
+  - Версия обновлена `0.3.21` → `0.3.22` в `package.json` и `package-lock.json`.
+  - `npm run build` пересобрал бандлы: `dist/server.js`, `dist/app.js`, `dist/host.js` с версией `0.3.22`.

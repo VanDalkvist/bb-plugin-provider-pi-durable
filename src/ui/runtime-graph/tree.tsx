@@ -118,10 +118,11 @@ export const RuntimeGraphTree: FC<RuntimeGraphTreeProps> = ({
 				item.label.startsWith("pi.generation");
 			const hasSingleChild = isGeneration && item.children.length === 1;
 			const singleChild = hasSingleChild ? item.children[0] : undefined;
-			const isMultiChild = item.children.length >= (hasSingleChild ? 2 : 1);
+			const expandableChildren = singleChild ? singleChild.children : item.children;
+			const hasExpandableChildren = expandableChildren.length > 0;
 
-			const defaultCollapsed = !hasActiveWork(item);
-			const isCollapsed = isMultiChild
+			const defaultCollapsed = !hasActiveWork(singleChild ?? item);
+			const isCollapsed = hasExpandableChildren
 				? (defaultCollapsed ? !collapsedTaskIds.has(item.id) : collapsedTaskIds.has(item.id))
 				: false;
 
@@ -141,8 +142,8 @@ export const RuntimeGraphTree: FC<RuntimeGraphTreeProps> = ({
 						onSelectChild={singleChild ? () => onSelectTask(singleChild.id) : undefined}
 						onToggleCollapse={() => onToggleCollapse(item.id)}
 					/>
-					{isMultiChild && !isCollapsed
-						? renderBranch(item.children, depth + 1, `branch-${item.id}`)
+					{hasExpandableChildren && !isCollapsed
+						? renderBranch(expandableChildren, depth + 1, `branch-${singleChild?.id ?? item.id}`)
 						: null}
 				</React.Fragment>
 			);

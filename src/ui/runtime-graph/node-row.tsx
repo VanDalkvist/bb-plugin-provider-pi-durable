@@ -27,9 +27,7 @@ function resolveStatusIcon(item: TaskTreeItem): { icon: string; colorClass: stri
 			case "pending": return { icon: "Clock", colorClass: "text-muted-foreground", title: "Queued" };
 		}
 	}
-	if (hasActiveWork(item)) {
-		return { icon: "Play", colorClass: "text-blue-500", title: "Running (active child work)" };
-	}
+	if (hasActiveWork(item)) return { icon: "Play", colorClass: "text-blue-500", title: "Running (active child work)" };
 	if (item.receipt) {
 		switch (item.receipt.outcome) {
 			case "completed": return { icon: "Check", colorClass: "text-green-500", title: "Completed" };
@@ -68,7 +66,7 @@ export const RuntimeGraphNodeRow: FC<RuntimeGraphNodeRowProps> = ({
 	const effectiveIconItem = (singleChild && (!singleChild.isTerminal || singleChild.receipt?.outcome !== "completed" || Boolean(singleChild.receipt?.isToolError)))
 		? singleChild : item;
 	const { icon, colorClass, title: statusTitle } = resolveStatusIcon(effectiveIconItem);
-	const hasChildren = !singleChild && item.children.length > 0;
+	const hasChildren = singleChild ? singleChild.children.length > 0 : item.children.length > 0;
 
 	const isActive = hasActiveWork(item) || (singleChild ? hasActiveWork(singleChild) : false);
 	const startedAt = item.liveNode?.startedAt ?? item.receipt?.startedAt ?? singleChild?.liveNode?.startedAt ?? singleChild?.receipt?.startedAt;
@@ -153,15 +151,16 @@ export const RuntimeGraphNodeRow: FC<RuntimeGraphNodeRowProps> = ({
 						<span
 							data-task-id={singleChild.id}
 							title={resolveItemLabel(singleChild)}
-							onClick={(e) => {
-								e.stopPropagation();
-								if (onSelectChild) onSelectChild();
-								else onSelect();
-							}}
+							onClick={(e) => { e.stopPropagation(); (onSelectChild ?? onSelect)(); }}
 							className="truncate max-w-[170px] font-medium hover:underline cursor-pointer"
 						>
 							{resolveItemLabel(singleChild)}
 						</span>
+						{singleChild.children.length > 0 ? (
+							<span className="text-[10px] text-muted-foreground flex-shrink-0">
+								({singleChild.children.length} tasks)
+							</span>
+						) : null}
 					</>
 				) : (
 					<>

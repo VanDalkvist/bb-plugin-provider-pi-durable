@@ -174,3 +174,81 @@ test("Cycle 82: Root list with > 5 tasks folds behind See more at the bottom and
 	const collapsedAgain = container.querySelectorAll("div[data-task-id]");
 	assert.equal(collapsedAgain.length, 5, "Collapsed back to 5 root turns");
 });
+
+test("Breadcrumbs with nested tools (e.g. codemode) render chevron and (N tasks) and expand subtasks", () => {
+	const sub1 = makeTask(92, "pi.tool", "read: foo.ts", true);
+	const sub2 = makeTask(93, "pi.tool", "write: bar.ts", true);
+	const sub3 = makeTask(94, "pi.tool", "bash: npm test", true);
+	const codemode = makeTask(91, "pi.tool", "codemode", true, [sub1, sub2, sub3], "codemode");
+	const generation = makeTask(90, "pi.generation", "pi.generation #90", true, [codemode]);
+
+	let toggledId: number | null = null;
+	const { container, rerender } = render(
+		React.createElement(RuntimeGraphTree, {
+			tree: [generation],
+			selectedTaskId: null,
+			collapsedTaskIds: new Set(),
+			onSelectTask: () => {},
+			onToggleCollapse: (id) => { toggledId = id; },
+		}),
+	);
+
+	// Breadcrumb row has both labels AND (3 tasks) count
+	assert.ok(container.textContent?.includes("pi.generation #90"));
+	assert.ok(container.textContent?.includes("›"));
+	assert.ok(container.textContent?.includes("codemode"));
+	assert.ok(container.textContent?.includes("(3 tasks)"), "Must display (3 tasks) hint next to breadcrumb");
+
+	// Row has a chevron button because codemode has children
+	const chevronBtn = container.querySelector("button[aria-expanded]") as HTMLButtonElement;
+	assert.ok(chevronBtn, "Breadcrumb with nested subtasks must have a chevron button");
+	assert.equal(chevronBtn.getAttribute("aria-expanded"), "false", "Must be collapsed by default when finished");
+
+	// Only 1 row in DOM when collapsed
+	const collapsedDivs = container.querySelectorAll("div[data-task-id]");
+	assert.equal(collapsedDivs.length, 1, "Only parent breadcrumb row in DOM when collapsed");
+
+	// Clicking chevron calls toggleCollapse
+	fireEvent.click(chevronBtn);
+	assert.equal(toggledId, 90, "Clicking chevron must toggle collapse for generation task #90");
+
+	// When expanded (toggled in collapsedTaskIds), all 3 subtasks are rendered
+	rerender(
+		React.createElement(RuntimeGraphTree, {
+			tree: [generation],
+			selectedTaskId: null,
+			collapsedTaskIds: new Set([90]),
+			onSelectTask: () => {},
+			onToggleCollapse: () => {},
+		}),
+	);
+
+	const expandedDivs = container.querySelectorAll("div[data-task-id]");
+	assert.equal(expandedDivs.length, 4, "Must render parent row + 3 subtask rows when expanded");
+	assert.ok(container.querySelector("div[data-task-id='92']"), "Subtask 92 must be rendered");
+	assert.ok(container.querySelector("div[data-task-id='93']"), "Subtask 93 must be rendered");
+	assert.ok(container.querySelector("div[data-task-id='94']"), "Subtask 94 must be rendered");
+});
+
+test("Breadcrumb with active nested tool is expanded by default", () => {
+	const activeSub = makeTask(97, "pi.tool", "read: foo.ts", false);
+	const codemode = makeTask(96, "pi.tool", "codemode", false, [activeSub], "codemode");
+	const generation = makeTask(95, "pi.generation", "pi.generation #95", false, [codemode]);
+
+	const { container } = render(
+		React.createElement(RuntimeGraphTree, {
+			tree: [generation],
+			selectedTaskId: null,
+			collapsedTaskIds: new Set(),
+			onSelectTask: () => {},
+			onToggleCollapse: () => {},
+		}),
+	);
+
+	const chevronBtn = container.querySelector("button[aria-expanded]") as HTMLButtonElement;
+	assert.ok(chevronBtn, "Must have chevron button");
+	assert.equal(chevronBtn.getAttribute("aria-expanded"), "true", "Active nested work must be expanded by default");
+
+	// Subtask row is visible
+	assert.ok(container.querySelector("div[data-task-id='97']"), "Active nested subtask must be visible");
+});
