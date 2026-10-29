@@ -55,6 +55,7 @@ function resolveItemLabel(item: TaskTreeItem): string {
 	if (target && (item.label === `${item.kind} #${item.id}` || item.label.startsWith("bb.subagent-anchor"))) {
 		return `${item.kind} · ${tool ? `${tool}: ` : ""}${target}`;
 	}
+	if (item.label.includes(" · waiting on ")) return item.label.split(" · waiting on ")[0];
 	return item.label;
 }
 
@@ -143,7 +144,7 @@ export const RuntimeGraphNodeRow: FC<RuntimeGraphNodeRowProps> = ({
 						<span
 							title={resolveItemLabel(item)}
 							onClick={(e) => { e.stopPropagation(); onSelect(); }}
-							className="truncate max-w-[140px] flex-shrink-0 hover:underline cursor-pointer"
+							className="truncate max-w-[280px] flex-shrink-0 hover:underline cursor-pointer"
 						>
 							{resolveItemLabel(item)}
 						</span>

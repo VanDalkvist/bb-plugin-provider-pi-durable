@@ -183,6 +183,13 @@
 - Use next time: Never put hardcoded pixel ceilings (`max-w-[Npx]`) on text elements inside flex containers that have right-aligned metrics (`ml-auto`). Use `truncate min-w-0` so the label fluidly expands across the entire card width, truncating with ellipsis only when the viewport or parent panel actually runs out of space.
 - Evidence: `src/ui/runtime-graph/node-row.tsx`, `tests/ui/runtime-graph-responsive-width.test.ts`, Cycle 92.
 
+## 2026-10-29 - Aligning Backend targetHint Limits with Wire Schema (Cycle 93)
+- Context: Serializing `targetHint` for tools and `taskLabel` for generation turns in `task-labels.ts`.
+- Symptom: Even after making UI rows fluid flexbox, file paths were cut at 48 characters with `...` (e.g. `read: /Users/vanya/Projects/arch-rules-skills/skills/...`), and parent generation rows displayed `assistant turn · gpt-6.1-sol (high) · ...`.
+- Cause: `sanitizeTargetHint` called `clip(s)` with `MAX_NAME = 48` (intended only for legacy `taskSteps` previews), even though the runtime graph wire schema permits 128 characters for `targetHint`. In addition, generation node labels retained redundant `· waiting on N` suffixes, which exceeded the parent breadcrumb width.
+- Use next time: Differentiate `preview` (bounded to 48 for legacy text panels) from `targetHint` (bounded to 128 per wire schema). In UI breadcrumbs, strip redundant ` · waiting on N` from generation labels when status badges already convey waiting task IDs, and allow sufficient parent max-width (`max-w-[280px]`).
+- Evidence: `src/runner/task-labels.ts`, `src/ui/runtime-graph/node-row.tsx`, `tests/ui/runtime-graph-responsive-width.test.ts`, Cycle 93.
+
 
 
 

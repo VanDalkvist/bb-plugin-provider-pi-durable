@@ -3720,21 +3720,22 @@ async function startSubagentWatcher(harness, adapter, getCurrentView, options) {
 
 // src/runner/task-labels.ts
 var MAX_NAME = 48;
+var MAX_TARGET_HINT = 128;
 var KIND_NAMES = {
   "pi.generation": "assistant turn",
   "pi.compaction": "compacting context"
 };
 var ARG_KEYS = ["command", "task", "path", "file_path", "pattern", "query", "url", "prompt"];
-function clip(text) {
+function clip(text, max = MAX_NAME) {
   const oneLine = text.replace(/\s+/g, " ").trim();
-  return oneLine.length <= MAX_NAME ? oneLine : `${oneLine.slice(0, MAX_NAME - 1)}\u2026`;
+  return oneLine.length <= max ? oneLine : `${oneLine.slice(0, max - 1)}\u2026`;
 }
-function sanitizeTargetHint(raw) {
+function sanitizeTargetHint(raw, max = MAX_TARGET_HINT) {
   let s = raw.replace(/\s+/g, " ").trim();
   s = s.replace(/bearer\s+[a-zA-Z0-9_\-\.]+/gi, "Bearer [redacted]");
   s = s.replace(/(ghp|gho|ghu|ghs|ghr|sec)_[a-zA-Z0-9]+/g, "[redacted]");
   s = s.replace(/(api[_-]?key|token|secret|password|passwd|auth)\s*[:=]\s*[^\s&]+/gi, "$1=[redacted]");
-  return clip(s);
+  return clip(s, max);
 }
 function argumentHint(args2) {
   if (typeof args2 !== "object" || args2 === null) return void 0;
@@ -3763,8 +3764,8 @@ var TaskNames = class {
       if (this.names.has(key)) continue;
       const args2 = isNested(slot) ? slot.arguments : resolveToolCallArgs(slot.callId, view);
       const hint = argumentHint(args2);
-      const toolName = slot.name ? clip(slot.name) : void 0;
-      const preview = clip(hint === void 0 ? slot.name : `${slot.name}: ${hint}`);
+      const toolName = slot.name ? clip(slot.name, MAX_NAME) : void 0;
+      const preview = clip(hint === void 0 ? slot.name : `${slot.name}: ${hint}`, MAX_NAME);
       this.names.set(key, preview);
       this.details.set(key, { toolName, targetHint: hint, preview });
     }

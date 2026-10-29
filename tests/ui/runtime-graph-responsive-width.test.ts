@@ -65,3 +65,32 @@ test("Cycle 92: Leaf task row and breadcrumb child use min-w-0 without artificia
 	assert.ok(leafSpan, "Leaf span with title must exist");
 	assert.ok(leafSpan.className.includes("min-w-0"), "Leaf span must have min-w-0 class for fluid expansion");
 });
+
+test("Cycle 93: sanitizeTargetHint preserves targetHint up to 128 characters (no premature 48-char cutoff)", async () => {
+	const { sanitizeTargetHint } = await import("../../src/runner/task-labels.ts");
+	const path86 = "/Users/vanya/Projects/arch-rules-skills/skills/arch-rules-implementation-review/SKILL.md";
+	const hint = sanitizeTargetHint(path86);
+	assert.equal(hint, path86, "Target path up to 128 characters must be preserved without 48-char clipping");
+});
+
+test("Cycle 93: Waiting turn strips ' · waiting on N' suffix and breadcrumb parent has wider max-w", () => {
+	const waitingTurn = makeTask(20, "pi.generation", "assistant turn · gpt-6.1-sol (high) · waiting on 7", false);
+	const toolChild = makeTask(21, "pi.tool", "read: foo.ts", true);
+	waitingTurn.children = [toolChild];
+
+	const { container } = render(
+		React.createElement(RuntimeGraphTree, {
+			tree: [waitingTurn],
+			selectedTaskId: null,
+			collapsedTaskIds: new Set(),
+			onSelectTask: () => {},
+			onToggleCollapse: () => {},
+		}),
+	);
+
+	// Verify parent span title and text do NOT contain "waiting on"
+	const parentSpan = container.querySelector("span[title*='assistant turn']");
+	assert.ok(parentSpan, "Parent span must exist");
+	assert.equal(parentSpan.textContent?.includes("waiting on"), false, "Must strip redundant 'waiting on' suffix from title");
+	assert.ok(parentSpan.className.includes("max-w-[280px]"), "Parent span must use expanded max-w-[280px] width");
+});

@@ -425,3 +425,15 @@
 - **Сборка (Build Receipt):**
   - Версия обновлена `0.3.22` → `0.3.23` в `package.json` и `package-lock.json`.
   - `npm run build` пересобрал бандлы: `dist/server.js`, `dist/app.js`, `dist/host.js` с версией `0.3.23`.
+
+### Full-width labels & 128-char target hint alignment (Cycle 93) — 2026-10-29
+
+- Defect: Even with responsive flexbox, labels were still truncated at 48 characters because `src/runner/task-labels.ts` clipped `targetHint` to `MAX_NAME = 48` on the backend, and `node-row.tsx` truncated the parent generation turn to `assistant turn · ...` due to a redundant `· waiting on N` string inside a `max-w-[140px]` span.
+- Fix:
+  - `src/runner/task-labels.ts`: introduced `MAX_TARGET_HINT = 128` aligned with `schema.ts`, allowing file paths and commands to retain up to 128 chars while keeping `preview` at 48 for planSteps compatibility.
+  - `src/ui/runtime-graph/node-row.tsx`: in `resolveItemLabel`, stripped redundant ` · waiting on N` (since the amber badge already displays waiting task IDs); expanded breadcrumb parent max-width to `max-w-[280px]` so model/provider names fit cleanly without ellipsis.
+- Verification: 669 tests pass (558 backend + 111 UI). Added regression tests in `tests/ui/runtime-graph-responsive-width.test.ts`. Verified live on `thr_axjptvcdki` snapshot.
+- Line budgets: `node-row.tsx` (197 LOC), `task-labels.ts` (107 LOC), `tests/ui/runtime-graph-responsive-width.test.ts` (97 LOC) strictly < 200 LOC.
+- **Сборка (Build Receipt):**
+  - Версия обновлена `0.3.23` → `0.3.24` в `package.json` и `package-lock.json`.
+  - `npm run build` пересобрал бандлы: `dist/server.js`, `dist/app.js`, `dist/host.js`, `dist/runner/index.js` с версией `0.3.24`.

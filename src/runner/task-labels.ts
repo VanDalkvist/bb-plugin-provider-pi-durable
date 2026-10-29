@@ -4,6 +4,7 @@ import type { DurableView } from "./runtime-types.ts";
 
 /** Longest a step's name may be; the panel is narrow, and a command's tail is rarely the informative part. */
 const MAX_NAME = 48;
+const MAX_TARGET_HINT = 128;
 
 /** Names for the harness tasks the graph knows only by kind, complete as they stand. */
 const KIND_NAMES: Record<string, string> = {
@@ -20,17 +21,17 @@ export interface TaskCallDetails {
 /** Argument fields worth showing, in the order that reads best for the tool. */
 const ARG_KEYS = ["command", "task", "path", "file_path", "pattern", "query", "url", "prompt"];
 
-function clip(text: string): string {
+function clip(text: string, max: number = MAX_NAME): string {
 	const oneLine = text.replace(/\s+/g, " ").trim();
-	return oneLine.length <= MAX_NAME ? oneLine : `${oneLine.slice(0, MAX_NAME - 1)}…`;
+	return oneLine.length <= max ? oneLine : `${oneLine.slice(0, max - 1)}…`;
 }
 
-export function sanitizeTargetHint(raw: string): string {
+export function sanitizeTargetHint(raw: string, max: number = MAX_TARGET_HINT): string {
 	let s = raw.replace(/\s+/g, " ").trim();
 	s = s.replace(/bearer\s+[a-zA-Z0-9_\-\.]+/gi, "Bearer [redacted]");
 	s = s.replace(/(ghp|gho|ghu|ghs|ghr|sec)_[a-zA-Z0-9]+/g, "[redacted]");
 	s = s.replace(/(api[_-]?key|token|secret|password|passwd|auth)\s*[:=]\s*[^\s&]+/gi, "$1=[redacted]");
-	return clip(s);
+	return clip(s, max);
 }
 
 function argumentHint(args: unknown): string | undefined {
@@ -71,8 +72,8 @@ export class TaskNames {
 			// A nested slot carries the arguments it runs with; a model-issued call's are in its assistant entry.
 			const args = isNested(slot) ? slot.arguments : resolveToolCallArgs(slot.callId, view);
 			const hint = argumentHint(args);
-			const toolName = slot.name ? clip(slot.name) : undefined;
-			const preview = clip(hint === undefined ? slot.name : `${slot.name}: ${hint}`);
+			const toolName = slot.name ? clip(slot.name, MAX_NAME) : undefined;
+			const preview = clip(hint === undefined ? slot.name : `${slot.name}: ${hint}`, MAX_NAME);
 			this.names.set(key, preview);
 			this.details.set(key, { toolName, targetHint: hint, preview });
 		}
