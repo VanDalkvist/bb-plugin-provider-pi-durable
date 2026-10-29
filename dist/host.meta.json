@@ -3,10 +3,10 @@
   "sdkVersion": "0.6.94",
   "artifactFormatVersion": 1,
   "pluginId": "provider-pi-durable",
-  "pluginVersion": "0.3.20",
+  "pluginVersion": "0.3.21",
   "builtWith": {
     "bbVersion": "0.48.0",
     "pluginSdkVersion": "0.6.94"
   },
-  "artifactDigest": "f0ecf5dc31b7408f9ef1171fd6316fb472d39801c7c922f7161970732ba6ab5d"
+  "artifactDigest": "6ee280a4f13cb38e6b46f2c38a9ab4d2b82886b491e60d7dc5c46b5f437fd71e"
 }

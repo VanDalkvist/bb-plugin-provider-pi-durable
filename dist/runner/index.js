@@ -410,7 +410,7 @@ function createSubagentExtension(getPolicy) {
                 task: args2.task,
                 role: "worker",
                 ownerTaskId: api.taskId,
-                anchorTaskId: anchorId,
+                ...anchorId !== void 0 ? { anchorTaskId: anchorId } : {},
                 background: isBackground,
                 actualModel: resolved.model,
                 thinkingLevel: resolved.thinkingLevel,

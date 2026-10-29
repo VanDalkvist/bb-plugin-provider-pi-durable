@@ -100,7 +100,7 @@ export function createSubagentExtension(
 								task: args.task,
 								role: "worker",
 								ownerTaskId: api.taskId,
-								anchorTaskId: anchorId,
+								...(anchorId !== undefined ? { anchorTaskId: anchorId } : {}),
 								background: isBackground,
 								actualModel: resolved.model,
 								thinkingLevel: resolved.thinkingLevel,

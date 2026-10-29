@@ -371,3 +371,43 @@
 - **Сборка (Build Receipt):**
   - Версия обновлена `0.3.19` → `0.3.20` в `package.json` и `package-lock.json`.
   - `npm run build` пересобрал бандлы: `dist/server.js`, `dist/app.js`, `dist/host.js` с версией `0.3.20`.
+
+### Foreground subagent strict-JSON record (Cycle 90) — 2026-10-29
+
+- Explicit user grant: fix the discovered foreground subagent defect and finish
+  POC verification; no unrelated refactor, upstream edit, install or restart.
+- One-line fix: omit optional anchorTaskId when no anchor exists. Foreground
+  records no longer assign undefined into Chord; background anchors/reporters,
+  ownership, model policy and replay/reuse are unchanged.
+- RED/GREEN: new focused regression crosses the real Chord document assignment
+  boundary and executes the child to a result; foreground and background pass.
+- Independent scoped code review: PASS, no open P0/P1/P2. Source and test hashes
+  checked; source 184 lines, test 131 lines. AP-012/AP-013/AP-019/AP-023/AP-026/AP-028.
+- Builder: contracts and full suite passed (558 backend + 106 UI = 664); the
+  downstream YAML POC's 39 tests also passed. Exactly one patch reservation,
+  0.3.20 -> 0.3.21, before ordinary build; package/lock and all three dist metadata
+  versions agree. No second bump during mechanical commit.
+- Actual native SDK/model verification on an owned MemoryStorage session:
+  direct review -> gate -> accepted, plus review FAIL -> repair -> review PASS
+  -> gate -> accepted (one repair). Real foreground child conversations observed
+  in the same native Task Graph; no fake ToolApi or background ownership bypass.
+  First direct-run attempt hit its bounded timeout; unchanged-source rerun passed.
+  Repair workflow tool completed accepted before the global budget, but the root
+  agent's final post-tool response settled unanswered at that budget. This is
+  workflow-tool acceptance, NOT a claim of full root-conversation smoke PASS.
+- Installed BB plugin and resident runtime were NOT updated/restarted. SDK source
+  verification and successful local dist build are not installed-runtime acceptance.
+- Source/test author, independent reviewer and builder were separate; parent
+  performs only ready-file mechanical delivery after these evidence gates.
+
+### Breadcrumb nested tools expansion and chevron visibility (Cycle 91) — 2026-10-29
+
+- Defect: Single-child breadcrumbs (`generation › tool`) dropped nested subtasks
+  when the child tool had its own children (e.g. `codemode`, nested subagents).
+  `node-row.tsx` suppressed chevrons via `!singleChild && ...` and omitted the task count badge,
+  while `tree.tsx` evaluated `isMultiChild` to false and never rendered the nested branch.
+- Fix:
+  - `src/ui/runtime-graph/node-row.tsx`: `hasChildren = singleChild ? singleChild.children.length > 0 : item.children.length > 0`. Shows `(${singleChild.children.length} tasks)` count hint next to breadcrumb and displays expansion chevron.
+  - `src/ui/runtime-graph/tree.tsx`: delegates `expandableChildren = singleChild ? singleChild.children : item.children`, honors `hasActiveWork(singleChild ?? item)` for default collapse state, and renders `renderBranch(expandableChildren, depth + 1)`.
+- Verification: 666 tests pass (558 backend + 108 UI). Verified with real live thread snapshots (`thr_axjptvcdki`). Leaf tool breadcrumbs remain 1-line compact without chevrons, while nested tool calls display chevrons and expand all subtasks indented.
+- Line budgets: `node-row.tsx` (196 LOC), `tree.tsx` (188 LOC) strictly < 200 LOC.
