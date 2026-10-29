@@ -143,7 +143,7 @@ export const RuntimeGraphNodeRow: FC<RuntimeGraphNodeRowProps> = ({
 						<span
 							title={resolveItemLabel(item)}
 							onClick={(e) => { e.stopPropagation(); onSelect(); }}
-							className="truncate max-w-[120px] hover:underline cursor-pointer"
+							className="truncate max-w-[140px] flex-shrink-0 hover:underline cursor-pointer"
 						>
 							{resolveItemLabel(item)}
 						</span>
@@ -152,7 +152,7 @@ export const RuntimeGraphNodeRow: FC<RuntimeGraphNodeRowProps> = ({
 							data-task-id={singleChild.id}
 							title={resolveItemLabel(singleChild)}
 							onClick={(e) => { e.stopPropagation(); (onSelectChild ?? onSelect)(); }}
-							className="truncate max-w-[170px] font-medium hover:underline cursor-pointer"
+							className="truncate min-w-0 font-medium hover:underline cursor-pointer"
 						>
 							{resolveItemLabel(singleChild)}
 						</span>
@@ -164,7 +164,7 @@ export const RuntimeGraphNodeRow: FC<RuntimeGraphNodeRowProps> = ({
 					</>
 				) : (
 					<>
-						<span className="truncate max-w-[220px]" title={resolveItemLabel(item)}>
+						<span className="truncate min-w-0" title={resolveItemLabel(item)}>
 							{resolveItemLabel(item)}
 						</span>
 						{item.children.length >= 2 ? (

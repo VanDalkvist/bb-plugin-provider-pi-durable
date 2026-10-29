@@ -176,6 +176,13 @@
 - Use next time: Strictly ban silent fallbacks (AP-026). If `entryId` is not found, return `undefined` honestly. In commit subscribers, capture `{ type: "entry", value: record }` into a bounded `recentEntries` cache to resolve entries synchronously with task completion, and backfill receipts via `backfillTokensFromEntries` when the view snapshot catches up.
 - Evidence: `src/runner/task-tokens.ts`, `src/runner/runtime-graph-source.ts`, `src/runner/runtime-graph-receipts.ts`, `tests/ui/runtime-graph-tokens.test.ts`, Cycle 89.
 
+## 2026-10-29 - Fluid Flexbox Labels vs. Artificial Fixed Max-Width Ceilings (Cycle 92)
+- Context: Rendering task labels and file paths in `RuntimeGraphNodeRow`.
+- Symptom: Long paths and commands were abruptly truncated with ellipsis (e.g. `read: /Users/vanya/Projects/pi-work...`), leaving 300-500px of empty space before the right-aligned duration metrics.
+- Cause: Legacy hardcoded pixel widths (`max-w-[170px]` on breadcrumb child and `max-w-[220px]` on leaf rows) from early prototype layouts were never replaced with responsive flexbox styling.
+- Use next time: Never put hardcoded pixel ceilings (`max-w-[Npx]`) on text elements inside flex containers that have right-aligned metrics (`ml-auto`). Use `truncate min-w-0` so the label fluidly expands across the entire card width, truncating with ellipsis only when the viewport or parent panel actually runs out of space.
+- Evidence: `src/ui/runtime-graph/node-row.tsx`, `tests/ui/runtime-graph-responsive-width.test.ts`, Cycle 92.
+
 
 
 

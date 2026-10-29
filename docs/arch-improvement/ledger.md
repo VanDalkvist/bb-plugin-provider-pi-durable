@@ -414,3 +414,14 @@
 - **Сборка (Build Receipt):**
   - Версия обновлена `0.3.21` → `0.3.22` в `package.json` и `package-lock.json`.
   - `npm run build` пересобрал бандлы: `dist/server.js`, `dist/app.js`, `dist/host.js` с версией `0.3.22`.
+
+### Responsive row width & elimination of artificial label truncation (Cycle 92) — 2026-10-29
+
+- Defect: Hardcoded CSS max-width ceilings (`max-w-[170px]` for breadcrumb child and `max-w-[220px]` for leaf rows) prematurely truncated commands and file paths with ellipsis even when hundreds of pixels of horizontal card width were completely empty.
+- Fix:
+  - `src/ui/runtime-graph/node-row.tsx`: replaced `max-w-[170px]` with `truncate min-w-0 font-medium` for breadcrumb child and `max-w-[220px]` with `truncate min-w-0` for leaf tasks, while retaining `truncate max-w-[140px] flex-shrink-0` for parent turn labels. Labels now fluidly expand to the right-aligned metrics without artificial cutoff.
+- Verification: 667 tests pass (558 backend + 109 UI). Added `tests/ui/runtime-graph-responsive-width.test.ts` to assert absence of hardcoded pixel ceilings and presence of `min-w-0` fluid expansion. Verified live on `thr_axjptvcdki` snapshot.
+- Line budgets: `node-row.tsx` (196 LOC), `tests/ui/runtime-graph-responsive-width.test.ts` (54 LOC) strictly < 200 LOC.
+- **Сборка (Build Receipt):**
+  - Версия обновлена `0.3.22` → `0.3.23` в `package.json` и `package-lock.json`.
+  - `npm run build` пересобрал бандлы: `dist/server.js`, `dist/app.js`, `dist/host.js` с версией `0.3.23`.
