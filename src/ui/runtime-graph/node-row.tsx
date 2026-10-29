@@ -4,6 +4,7 @@ import type { TaskTreeItem } from "./types.ts";
 import { hasActiveWork } from "./tree-order.ts";
 import { formatStepTokens, calculateStepTokens } from "./token-format.ts";
 import { NodeRowMetrics } from "./node-row-metrics.tsx";
+import { NodeRowWaitingPills } from "./node-row-waiting.tsx";
 
 export interface RuntimeGraphNodeRowProps {
 	readonly item: TaskTreeItem;
@@ -14,6 +15,7 @@ export interface RuntimeGraphNodeRowProps {
 	readonly now?: number;
 	readonly onSelect: () => void;
 	readonly onSelectChild?: () => void;
+	readonly onSelectTaskId?: (taskId: number) => void;
 	readonly onToggleCollapse: () => void;
 }
 
@@ -61,7 +63,7 @@ function resolveItemLabel(item: TaskTreeItem): string {
 
 export const RuntimeGraphNodeRow: FC<RuntimeGraphNodeRowProps> = ({
 	item, singleChild, depth, isSelected, isCollapsed, now,
-	onSelect, onSelectChild, onToggleCollapse,
+	onSelect, onSelectChild, onSelectTaskId, onToggleCollapse,
 }) => {
 	const Icon = experimental_Icon;
 	const effectiveIconItem = (singleChild && (!singleChild.isTerminal || singleChild.receipt?.outcome !== "completed" || Boolean(singleChild.receipt?.isToolError)))
@@ -75,10 +77,8 @@ export const RuntimeGraphNodeRow: FC<RuntimeGraphNodeRowProps> = ({
 		? Math.max(0, (now ?? Date.now()) - startedAt)
 		: (item.liveNode?.durationMs ?? singleChild?.liveNode?.durationMs);
 	const duration = formatDuration(isActive ? liveElapsed : (item.receipt?.durationMs ?? singleChild?.receipt?.durationMs ?? liveElapsed));
-	const tokensUsage = item.liveNode?.tokens ?? item.receipt?.tokens
-		?? singleChild?.liveNode?.tokens ?? singleChild?.receipt?.tokens;
-	const stepTokens = calculateStepTokens(tokensUsage)
-		?? ((typeof item.tokenDelta === "number" && item.tokenDelta > 0) ? item.tokenDelta : undefined);
+	const tokensUsage = item.liveNode?.tokens ?? item.receipt?.tokens ?? singleChild?.liveNode?.tokens ?? singleChild?.receipt?.tokens;
+	const stepTokens = calculateStepTokens(tokensUsage) ?? ((typeof item.tokenDelta === "number" && item.tokenDelta > 0) ? item.tokenDelta : undefined);
 	const tokenCountStr = formatStepTokens(stepTokens);
 	const tokenTitle = stepTokens && tokensUsage ? (() => {
 		const parts: string[] = [];
@@ -176,9 +176,7 @@ export const RuntimeGraphNodeRow: FC<RuntimeGraphNodeRowProps> = ({
 					</>
 				)}
 
-				{waitingOn && waitingOn.length > 0 ? (
-					<span className="text-[10px] px-1 py-0.2 bg-amber-500/10 text-amber-600 dark:text-amber-400 rounded">waits: #{waitingOn.join(", #")}</span>
-				) : null}
+				<NodeRowWaitingPills waitingOn={waitingOn} onSelectTaskId={onSelectTaskId} />
 				{hasToolError ? (
 					<span className="text-[10px] px-1 py-0.2 bg-red-500/10 text-red-600 dark:text-red-400 rounded">tool error</span>
 				) : null}

@@ -1,6 +1,6 @@
 {
   "name": "bb-plugin-provider-pi-durable",
-  "version": "0.3.24",
+  "version": "0.3.25",
   "type": "module",
   "engines": {
     "bb": ">=0.47.1",

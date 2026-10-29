@@ -140,6 +140,7 @@ export const RuntimeGraphTree: FC<RuntimeGraphTreeProps> = ({
 						now={now}
 						onSelect={() => onSelectTask(item.id)}
 						onSelectChild={singleChild ? () => onSelectTask(singleChild.id) : undefined}
+						onSelectTaskId={onSelectTask}
 						onToggleCollapse={() => onToggleCollapse(item.id)}
 					/>
 					{hasExpandableChildren && !isCollapsed

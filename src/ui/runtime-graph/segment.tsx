@@ -147,6 +147,7 @@ export const RuntimeGraphSegmentDetails: FC<RuntimeGraphSegmentDetailsProps> = (
 						selectedItem={selectedItem}
 						now={now}
 						onClose={() => selectTask(null)}
+						onSelectTaskId={selectTask}
 					/>
 				</div>
 			) : null}

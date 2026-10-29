@@ -9,9 +9,10 @@ export interface RuntimeGraphDetailsProps {
 	readonly selectedItem: TaskTreeItem | null;
 	readonly now?: number;
 	readonly onClose?: () => void;
+	readonly onSelectTaskId?: (taskId: number) => void;
 }
 
-export const RuntimeGraphDetails: FC<RuntimeGraphDetailsProps> = ({ selectedItem, now, onClose }) => {
+export const RuntimeGraphDetails: FC<RuntimeGraphDetailsProps> = ({ selectedItem, now, onClose, onSelectTaskId }) => {
 	const DetailRow = experimental_DetailRow;
 	const InfoSection = experimental_InfoSection;
 	const Icon = experimental_Icon;
@@ -55,7 +56,21 @@ export const RuntimeGraphDetails: FC<RuntimeGraphDetailsProps> = ({ selectedItem
 					<DetailRow label="Task ID"><span className="font-mono">#{id}</span></DetailRow>
 					<DetailRow label="Task type"><span className="font-mono">{kind}</span></DetailRow>
 					<DetailRow label="Conversation"><span className="font-mono">#{conversationId}</span></DetailRow>
-					<DetailRow label="Owner"><span className="font-mono">{ownerId !== undefined ? `#${ownerId}` : "— (root)"}</span></DetailRow>
+					<DetailRow label="Owner">
+						{ownerId !== undefined && onSelectTaskId ? (
+							<button
+								type="button"
+								aria-label={`Select owner task #${ownerId}`}
+								onClick={() => onSelectTaskId(ownerId)}
+								className="font-mono text-blue-500 hover:underline font-medium cursor-pointer focus:outline-none"
+								title={`Select owner task #${ownerId}`}
+							>
+								#{ownerId}
+							</button>
+						) : (
+							<span className="font-mono">{ownerId !== undefined ? `#${ownerId}` : "— (root)"}</span>
+						)}
+					</DetailRow>
 
 					{liveNode?.toolName || receipt?.toolName ? (
 						<DetailRow label="Tool"><span className="font-mono">{liveNode?.toolName ?? receipt?.toolName}</span></DetailRow>
@@ -97,7 +112,20 @@ export const RuntimeGraphDetails: FC<RuntimeGraphDetailsProps> = ({ selectedItem
 
 					{projectedLive?.waitingOn && projectedLive.waitingOn.length > 0 ? (
 						<DetailRow label="Waiting on tasks">
-							<span className="font-mono">#{projectedLive.waitingOn.join(", #")}</span>
+							<span className="font-mono flex flex-wrap gap-1">
+								{projectedLive.waitingOn.map((waitId) => (
+									<button
+										key={waitId}
+										type="button"
+										aria-label={`Select task #${waitId}`}
+										onClick={() => onSelectTaskId?.(waitId)}
+										className="hover:underline text-blue-500 font-semibold focus:outline-none cursor-pointer"
+										title={`Select task #${waitId}`}
+									>
+										#{waitId}
+									</button>
+								))}
+							</span>
 						</DetailRow>
 					) : null}
 
