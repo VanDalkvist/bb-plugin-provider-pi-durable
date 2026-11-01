@@ -13,6 +13,8 @@ export interface CliArgs {
 	systemPromptPath?: string;
 	appendSystemPromptPath?: string;
 	extension?: string;
+	extensions?: string[];
+	noGlobalExtensions?: boolean;
 	skills?: string[];
 }
 
@@ -31,7 +33,15 @@ export function parseCliArgs(argv: string[]): CliArgs {
 		else if (arg === "--system-prompt" && i + 1 < argv.length) args.systemPromptPath = argv[++i];
 		else if (arg === "--append-system-prompt" && i + 1 < argv.length) args.appendSystemPromptPath = argv[++i];
 		else if (arg === "--cwd" && i + 1 < argv.length) args.cwd = argv[++i];
-		else if (arg === "--extension" && i + 1 < argv.length) args.extension = argv[++i];
+		else if (arg === "--extension" && i + 1 < argv.length) {
+			const ext = argv[++i];
+			args.extension = ext;
+			args.extensions ??= [];
+			args.extensions.push(ext);
+		}
+		else if (arg === "--no-global-extensions") {
+			args.noGlobalExtensions = true;
+		}
 		else if (arg === "--skill" && i + 1 < argv.length) {
 			args.skills ??= [];
 			args.skills.push(argv[++i]);

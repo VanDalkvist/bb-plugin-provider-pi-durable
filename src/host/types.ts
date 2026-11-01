@@ -49,6 +49,8 @@ export interface SessionOptions {
 	appendSystemPrompt?: string;
 	shellEnvOverrides?: Record<string, string>;
 	additionalSkillPaths?: string[];
+	additionalExtensionPaths?: string[];
+	noGlobalExtensions?: boolean;
 	dynamicTools?: unknown[];
 	noSession?: boolean;
 	onExtensionUiRequest?: (request: unknown) => void;

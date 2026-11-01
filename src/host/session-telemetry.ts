@@ -64,6 +64,14 @@ export function buildRunnerArgs(options: SessionOptions): string[] {
 		args.push("--session", options.sessionFilePath);
 	}
 	args.push("--extension", options.extensionPath);
+	if (options.additionalExtensionPaths) {
+		for (const p of options.additionalExtensionPaths) {
+			args.push("--extension", p);
+		}
+	}
+	if (options.noGlobalExtensions) {
+		args.push("--no-global-extensions");
+	}
 
 	if (options.model) {
 		args.push("--provider", options.model.provider, "--model", options.model.id);

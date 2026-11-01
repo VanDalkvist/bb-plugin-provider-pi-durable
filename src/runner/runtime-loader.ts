@@ -75,13 +75,19 @@ export async function loadHarnessEnvironment(
 	}
 	const modelRuntime = await ModelRuntime.create();
 	const settingsManager = SettingsManager.create(location.cwd);
+	const extEnv = process.env.PI_ADDITIONAL_EXTENSIONS;
+	const extPaths = [
+		...(options.cli?.extensions ?? (options.cli?.extension ? [options.cli.extension] : [])),
+		...(extEnv ? extEnv.split(",").map((s) => s.trim()).filter(Boolean) : []),
+	];
 	const resourceLoader = new DefaultResourceLoader({
 		cwd: location.cwd,
 		agentDir: getAgentDir(),
 		settingsManager,
 		extensionFactories: createStandardExtensionFactories(),
 		additionalSkillPaths: options.cli?.skills,
-		additionalExtensionPaths: options.cli?.extension ? [options.cli.extension] : undefined,
+		additionalExtensionPaths: extPaths.length > 0 ? extPaths : undefined,
+		noExtensions: options.cli?.noGlobalExtensions ?? false,
 	});
 	await resourceLoader.reload();
 	const extensionsResult = resourceLoader.getExtensions();
@@ -186,9 +192,7 @@ export async function loadHarnessEnvironment(
 		extensionRunner: mounted.extensionRunner,
 		actionsDelegate,
 		dynamicSections,
-		setNoticeForwarder: (forwarder) => {
-			liveNoticeForwarder = forwarder;
-		},
+		setNoticeForwarder: (forwarder) => { liveNoticeForwarder = forwarder; },
 		setActiveTools: mounted.setActiveTools,
 		getActiveTools: mounted.getActiveTools,
 	};

@@ -85,6 +85,8 @@ export interface OpenDurableOptions {
 		readonly thinking?: ModelThinkingLevel;
 		readonly skills?: string[];
 		readonly extension?: string;
+		readonly extensions?: string[];
+		readonly noGlobalExtensions?: boolean;
 	};
 	readonly prompt?: PromptOptions;
 }
