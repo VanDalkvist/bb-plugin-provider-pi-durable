@@ -20,9 +20,10 @@ export type ParsedSubagentMirrorPrompt =
 			task: string;
 	  };
 
-const RESERVED_PREFIX = "[bb:pi-subagent-mirror:";
+const RESERVED_PREFIX_PI = "[pi:subagent-mirror:";
+const RESERVED_PREFIX_BB = "[bb:pi-subagent-mirror:";
 const ROOT_CONV_STR = String(ROOT_CONVERSATION_ID);
-const ENVELOPE_REGEX = /^\s*\[bb:pi-subagent-mirror:v1\s+session=([^\s\]]+)\s+parent=([^\s\]]+)\s+conv=([^\s\]]+)\]\s*(?:\r?\n)?([\s\S]*)$/u;
+const ENVELOPE_REGEX = /^\s*\[(?:pi:subagent-mirror|bb:pi-subagent-mirror):v1\s+session=([^\s\]]+)\s+parent=([^\s\]]+)\s+conv=([^\s\]]+)\]\s*(?:\r?\n)?([\s\S]*)$/u;
 const SAFE_ID_REGEX = /^[a-zA-Z0-9_-]{1,128}$/;
 const SAFE_SESSION_KEY_REGEX = /^(?!\.)(?!.*\.\.)[a-zA-Z0-9._-]{1,128}$/;
 
@@ -35,7 +36,7 @@ export function formatSubagentMirrorPrompt(
 	const s = sessionKey.trim();
 	const p = parentThreadId.trim();
 	const c = String(conversationId).trim();
-	return `[bb:pi-subagent-mirror:v1 session=${s} parent=${p} conv=${c}]\n${task.trim()}`;
+	return `[pi:subagent-mirror:v1 session=${s} parent=${p} conv=${c}]\n${task.trim()}`;
 }
 
 export function parseSubagentMirrorPrompt(input: string): ParsedSubagentMirrorPrompt {
@@ -43,7 +44,7 @@ export function parseSubagentMirrorPrompt(input: string): ParsedSubagentMirrorPr
 		return { isMirror: false, task: "" };
 	}
 	const trimmed = input.trimStart();
-	if (!trimmed.startsWith(RESERVED_PREFIX)) {
+	if (!trimmed.startsWith(RESERVED_PREFIX_PI) && !trimmed.startsWith(RESERVED_PREFIX_BB)) {
 		return { isMirror: false, task: input };
 	}
 
