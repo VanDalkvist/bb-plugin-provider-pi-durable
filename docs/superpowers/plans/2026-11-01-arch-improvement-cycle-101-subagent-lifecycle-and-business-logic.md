@@ -12,9 +12,55 @@
 
 ---
 
-## 🔍 Инженерное расследование и верификация по первоисточникам
+## Architecture Context Map & Boundaries
 
-Каждый дефект был лично перепроверен по коду репозитория `bb-plugin-provider-pi-durable` и зависимостей `@earendil-works/pi-durable` / `@earendil-works/pi-ai`. Ниже приведены доказанные факты, анализ рисков и стратегия предотвращения регрессий:
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                       src/shared/ & src/contracts/                          │
+│          Pure Domain Normalizers, Canonical Schemas & Typed Errors          │
+│   • model-ref.ts (normalizeModelReference, formatModelCliArg)               │
+│   • errors.ts, agent-dir.ts, version.ts                                     │
+└──────────────────────▲───────────────────────────────▲──────────────────────┘
+                       │                               │
+        implements / imports               implements / imports
+                       │                               │
+┌──────────────────────┴───────────────┐ ┌─────────────┴──────────────────────┐
+│             src/runner/              │ │                 src/host/                  │
+│       Sovereign Agent Core           │ │        Beyond Boundaries Adapter           │
+│ • subagent.ts (inherit fallback)     │ │ • subthread-spawner.ts (clean CLI flags)   │
+│ • resolver.ts (prefix-immune match)  │ │ • child-turn-guard.ts (clean model check)  │
+│ • subagent-courier.ts (rotating req) │ │ • session-registry.ts (cascading abort)    │
+│ • session-storage.ts (no-kill lock)  │ │ • session-subagent-handler.ts (telemetry)  │
+│ • task-labels.ts (bounded LRU)       │ │ • diagnostics.ts (deferred model check)    │
+└──────────────────────────────────────┘ └────────────────────────────────────┘
+                  ▲                                        │
+                  └───────── POSIX stdio (JSON-RPC) ───────┘
+                     (0 direct imports between Host and Runner)
+```
+
+---
+
+## Triage Gate (S5)
+
+- **Fix Now (P0/P1/P2):**
+  - **BL-01 (P0):** Crash in parent model resolution in `inherit` mode when model is `{ provider, id }` or unconfigured on reopen.
+  - **BL-02 (P0):** Double provider prefix in `subthread-spawner.ts` `--model antigravity/antigravity/...` causing runner crash on startup.
+  - **BL-03 (P0):** Destructive `SIGTERM` sent to live runner processes in `session-storage.ts` lock contention.
+  - **BL-04 (P1):** Courier hold deadlock and infinite loop on `unanswered` submission due to static `requestId`.
+  - **BL-05 (P1):** Failure matching models in `configured` mode against `availableModels` catalog due to unstripped prefix.
+  - **BL-06 (P1):** Silent swallowing of `bb thread spawn` CLI errors with `console.warn` without parent thread notification.
+  - **BL-07 (P1):** False rejection of child turn `CHILD_MODEL_POLICY_LOCKED` due to asymmetric prefix comparison.
+  - **BL-08 (P1):** Zombie subagent processes leak upon parent thread stop without cascading abort.
+  - **BL-09 (P1):** False `WARNING` in `doctor.mjs` due to checking models before extension initialization.
+  - **BL-10 (P2):** Unbounded memory growth in `RuntimeGraphSource` and `TaskNames` maps.
+- **Log Only:**
+  - Minor code formatting and non-blocking documentation phrasing.
+- **Blocked:**
+  - None.
+
+---
+
+## 🔍 Инженерное расследование и верификация по первоисточникам
 
 | ID | Доказанный факт в коде | Механизм сбоя (Root Cause) | Blast Radius (Что может задеть) | Защита от регрессий (Test Strategy) |
 | :--- | :--- | :--- | :--- | :--- |
@@ -49,9 +95,12 @@
 
 ### Task 1: Canonical Model Reference Normalizer (BL-01, BL-02, BL-05, BL-07)
 
-**Files:**
-- Create: `src/shared/model-ref.ts`
-- Test: `tests/model-ref-normalization.test.ts`
+- **Boundary:** Domain / Shared Utility (`src/shared/`)
+- **AP Gates:** AP-010, AP-014, AP-019, AP-026
+- **Files:**
+  - Create: `src/shared/model-ref.ts`
+  - Test: `tests/model-ref-normalization.test.ts`
+- **Stop Condition:** `node scripts/verify-layer-boundaries.mjs` finds violations or imports host/runner.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -137,10 +186,10 @@ export function formatModelCliArg(ref: { provider: string; modelId: string }): s
 Run: `node --test tests/model-ref-normalization.test.ts`
 Expected: PASS
 
-- [ ] **Step 5: Verify layer boundary firewall**
+- [ ] **Step 5: Verify layer boundary firewall & AP-019 line budgets**
 
-Run: `node scripts/verify-layer-boundaries.mjs`
-Expected: 0 boundary violations
+Run: `node scripts/verify-layer-boundaries.mjs && wc -l src/shared/model-ref.ts`
+Expected: 0 boundary violations, file < 50 lines.
 
 - [ ] **Step 6: Commit**
 
@@ -153,11 +202,14 @@ git commit -m "feat(shared): add canonical model reference normalizer"
 
 ### Task 2: Subagent Model Resolution & Prefix Immunity (BL-01, BL-05)
 
-**Files:**
-- Modify: `src/policy/resolver.ts`
-- Modify: `src/runner/subagent.ts`
-- Test: `tests/subagent-policy-error-handling.test.ts`
-- Test: `tests/red-subagent-model-resolution.test.ts`
+- **Boundary:** Domain / Sovereign Runner (`src/runner/`, `src/policy/`)
+- **AP Gates:** AP-010, AP-012, AP-019, AP-022, AP-048
+- **Files:**
+  - Modify: `src/policy/resolver.ts`
+  - Modify: `src/runner/subagent.ts`
+  - Test: `tests/subagent-policy-error-handling.test.ts`
+  - Test: `tests/red-subagent-model-resolution.test.ts`
+- **Stop Condition:** `node scripts/verify-layer-boundaries.mjs` finds violations or regression in existing 22 policy tests.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -252,10 +304,13 @@ git commit -m "fix(policy): normalize model references in inherit and configured
 
 ### Task 3: Subthread Spawner Model CLI Cleanliness & Turn Guard (BL-02, BL-07)
 
-**Files:**
-- Modify: `src/host/subthread-spawner.ts`
-- Modify: `src/host/child-turn-guard.ts`
-- Test: `tests/subthread-spawner-model-args.test.ts`
+- **Boundary:** Interface Entry Point / Host Adapter (`src/host/`)
+- **AP Gates:** AP-010, AP-012, AP-019, AP-021, AP-048
+- **Files:**
+  - Modify: `src/host/subthread-spawner.ts`
+  - Modify: `src/host/child-turn-guard.ts`
+  - Test: `tests/subthread-spawner-model-args.test.ts`
+- **Stop Condition:** `node scripts/verify-layer-boundaries.mjs` fails or double prefix generated.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -321,9 +376,12 @@ git commit -m "fix(host): clean CLI model flags and child turn model comparison"
 
 ### Task 4: Elimination of Destructive SIGTERM in Session Lock (BL-03)
 
-**Files:**
-- Modify: `src/runner/session-storage.ts`
-- Test: `tests/session-storage-pid-safety.test.ts`
+- **Boundary:** Concurrency / Session Lock Adapter (`src/runner/session-storage.ts`)
+- **AP Gates:** AP-010, AP-013, AP-019, AP-034
+- **Files:**
+  - Modify: `src/runner/session-storage.ts`
+  - Test: `tests/session-storage-pid-safety.test.ts`
+- **Stop Condition:** `process.kill(SIGTERM)` called on live processes or lockfile safety broken.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -350,7 +408,7 @@ In `src/runner/session-storage.ts`:
       "SESSION_ALREADY_OPEN",
   );
   ```
-- Stale lockfiles from DEAD processes (`!isProcessAlive(owner.pid)`) are safely cleaned up.
+- Stale lockfiles from DEAD processes (`!isProcessAlive(owner.pid)`) are safely cleaned up via forceUnlock.
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -373,9 +431,12 @@ git commit -m "fix(runner): remove destructive SIGTERM in session lock acquisiti
 
 ### Task 5: Courier Request ID Rotation on Unanswered Retries (BL-04)
 
-**Files:**
-- Modify: `src/runner/subagent-courier.ts`
-- Test: `tests/subagent-courier-lifecycle.test.ts`
+- **Boundary:** Domain / Async Courier Task (`src/runner/subagent-courier.ts`)
+- **AP Gates:** AP-012, AP-013, AP-019, AP-023, AP-035, AP-047
+- **Files:**
+  - Modify: `src/runner/subagent-courier.ts`
+  - Test: `tests/subagent-courier-lifecycle.test.ts`
+- **Stop Condition:** Courier loops with static `requestId` or hangs in `hold`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -418,10 +479,13 @@ git commit -m "fix(runner): rotate requestId on courier retry to prevent unanswe
 
 ### Task 6: Cascading Abort on Parent Thread Stop & Spawn Failure Notification (BL-06, BL-08)
 
-**Files:**
-- Modify: `src/host/session-registry.ts`
-- Modify: `src/host/session-subagent-handler.ts`
-- Test: `tests/session-stop-cascading-abort.test.ts`
+- **Boundary:** Lifecycle / Host Registry (`src/host/session-registry.ts`, `src/host/session-subagent-handler.ts`)
+- **AP Gates:** AP-010, AP-012, AP-019, AP-022, AP-047
+- **Files:**
+  - Modify: `src/host/session-registry.ts`
+  - Modify: `src/host/session-subagent-handler.ts`
+  - Test: `tests/session-stop-cascading-abort.test.ts`
+- **Stop Condition:** `SessionRegistry.stop()` leaves orphan background runners or swallowed errors.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -435,7 +499,7 @@ Expected: FAIL
 - [ ] **Step 3: Implement minimal code**
 
 In `src/host/session-registry.ts`:
-- In `stop(threadId)`: when stopping a parent session, call `await session.abort()` to terminate all background subagents cleanly.
+- In `stop(threadId)`: when stopping a parent session, call `await session.abort({ background: true })` to terminate all background subagents cleanly.
 
 In `src/host/session-subagent-handler.ts`:
 - If `spawnSubthreadInBb` returns `undefined`, emit an explicit warning item or error delta into the parent thread stream.
@@ -461,11 +525,14 @@ git commit -m "fix(host): cascading abort on thread stop and visible spawn error
 
 ### Task 7: Doctor Diagnostics Order & Bounded Task Graph Memory (BL-09, BL-10)
 
-**Files:**
-- Modify: `src/host/diagnostics.ts`
-- Modify: `src/runner/runtime-graph-source.ts`
-- Modify: `src/runner/task-labels.ts`
-- Test: `tests/diagnostics-init-order.test.ts`
+- **Boundary:** Diagnostics & Observability (`src/host/diagnostics.ts`, `src/runner/runtime-graph-source.ts`, `src/runner/task-labels.ts`)
+- **AP Gates:** AP-010, AP-012, AP-019, AP-023, AP-059
+- **Files:**
+  - Modify: `src/host/diagnostics.ts`
+  - Modify: `src/runner/runtime-graph-source.ts`
+  - Modify: `src/runner/task-labels.ts`
+  - Test: `tests/diagnostics-init-order.test.ts`
+- **Stop Condition:** `npm run doctor` false warning or unbounded collections in task graph.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -508,12 +575,15 @@ git commit -m "fix(runner,host): bound task graph memory and fix doctor model di
 
 ---
 
-### Task 8: Full Dual-Circuit Verification, Ledger & Release v0.4.2
+### Task 8: Full Dual-Circuit Verification (S9), Ledger (S10) & Release v0.4.2
 
-**Files:**
-- Modify: `package.json` (bump to 0.4.2)
-- Modify: `docs/arch-improvement/ledger.md`
-- Modify: `docs/arch-improvement/memory.md`
+- **Boundary:** Full System Verification & Release Gate
+- **AP Gates:** AP-010..AP-071
+- **Files:**
+  - Modify: `package.json`, `package-lock.json` (bump to 0.4.2)
+  - Modify: `docs/arch-improvement/ledger.md`
+  - Modify: `docs/arch-improvement/memory.md`
+- **Stop Condition:** Any test failure, layer boundary violation, cycle, or unverified gate.
 
 - [ ] **Step 1: Run full automated verification suite**
 
