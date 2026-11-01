@@ -101,9 +101,13 @@ export function createSubagentExtension(
 								return state.agents[key];
 							}
 
-							const existingConv = (await tx.scanConversations({ ownerTaskId: api.taskId }, 1)).items[0];
-							let childId = existingConv?.id;
-							let anchorId: TaskId | undefined;
+							const existingAnchorId = state?.agents?.[key]?.anchorTaskId;
+							let existingConv = (await tx.scanConversations({ ownerTaskId: api.taskId }, 1)).items[0];
+							if (!existingConv && existingAnchorId !== undefined) {
+								existingConv = (await tx.scanConversations({ ownerTaskId: existingAnchorId }, 1)).items[0];
+							}
+							let childId = existingConv?.id ?? state?.agents?.[key]?.conversationId;
+							let anchorId: TaskId | undefined = existingAnchorId;
 							if (childId === undefined) {
 								if (isBackground) {
 									anchorId = await tx.createTask(Anchor, null, BACKGROUND);
