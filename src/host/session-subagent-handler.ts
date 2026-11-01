@@ -101,7 +101,9 @@ export class SessionSubagentHandler {
 						conversationId: convId,
 						actualModel,
 						thinkingLevel,
-					}, session);
+					}, session).catch((err) => {
+						console.warn(`[SessionSubagentHandler] Failed to spawn subthread: ${err instanceof Error ? err.message : String(err)}`);
+					});
 				}
 			}
 		}

@@ -1,5 +1,11 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+
+function atomicWriteJsonSync(filePath: string, data: unknown): void {
+	const tempPath = `${filePath}.tmp.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}`;
+	writeFileSync(tempPath, JSON.stringify(data, null, 2), "utf8");
+	renameSync(tempPath, filePath);
+}
 
 export interface StoredBindingItem {
 	readonly threadId: string;
@@ -41,7 +47,7 @@ export class DurableBindingManager {
 			const existing = this.readOfflineBindings(this.sessionDir);
 			const filtered = existing.filter((b) => b.threadId !== threadId && b.bbThreadId !== threadId);
 			filtered.push({ threadId, bbThreadId: threadId, conversationId: convStr, parentThreadId });
-			writeFileSync(manifestPath, JSON.stringify(filtered, null, 2), "utf8");
+			atomicWriteJsonSync(manifestPath, filtered);
 		} catch (err) {
 			console.warn(`[BindingManager] Failed to write adapter manifest: ${err}`);
 		}
@@ -58,7 +64,7 @@ export class DurableBindingManager {
 				const manifestPath = join(this.sessionDir, "adapter-bindings.json");
 				const existing = this.readOfflineBindings(this.sessionDir);
 				const filtered = existing.filter((b) => b.threadId !== threadId && b.bbThreadId !== threadId);
-				writeFileSync(manifestPath, JSON.stringify(filtered, null, 2), "utf8");
+				atomicWriteJsonSync(manifestPath, filtered);
 			} catch (err) {
 				console.warn(`[BindingManager] Failed to update adapter manifest on unregister: ${err}`);
 			}
