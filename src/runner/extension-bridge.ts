@@ -19,6 +19,8 @@ export {
 	installExtensionTools,
 	type NestedToolExecutor,
 } from "./tool-adapter.ts";
+export { createExtensionActions } from "./extension-actions.ts";
+import { createExtensionActions } from "./extension-actions.ts";
 
 export interface SetupExtensionRunnerOptions {
 	extensions: Extension[];
@@ -36,6 +38,7 @@ export interface SetupExtensionRunnerOptions {
 	onCompact?: (instructions?: string) => void;
 	getContextUsage?: () => { tokens: number | null; contextWindow: number } | undefined;
 	isIdle?: () => boolean;
+	onSubmitUserMessage?: (content: string, deliverAs?: "steer" | "followUp") => Promise<void> | void;
 }
 
 export function createExtensionUIContext(
@@ -83,66 +86,19 @@ export async function setupExtensionRunner(options: SetupExtensionRunnerOptions)
 
 	runner.setUIContext(createExtensionUIContext(options.onNotice));
 
-	let activeToolNames: string[] = options.initialActiveTools
+	const initialActive = options.initialActiveTools
 		? [...options.initialActiveTools]
 		: (options.getCallableTools ? options.getCallableTools().map((t) => t.name) : []);
-	let sessionName: string | undefined;
 
-	const actions: ExtensionActions = {
-		getActiveTools: () => activeToolNames,
-		getAllTools: () => {
-			const map = new Map<string, unknown>();
-			if (options.getCallableTools) {
-				for (const t of options.getCallableTools()) {
-					map.set(t.name, {
-						name: t.name,
-						description: t.description,
-						parameters: t.parameters,
-						exposure: "direct",
-						reachesTools: t.name === "codemode" || t.name === "tool_search",
-					});
-				}
-			}
-			for (const t of runner.getAllRegisteredTools()) {
-				map.set(t.definition.name, {
-					name: t.definition.name,
-					description: t.definition.description,
-					parameters: t.definition.parameters,
-					promptGuidelines: t.definition.promptGuidelines,
-					exposure: t.definition.exposure ?? "direct",
-					namespace: t.definition.namespace,
-					annotations: t.definition.annotations,
-					sourceInfo: t.sourceInfo,
-				});
-			}
-			return Array.from(map.values()) as any;
-		},
-		getSettings: () => ({
-			...(options.settingsManager?.getGlobalSettings() ?? {}),
-			...(options.settingsManager?.getProjectSettings() ?? {}),
-		}),
-		setActiveTools: (toolNames: string[]) => {
-			activeToolNames = [...toolNames];
-			options.onActiveToolsChanged?.(activeToolNames);
-		},
-		refreshTools: () => {
-			options.onToolsChanged?.();
-		},
-		getThinkingLevel: () => (options.settingsManager?.getDefaultThinkingLevel?.() ?? "high") as "off" | "minimal" | "low" | "medium" | "high" | "xhigh",
-		setThinkingLevel: () => {},
-		setModel: async () => false,
-		getCommands: () => [],
-		sendMessage: () => {},
-		sendUserMessage: () => {},
-		appendEntry: (customType: string, data?: unknown) => {
-			sessionManager.appendCustomEntry(customType, data);
-		},
-		setSessionName: (name: string) => {
-			sessionName = name;
-		},
-		getSessionName: () => sessionName,
-		setLabel: () => {},
-	};
+	const actions = createExtensionActions({
+		getRegisteredTools: () => runner.getAllRegisteredTools() as any,
+		getCallableTools: options.getCallableTools,
+		settingsManager: options.settingsManager,
+		onActiveToolsChanged: options.onActiveToolsChanged,
+		onToolsChanged: options.onToolsChanged,
+		sessionManager,
+		onSubmitUserMessage: options.onSubmitUserMessage,
+	}, initialActive);
 
 	const contextActions: ExtensionContextActions = {
 		getModel: () => {

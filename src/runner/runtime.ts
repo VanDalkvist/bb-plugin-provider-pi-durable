@@ -131,6 +131,9 @@ export async function openDurable(options: OpenDurableOptions = {}): Promise<Ope
 			activeEnvState.actionsDelegate.onAbort = () => { void controller.abort(); };
 			activeEnvState.actionsDelegate.onCompact = (i?: string) => { void controller.compact(i); };
 			activeEnvState.actionsDelegate.isIdle = () => true;
+			activeEnvState.actionsDelegate.onSubmitUserMessage = async (content: string, deliverAs?: "steer" | "followUp") => {
+				await controller.submit(content, deliverAs ?? "followUp");
+			};
 			activeEnvState.actionsDelegate.onConfigureModelTools = async (tools: string[]) => {
 				await root.configure({ modelTools: tools.map((name) => ({ name })) as any }, runtimeContext);
 			};

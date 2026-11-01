@@ -100,6 +100,7 @@ export interface ExtensionActionsDelegate {
 	getContextUsage?: () => { tokens: number | null; contextWindow: number } | undefined;
 	isIdle?: () => boolean;
 	onConfigureModelTools?: (tools: string[]) => Promise<void> | void;
+	onSubmitUserMessage?: (content: string, deliverAs?: "steer" | "followUp") => Promise<void> | void;
 }
 
 export async function mountExtensionBridge(
@@ -157,6 +158,7 @@ export async function mountExtensionBridge(
 			onCompact: (i) => actionsDelegate?.onCompact?.(i),
 			getContextUsage: () => actionsDelegate?.getContextUsage?.(),
 			isIdle: () => (actionsDelegate?.isIdle ? actionsDelegate.isIdle() : true),
+			onSubmitUserMessage: (c, d) => actionsDelegate?.onSubmitUserMessage?.(c, d),
 		});
 
 		if (extensionRunner) {
