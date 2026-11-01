@@ -15,9 +15,15 @@ export class DynamicCodemodeNamespaces {
 
 	registerNamespace(ns: CodemodeNamespace): void {
 		if (this.seen.has(ns.prefix)) {
-			if (ns.description) {
-				const idx = this.list.findIndex((n) => n.prefix === ns.prefix);
-				if (idx !== -1) this.list[idx] = ns;
+			const idx = this.list.findIndex((n) => n.prefix === ns.prefix);
+			if (idx !== -1) {
+				const existing = this.list[idx]!;
+				this.list[idx] = {
+					name: ns.name || existing.name,
+					prefix: ns.prefix,
+					description: ns.description ?? existing.description,
+					instructions: ns.instructions ?? existing.instructions,
+				};
 			}
 			return;
 		}
@@ -31,11 +37,11 @@ export class DynamicCodemodeNamespaces {
 			if (match && match[1]) {
 				const serverName = match[1];
 				const prefix = `mcp__${serverName}__`;
-				const desc = def.namespace?.description ?? def.namespace?.instructions;
 				this.registerNamespace({
 					name: def.namespace?.name ?? serverName,
 					prefix,
-					...(desc ? { description: desc } : {}),
+					...(def.namespace?.description ? { description: def.namespace.description } : {}),
+					...(def.namespace?.instructions ? { instructions: def.namespace.instructions } : {}),
 				});
 			}
 		}
