@@ -73,18 +73,17 @@ describe("Session Lock Eviction and Ownership Tracking (Cycle 71, D-20)", () => 
 		}
 	});
 
-	it("sends SIGTERM to live orphan runner and successfully takes over session", async () => {
+	it("fails closed when another live runner process holds the session lock", async () => {
 		const temp = mkdtempSync(join(tmpdir(), "pi-orphan-takeover-test-"));
+		const orphan = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000);"]);
+		assert.ok(orphan.pid);
+		assert.equal(isProcessAlive(orphan.pid), true);
+
 		try {
 			const targetDir = join(temp, "orphan-session");
 			mkdirSync(targetDir, { recursive: true });
 
-			// Spawn an orphan runner child process that stays alive until SIGTERM
-			const orphan = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000);"]);
-			assert.ok(orphan.pid);
-			assert.equal(isProcessAlive(orphan.pid), true);
-
-			// Simulate orphan process holding the lock and owner file
+			// Simulate another live runner process holding the lock and owner file
 			mkdirSync(`${targetDir}.lock`, { recursive: true });
 			writeFileSync(
 				join(targetDir, "session.owner.json"),
@@ -92,40 +91,30 @@ describe("Session Lock Eviction and Ownership Tracking (Cycle 71, D-20)", () => 
 				"utf8",
 			);
 
-			// selectSession should send SIGTERM to orphan, wait for exit, and take over
-			const session = await selectSession(temp, false, targetDir);
-			try {
-				assert.equal(isProcessAlive(orphan.pid), false, "orphan process must be terminated");
-				const ownerFile = join(session.directory, "session.owner.json");
-				assert.ok(existsSync(ownerFile));
-				const ownerData: SessionOwnerInfo = JSON.parse(readFileSync(ownerFile, "utf8"));
-				assert.equal(ownerData.pid, process.pid, "active process must have taken over");
-			} finally {
-				await session.release();
-			}
+			// selectSession must fail closed and NEVER send SIGTERM to live process
+			await assert.rejects(
+				async () => selectSession(temp, false, targetDir),
+				(err: Error) => {
+					assert.ok(err.message.includes(`PID: ${orphan.pid}`));
+					assert.ok(err.message.includes("Session is already open in another live process"));
+					return true;
+				},
+			);
+			assert.equal(isProcessAlive(orphan.pid), true, "Live runner process must NOT be killed with SIGTERM");
 		} finally {
+			orphan.kill("SIGKILL");
 			rmSync(temp, { recursive: true, force: true });
 		}
 	});
 
-	it("fails with actionable error containing holding PID if process refuses to exit", async () => {
+	it("fails with actionable error containing holding PID if process is alive", async () => {
 		const temp = mkdtempSync(join(tmpdir(), "pi-stubborn-test-"));
+		const stubborn = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000);"]);
+		assert.ok(stubborn.pid);
+
 		try {
 			const targetDir = join(temp, "stubborn-session");
 			mkdirSync(targetDir, { recursive: true });
-
-			// Spawn child that ignores SIGTERM
-			const stubborn = spawn(process.execPath, ["-e", "process.on('SIGTERM', () => {}); console.log('ready'); setInterval(() => {}, 1000);"]);
-			assert.ok(stubborn.pid);
-
-			// Ensure stubborn process has booted and installed SIGTERM handler
-			await new Promise<void>((resolve) => {
-				const timer = setTimeout(resolve, 1000);
-				stubborn.stdout.once("data", () => {
-					clearTimeout(timer);
-					resolve();
-				});
-			});
 
 			mkdirSync(`${targetDir}.lock`, { recursive: true });
 			writeFileSync(
@@ -134,19 +123,16 @@ describe("Session Lock Eviction and Ownership Tracking (Cycle 71, D-20)", () => 
 				"utf8",
 			);
 
-			try {
-				await assert.rejects(
-					async () => selectSession(temp, false, targetDir),
-					(err: Error) => {
-						assert.ok(err.message.includes(`PID: ${stubborn.pid}`));
-						assert.ok(err.message.includes("Session is already open in another process"));
-						return true;
-					},
-				);
-			} finally {
-				stubborn.kill("SIGKILL");
-			}
+			await assert.rejects(
+				async () => selectSession(temp, false, targetDir),
+				(err: Error) => {
+					assert.ok(err.message.includes(`PID: ${stubborn.pid}`));
+					assert.ok(err.message.includes("Session is already open in another live process"));
+					return true;
+				},
+			);
 		} finally {
+			stubborn.kill("SIGKILL");
 			rmSync(temp, { recursive: true, force: true });
 		}
 	});

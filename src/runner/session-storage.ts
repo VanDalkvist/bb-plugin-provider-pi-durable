@@ -9,6 +9,7 @@ import { basename, join, resolve } from "node:path";
 import lockfile from "proper-lockfile";
 
 import { getAgentDir } from "../shared/agent-dir.ts";
+import { DurableStorageError } from "../shared/errors.ts";
 export { getAgentDir };
 
 export interface SessionOwnerInfo {
@@ -102,33 +103,13 @@ async function acquireSessionLock(directory: string, cwd: string, id: string): P
 			try {
 				rawRelease = await lockfile.lock(directory, lockOpts);
 			} catch (retryErr) {
-				throw new Error(`Session is already open in another process (PID: ${owner.pid}): ${directory}`, { cause: retryErr });
-			}
-		} else if (owner.pid !== process.pid) {
-			try {
-				process.kill(owner.pid, "SIGTERM");
-			} catch (err) {
-				logUnexpectedErr(err, "ESRCH", `Failed to send SIGTERM to PID ${owner.pid}`);
-			}
-
-			const deadline = Date.now() + 3000;
-			while (Date.now() < deadline && isProcessAlive(owner.pid)) {
-				await new Promise((r) => setTimeout(r, 100));
-			}
-
-			if (!isProcessAlive(owner.pid)) {
-				await forceUnlock(directory);
-				await removeOwnerFile(directory);
-				try {
-					rawRelease = await lockfile.lock(directory, lockOpts);
-				} catch (retryErr) {
-					throw new Error(`Session is already open in another process (PID: ${owner.pid}): ${directory}`, { cause: retryErr });
-				}
-			} else {
-				throw new Error(`Session is already open in another process (PID: ${owner.pid}): ${directory}`, { cause: initialErr });
+				throw new DurableStorageError(`Session is already open in another process (PID: ${owner.pid}): ${directory}`, retryErr);
 			}
 		} else {
-			throw new Error(`Session is already open in another process (PID: ${owner.pid}): ${directory}`, { cause: initialErr });
+			throw new DurableStorageError(
+				`Session is already open in another live process (PID: ${owner.pid}): ${directory}`,
+				initialErr,
+			);
 		}
 	}
 
