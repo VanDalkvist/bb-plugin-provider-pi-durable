@@ -1,4 +1,4 @@
-import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { join, resolve } from "node:path";
 import { resolveSessionFilePath } from "./paths.ts";
@@ -40,16 +40,28 @@ export function forkSessionDatabase(options: ForkSessionOptions): void {
 	}
 
 	mkdirSync(targetDir, { recursive: true });
+	const targetDb = join(targetDir, "session.sqlite");
 
-	const dbFiles = ["session.sqlite", "session.sqlite-wal", "session.sqlite-shm"];
-	for (const file of dbFiles) {
-		const srcPath = join(sourceDir, file);
-		if (existsSync(srcPath)) {
-			copyFileSync(srcPath, join(targetDir, file));
-		}
+	// Clean any previous target database files before atomic snapshot
+	for (const suffix of ["", "-wal", "-shm"]) {
+		const targetFile = `${targetDb}${suffix}`;
+		if (existsSync(targetFile)) rmSync(targetFile, { force: true });
 	}
 
-	const targetDb = join(targetDir, "session.sqlite");
+	// Atomic snapshot via SQLite VACUUM INTO under checkpointed transaction
+	const sourceConn = new DatabaseSync(sourceDb);
+	try {
+		try {
+			sourceConn.exec("PRAGMA wal_checkpoint(TRUNCATE);");
+		} catch {
+			// Ignore checkpoint errors if database is read-only
+		}
+		const escapedTarget = targetDb.replace(/'/g, "''");
+		sourceConn.exec(`VACUUM INTO '${escapedTarget}';`);
+	} finally {
+		sourceConn.close();
+	}
+
 	const db = new DatabaseSync(targetDb);
 	try {
 		db.exec("PRAGMA wal_checkpoint(TRUNCATE);");
@@ -59,6 +71,10 @@ export function forkSessionDatabase(options: ForkSessionOptions): void {
 				const hasEntries = db.prepare("SELECT 1 FROM sqlite_master WHERE type = ? AND name = ?").get("table", "entries");
 				if (hasEntries) {
 					db.prepare("DELETE FROM entries WHERE id > ?").run(entryId);
+				}
+				const hasTasks = db.prepare("SELECT 1 FROM sqlite_master WHERE type = ? AND name = ?").get("table", "tasks");
+				if (hasTasks) {
+					db.prepare("DELETE FROM tasks WHERE id > ?").run(entryId);
 				}
 			}
 		}
