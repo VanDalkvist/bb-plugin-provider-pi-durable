@@ -528,6 +528,12 @@ var CANONICAL_TOOL_DEFS = {
   tool_search: {
     promptSnippet: "Search for deferred tools by keyword or concept and load matching tools for subsequent calls.",
     promptGuidelines: ["Use tool_search to discover and activate deferred tools before calling them."]
+  },
+  subagent: {
+    promptSnippet: "Delegate a self-contained task to an async subagent. Uses the configured runtime subagent model policy (inherits parent model or uses provider-configured model). Runs in the background by default without blocking the conversation.",
+    promptGuidelines: [
+      "Use subagent to run background tasks asynchronously, or with background: false for immediate synchronous results."
+    ]
   }
 };
 var KEYS = ["preamble", "tools", "rules", "docs", "addendum", "project_context", "skills", "cwd", "mcp_servers", "dynamic_sections"];
@@ -584,13 +590,14 @@ function createPiPrompt(_settings, fallbackCwd, options = {}) {
       sections.preamble = systemPromptOverride;
     } else {
       sections.preamble = "You are an expert coding assistant operating inside pi, a coding agent harness. You help users by reading files, executing commands, editing code, and writing new files.";
-      const visibleTools = tools.map((t) => {
+      const visibleTools = tools.flatMap((t) => {
         const def = CANONICAL_TOOL_DEFS[t.name];
-        const snippet = def?.promptSnippet ?? t.promptSnippet ?? t.description ?? "";
-        return snippet ? `- ${t.name}: ${snippet}` : `- ${t.name}`;
+        const snippet = def?.promptSnippet ?? t.promptSnippet;
+        return snippet ? [`- ${t.name}: ${snippet}`] : [];
       });
+      const toolsText = visibleTools.length > 0 ? visibleTools.join("\n") : "(none)";
       sections.tools = `<tools>
-${visibleTools.join("\n")}
+${toolsText}
 
 In addition to the tools above, you may have access to other custom tools depending on the project.
 </tools>`;
@@ -1104,17 +1111,27 @@ function createDurableController(ctx) {
       const isStr = typeof input === "string";
       const prompt = isStr ? input : input.filter((c) => c.type === "text").map((c) => c.text).join("\n");
       const images = isStr ? void 0 : input.filter((c) => c.type === "image");
-      if (ctx.extensionRunner && ctx.dynamicSections) {
+      if (ctx.extensionRunner) {
         try {
+          const currentAgent = await ctx.bindings.current.agent(runtimeContext);
+          const activeTools = currentAgent.tools.map((t) => t.name);
           const hookRes = await ctx.extensionRunner.emitBeforeAgentStart(
             { messageType: "user", prompt, images: images?.length ? images : void 0 },
             {
               cwd: ctx.cwd ?? process.cwd(),
-              sections: ctx.dynamicSections.getSections()
+              selectedTools: activeTools,
+              sections: ctx.dynamicSections?.getSections() ?? {}
             }
           );
-          if (hookRes?.systemPromptOptions?.sections) {
+          if (hookRes?.systemPromptOptions?.sections && ctx.dynamicSections) {
             ctx.dynamicSections.updateSections(hookRes.systemPromptOptions.sections);
+          }
+          const selectedTools = hookRes?.systemPromptOptions?.selectedTools;
+          const handlerEdited = selectedTools && (selectedTools.length !== activeTools.length || selectedTools.some((name, i) => name !== activeTools[i]));
+          const nextActiveTools = handlerEdited ? selectedTools : ctx.getActiveTools?.() ?? ctx.extensionRunner?.getActiveTools?.() ?? activeTools;
+          if (handlerEdited && ctx.setActiveTools) ctx.setActiveTools(selectedTools);
+          if (nextActiveTools && (nextActiveTools.length !== activeTools.length || nextActiveTools.some((name, i) => name !== activeTools[i]))) {
+            await ctx.bindings.current.configure({ modelTools: nextActiveTools.map((name) => ({ name })) }, runtimeContext);
           }
         } catch (err) {
           ctx.notice(
@@ -1372,6 +1389,8 @@ function adaptExtensionTool(toolDef, executeToolFn, createToolContext, getExtens
     description: toolDef.description,
     parameters: toolDef.parameters,
     callers,
+    ...toolDef.promptSnippet ? { promptSnippet: toolDef.promptSnippet } : {},
+    ...toolDef.promptGuidelines?.length ? { promptGuidelines: toolDef.promptGuidelines } : {},
     ...isDeferred ? { deferred: true } : {},
     ...toolDef.outputSchema ? {
       outputSchema: toolDef.outputSchema,
@@ -1521,7 +1540,7 @@ async function setupExtensionRunner(options) {
   const modelRegistry = new ModelRegistry(options.modelRuntime);
   const runner = new ExtensionRunner(options.extensions, options.runtime, options.cwd, sessionManager, modelRegistry);
   runner.setUIContext(createExtensionUIContext(options.onNotice));
-  let activeToolNames = options.getCallableTools ? options.getCallableTools().map((t) => t.name) : [];
+  let activeToolNames = options.initialActiveTools ? [...options.initialActiveTools] : options.getCallableTools ? options.getCallableTools().map((t) => t.name) : [];
   let sessionName;
   const actions = {
     getActiveTools: () => activeToolNames,
@@ -1558,6 +1577,7 @@ async function setupExtensionRunner(options) {
     }),
     setActiveTools: (toolNames) => {
       activeToolNames = [...toolNames];
+      options.onActiveToolsChanged?.(activeToolNames);
     },
     refreshTools: () => {
       options.onToolsChanged?.();
@@ -1739,6 +1759,13 @@ async function mountExtensionBridge(location, modelRuntime, extensionsResult, re
         return Array.from(map.values());
       },
       onToolsChanged: syncToolsToRegistry,
+      onActiveToolsChanged: (tools) => {
+        try {
+          void actionsDelegate?.onConfigureModelTools?.(tools)?.catch((err) => console.warn("[ExtensionMount] Configure model tools error:", err));
+        } catch (err) {
+          console.warn("[ExtensionMount] Synchronous error configuring model tools:", err);
+        }
+      },
       onNotice,
       settingsManager,
       onAbort: () => actionsDelegate?.onAbort?.(),
@@ -1751,9 +1778,10 @@ async function mountExtensionBridge(location, modelRuntime, extensionsResult, re
         report(err);
         onNotice?.("error", `[Extension Error] ${err.extensionPath} (${err.event}): ${err.error}`);
       });
+      syncToolsToRegistry();
       try {
         await new Promise((r) => setImmediate(r));
-        const currentTools = registry.snapshot().tools().map((t) => t.tool.name);
+        const currentTools = extensionRunner.getActiveTools?.() ?? registry.snapshot().tools().map((t) => t.tool.name);
         const beforeStart = await extensionRunner.emitBeforeAgentStart(
           { messageType: "user", prompt: "", images: void 0 },
           { cwd: location.cwd, selectedTools: currentTools, sections: dynamicSections?.getSections() ?? {} }
@@ -1761,19 +1789,22 @@ async function mountExtensionBridge(location, modelRuntime, extensionsResult, re
         if (beforeStart?.systemPromptOptions?.sections && dynamicSections) {
           dynamicSections.updateSections(beforeStart.systemPromptOptions.sections);
         }
+        const selected = beforeStart?.systemPromptOptions?.selectedTools;
+        if (selected && (selected.length !== currentTools.length || selected.some((t, i) => t !== currentTools[i]))) {
+          extensionsResult.runtime.setActiveTools?.(selected);
+        }
       } catch (err) {
         report(err);
       }
     }
-    syncToolsToRegistry();
   } catch (error) {
     report(error);
   }
   return {
     extensionRunner,
-    cleanup: async () => {
-      await extensionRunner?.emit({ type: "session_shutdown", reason: "quit" }).catch((err) => console.warn("[ExtensionBridge] Cleanup session_shutdown:", err));
-    }
+    cleanup: () => extensionRunner?.emit({ type: "session_shutdown", reason: "quit" }).catch((err) => console.warn("[ExtensionBridge] Cleanup session_shutdown:", err)) ?? Promise.resolve(),
+    setActiveTools: (tools) => extensionsResult.runtime.setActiveTools?.(tools),
+    getActiveTools: () => extensionsResult.runtime.getActiveTools?.() ?? []
   };
 }
 
@@ -2084,11 +2115,18 @@ async function loadHarnessEnvironment(location, options, envs) {
     dynamicSections,
     setNoticeForwarder: (forwarder) => {
       liveNoticeForwarder = forwarder;
-    }
+    },
+    setActiveTools: mounted.setActiveTools,
+    getActiveTools: mounted.getActiveTools
   };
 }
 
-// src/runner/runtime.ts
+// src/runner/runtime-hydration.ts
+function hydrateSessionActiveTools(rootAgent, activeEnvState) {
+  if (Array.isArray(rootAgent.tools)) {
+    activeEnvState.setActiveTools?.(rootAgent.tools.map((t) => t.name));
+  }
+}
 async function loadSummaries(harness, rootId) {
   const summaries = [];
   let cursor;
@@ -2099,6 +2137,8 @@ async function loadSummaries(harness, rootId) {
   } while (cursor !== void 0);
   return summaries;
 }
+
+// src/runner/runtime.ts
 async function openDurable(options = {}) {
   const location = await selectSession(options.cwd ?? process.cwd(), options.continueSession ?? false, options.session);
   const envs = new ExecutionEnvs(location.cwd);
@@ -2109,16 +2149,19 @@ async function openDurable(options = {}) {
     envState = activeEnvState;
     const { modelRuntime, settingsManager } = activeEnvState;
     harness = activeEnvState.harness;
+    const initialTools = activeEnvState.extensionRunner?.getActiveTools?.();
     const root = await harness.root(runtimeContext, {
       agent: {
         cwd: location.cwd,
         ...activeEnvState.initialModelRef ? { model: activeEnvState.initialModelRef } : {},
-        ...activeEnvState.initialThinkingLevel ? { thinkingLevel: activeEnvState.initialThinkingLevel } : {}
+        ...activeEnvState.initialThinkingLevel ? { thinkingLevel: activeEnvState.initialThinkingLevel } : {},
+        ...Array.isArray(initialTools) ? { modelTools: initialTools.map((name) => ({ name })) } : {}
       }
     });
     if (!location.created) {
       const rootAgent = await root.agent(runtimeContext);
       if (rootAgent.model) activeEnvState.setActiveModelRef(rootAgent.model);
+      hydrateSessionActiveTools(rootAgent, activeEnvState);
       if (options.cli !== void 0) {
         const cli = await findInitialAgentModel(settingsManager, modelRuntime, options.cli);
         if (cli.model) {
@@ -2191,7 +2234,9 @@ async function openDurable(options = {}) {
       setActiveModelRef: (ref) => activeEnvState.setActiveModelRef(ref),
       extensionRunner: activeEnvState.extensionRunner,
       dynamicSections: activeEnvState.dynamicSections,
-      cwd: location.cwd
+      cwd: location.cwd,
+      setActiveTools: activeEnvState.setActiveTools,
+      getActiveTools: activeEnvState.getActiveTools
     });
     if (activeEnvState.actionsDelegate) {
       activeEnvState.actionsDelegate.onAbort = () => {
@@ -2201,6 +2246,9 @@ async function openDurable(options = {}) {
         void controller.compact(i);
       };
       activeEnvState.actionsDelegate.isIdle = () => true;
+      activeEnvState.actionsDelegate.onConfigureModelTools = async (tools) => {
+        await root.configure({ modelTools: tools.map((name) => ({ name })) }, runtimeContext);
+      };
       activeEnvState.actionsDelegate.getContextUsage = () => {
         const doc = state.conversation.docs["pi.agent"] ?? {};
         const p = doc.model?.provider, m = doc.model?.modelId ?? doc.model?.id;
@@ -2238,9 +2286,7 @@ async function openDurable(options = {}) {
           unsubscribeCommits,
           () => opened.close(runtimeContext),
           () => envs.cleanup(runtimeContext),
-          async () => {
-            await activeEnvState.cleanup?.();
-          },
+          () => activeEnvState.cleanup?.(),
           () => location.release()
         ]);
       }
@@ -4780,11 +4826,13 @@ async function main() {
     isTerminating = true;
     try {
       activeControlChannel?.close();
-    } catch {
+    } catch (err) {
+      console.warn(`[Runner] Error closing control channel on ${signalOrReason}: ${err instanceof Error ? err.message : String(err)}`);
     }
     try {
       activeGraphSource?.teardown();
-    } catch {
+    } catch (err) {
+      console.warn(`[Runner] Error tearing down graph source on ${signalOrReason}: ${err instanceof Error ? err.message : String(err)}`);
     }
     try {
       activeTaskBridge?.unsubscribe();
@@ -4803,7 +4851,8 @@ async function main() {
     }
     try {
       await flushWireStdout();
-    } catch {
+    } catch (err) {
+      console.warn(`[Runner] Error flushing stdout on ${signalOrReason}: ${err instanceof Error ? err.message : String(err)}`);
     }
     process.exit(0);
   };

@@ -10,6 +10,8 @@ import type { DynamicCodemodeNamespaces } from "./codemode-namespaces.ts";
 export interface MountedExtensionBridge {
 	readonly extensionRunner?: ExtensionRunner;
 	readonly cleanup: () => Promise<void>;
+	readonly setActiveTools?: (tools: string[]) => void;
+	readonly getActiveTools?: () => string[];
 }
 
 export function createNestedToolExecutor(
@@ -97,6 +99,7 @@ export interface ExtensionActionsDelegate {
 	onCompact?: (instructions?: string) => void;
 	getContextUsage?: () => { tokens: number | null; contextWindow: number } | undefined;
 	isIdle?: () => boolean;
+	onConfigureModelTools?: (tools: string[]) => Promise<void> | void;
 }
 
 export async function mountExtensionBridge(
@@ -141,6 +144,13 @@ export async function mountExtensionBridge(
 				return Array.from(map.values()) as Array<{ name: string; description: string; parameters: unknown }>;
 			},
 			onToolsChanged: syncToolsToRegistry,
+			onActiveToolsChanged: (tools) => {
+				try {
+					void actionsDelegate?.onConfigureModelTools?.(tools)?.catch((err) => console.warn("[ExtensionMount] Configure model tools error:", err));
+				} catch (err) {
+					console.warn("[ExtensionMount] Synchronous error configuring model tools:", err);
+				}
+			},
 			onNotice,
 			settingsManager,
 			onAbort: () => actionsDelegate?.onAbort?.(),
@@ -154,9 +164,10 @@ export async function mountExtensionBridge(
 				report(err);
 				onNotice?.("error", `[Extension Error] ${err.extensionPath} (${err.event}): ${err.error}`);
 			});
+			syncToolsToRegistry();
 			try {
 				await new Promise((r) => setImmediate(r));
-				const currentTools = registry.snapshot().tools().map((t) => t.tool.name);
+				const currentTools = extensionRunner.getActiveTools?.() ?? registry.snapshot().tools().map((t) => t.tool.name);
 				const beforeStart = await extensionRunner.emitBeforeAgentStart(
 					{ messageType: "user", prompt: "", images: undefined },
 					{ cwd: location.cwd, selectedTools: currentTools, sections: dynamicSections?.getSections() ?? {} },
@@ -164,19 +175,23 @@ export async function mountExtensionBridge(
 				if (beforeStart?.systemPromptOptions?.sections && dynamicSections) {
 					dynamicSections.updateSections(beforeStart.systemPromptOptions.sections);
 				}
+				const selected = beforeStart?.systemPromptOptions?.selectedTools;
+				if (selected && (selected.length !== currentTools.length || selected.some((t, i) => t !== currentTools[i]))) {
+					extensionsResult.runtime.setActiveTools?.(selected);
+				}
 			} catch (err) {
 				report(err);
 			}
 		}
-		syncToolsToRegistry();
 	} catch (error) {
 		report(error);
 	}
 
 	return {
 		extensionRunner,
-		cleanup: async () => {
-			await extensionRunner?.emit({ type: "session_shutdown", reason: "quit" }).catch((err) => console.warn("[ExtensionBridge] Cleanup session_shutdown:", err));
-		},
+		cleanup: () =>
+			extensionRunner?.emit({ type: "session_shutdown", reason: "quit" }).catch((err) => console.warn("[ExtensionBridge] Cleanup session_shutdown:", err)) ?? Promise.resolve(),
+		setActiveTools: (tools: string[]) => extensionsResult.runtime.setActiveTools?.(tools),
+		getActiveTools: () => extensionsResult.runtime.getActiveTools?.() ?? [],
 	};
 }

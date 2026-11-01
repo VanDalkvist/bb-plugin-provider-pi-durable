@@ -11,17 +11,9 @@ import { createDurableController } from "./runtime-controller.ts";
 import { RuntimeBindings } from "./runtime-bindings.ts";
 import { closeRuntimeResources } from "./runtime-cleanup.ts";
 import { loadHarnessEnvironment, type LoadedHarnessEnvironment } from "./runtime-loader.ts";
+import { hydrateSessionActiveTools, loadSummaries } from "./runtime-hydration.ts";
 
-async function loadSummaries(harness: Harness, rootId: ConversationId): Promise<ConversationSummary[]> {
-	const summaries: ConversationSummary[] = [];
-	let cursor: Cursor | undefined;
-	do {
-		const page = await harness.commit((tx) => tx.scanConversations({}, 256, cursor), runtimeContext);
-		for (const { id } of page.items) summaries.push({ id, label: id === rootId ? "main" : `subagent ${id}`, ...(await firstInput(harness, id)) });
-		cursor = page.next;
-	} while (cursor !== undefined);
-	return summaries;
-}
+export { hydrateSessionActiveTools } from "./runtime-hydration.ts";
 
 export async function openDurable(options: OpenDurableOptions = {}): Promise<OpenDurableResult> {
 	const location = await selectSession(options.cwd ?? process.cwd(), options.continueSession ?? false, options.session);
@@ -35,17 +27,20 @@ export async function openDurable(options: OpenDurableOptions = {}): Promise<Ope
 		const { modelRuntime, settingsManager } = activeEnvState;
 		harness = activeEnvState.harness;
 
+		const initialTools = activeEnvState.extensionRunner?.getActiveTools?.();
 		const root = await harness.root(runtimeContext, {
 			agent: {
 				cwd: location.cwd,
 				...(activeEnvState.initialModelRef ? { model: activeEnvState.initialModelRef } : {}),
 				...(activeEnvState.initialThinkingLevel ? { thinkingLevel: activeEnvState.initialThinkingLevel } : {}),
+				...(Array.isArray(initialTools) ? { modelTools: initialTools.map((name) => ({ name })) as any } : {}),
 			},
 		});
 
 		if (!location.created) {
 			const rootAgent = await root.agent(runtimeContext);
 			if (rootAgent.model) activeEnvState.setActiveModelRef(rootAgent.model);
+			hydrateSessionActiveTools(rootAgent, activeEnvState);
 			if (options.cli !== undefined) {
 				const cli = await findInitialAgentModel(settingsManager, modelRuntime, options.cli);
 				if (cli.model) {
@@ -128,12 +123,17 @@ export async function openDurable(options: OpenDurableOptions = {}): Promise<Ope
 			extensionRunner: activeEnvState.extensionRunner,
 			dynamicSections: activeEnvState.dynamicSections,
 			cwd: location.cwd,
+			setActiveTools: activeEnvState.setActiveTools,
+			getActiveTools: activeEnvState.getActiveTools,
 		});
 
 		if (activeEnvState.actionsDelegate) {
 			activeEnvState.actionsDelegate.onAbort = () => { void controller.abort(); };
 			activeEnvState.actionsDelegate.onCompact = (i?: string) => { void controller.compact(i); };
 			activeEnvState.actionsDelegate.isIdle = () => true;
+			activeEnvState.actionsDelegate.onConfigureModelTools = async (tools: string[]) => {
+				await root.configure({ modelTools: tools.map((name) => ({ name })) as any }, runtimeContext);
+			};
 			activeEnvState.actionsDelegate.getContextUsage = () => {
 				const doc = (state.conversation.docs["pi.agent"] ?? {}) as { model?: { provider?: string; id?: string; modelId?: string } };
 				const p = doc.model?.provider, m = doc.model?.modelId ?? doc.model?.id;
@@ -168,15 +168,15 @@ export async function openDurable(options: OpenDurableOptions = {}): Promise<Ope
 					unsubscribeCommits,
 					() => opened.close(runtimeContext),
 					() => envs.cleanup(runtimeContext),
-					async () => { await activeEnvState.cleanup?.(); },
+					() => activeEnvState.cleanup?.(),
 					() => location.release(),
 				]);
 			},
 		};
 	} catch (error: unknown) {
-		await envState?.cleanup?.().catch((err: unknown) => console.warn("[DurableRuntime] Cleanup extension runner:", err));
-		await harness?.close(runtimeContext).catch((err: unknown) => console.warn("[DurableRuntime] Cleanup harness:", err));
-		await location.release().catch((err: unknown) => console.warn("[DurableRuntime] Cleanup location:", err));
+		await envState?.cleanup?.().catch((err) => console.warn("[DurableRuntime] Cleanup extension runner:", err));
+		await harness?.close(runtimeContext).catch((err) => console.warn("[DurableRuntime] Cleanup harness:", err));
+		await location.release().catch((err) => console.warn("[DurableRuntime] Cleanup location:", err));
 		throw error;
 	}
 }

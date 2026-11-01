@@ -28,6 +28,8 @@ export interface SetupExtensionRunnerOptions {
 	executeToolFn: NestedToolExecutor;
 	getCallableTools?: () => Array<{ name: string; description: string; parameters: unknown }>;
 	onToolsChanged?: () => void;
+	onActiveToolsChanged?: (tools: string[]) => void;
+	initialActiveTools?: string[];
 	onNotice?: (level: "info" | "warning" | "error", message: string) => void;
 	settingsManager?: SettingsManager;
 	onAbort?: () => void;
@@ -81,7 +83,9 @@ export async function setupExtensionRunner(options: SetupExtensionRunnerOptions)
 
 	runner.setUIContext(createExtensionUIContext(options.onNotice));
 
-	let activeToolNames: string[] = options.getCallableTools ? options.getCallableTools().map((t) => t.name) : [];
+	let activeToolNames: string[] = options.initialActiveTools
+		? [...options.initialActiveTools]
+		: (options.getCallableTools ? options.getCallableTools().map((t) => t.name) : []);
 	let sessionName: string | undefined;
 
 	const actions: ExtensionActions = {
@@ -119,6 +123,7 @@ export async function setupExtensionRunner(options: SetupExtensionRunnerOptions)
 		}),
 		setActiveTools: (toolNames: string[]) => {
 			activeToolNames = [...toolNames];
+			options.onActiveToolsChanged?.(activeToolNames);
 		},
 		refreshTools: () => {
 			options.onToolsChanged?.();

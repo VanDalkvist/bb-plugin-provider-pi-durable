@@ -63,6 +63,8 @@ export function adaptExtensionTool(
 		description: toolDef.description,
 		parameters: toolDef.parameters,
 		callers,
+		...(toolDef.promptSnippet ? { promptSnippet: toolDef.promptSnippet } : {}),
+		...(toolDef.promptGuidelines?.length ? { promptGuidelines: toolDef.promptGuidelines } : {}),
 		...(isDeferred ? { deferred: true } : {}),
 		...(toolDef.outputSchema
 			? {

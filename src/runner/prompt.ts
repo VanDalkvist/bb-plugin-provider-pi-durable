@@ -52,6 +52,12 @@ const CANONICAL_TOOL_DEFS: Record<string, { promptSnippet?: string; promptGuidel
 		promptSnippet: "Search for deferred tools by keyword or concept and load matching tools for subsequent calls.",
 		promptGuidelines: ["Use tool_search to discover and activate deferred tools before calling them."],
 	},
+	subagent: {
+		promptSnippet: "Delegate a self-contained task to an async subagent. Uses the configured runtime subagent model policy (inherits parent model or uses provider-configured model). Runs in the background by default without blocking the conversation.",
+		promptGuidelines: [
+			"Use subagent to run background tasks asynchronously, or with background: false for immediate synchronous results.",
+		],
+	},
 };
 
 const KEYS = ["preamble", "tools", "rules", "docs", "addendum", "project_context", "skills", "cwd", "mcp_servers", "dynamic_sections"] as const;
@@ -129,12 +135,13 @@ export function createPiPrompt(_settings: SettingsManager, fallbackCwd: string, 
 			sections.preamble =
 				"You are an expert coding assistant operating inside pi, a coding agent harness. You help users by reading files, executing commands, editing code, and writing new files.";
 
-			const visibleTools = tools.map((t) => {
+			const visibleTools = tools.flatMap((t) => {
 				const def = CANONICAL_TOOL_DEFS[t.name as keyof typeof CANONICAL_TOOL_DEFS];
-				const snippet = def?.promptSnippet ?? t.promptSnippet ?? t.description ?? "";
-				return snippet ? `- ${t.name}: ${snippet}` : `- ${t.name}`;
+				const snippet = def?.promptSnippet ?? t.promptSnippet;
+				return snippet ? [`- ${t.name}: ${snippet}`] : [];
 			});
-			sections.tools = `<tools>\n${visibleTools.join("\n")}\n\nIn addition to the tools above, you may have access to other custom tools depending on the project.\n</tools>`;
+			const toolsText = visibleTools.length > 0 ? visibleTools.join("\n") : "(none)";
+			sections.tools = `<tools>\n${toolsText}\n\nIn addition to the tools above, you may have access to other custom tools depending on the project.\n</tools>`;
 			sections.rules = `<rules>\n${buildRules(tools)}\n</rules>`;
 		}
 

@@ -1,4 +1,46 @@
 
+### Active Tool Loadout & Prompt Parity (Cycle 98) — 2026-10-31 (Execution Receipt)
+- **Цель и статус:** Устранение раздувания стартового префикса треда на ~55k токенов (Issue #32) за счёт честного подключения `ExtensionAPI` (`pi.setActiveTools` и `before_agent_start.systemPromptOptions.selectedTools`) к нативному `AgentDoc.modelTools` в `@earendil-works/pi-durable`; сохранение сниппетов и инструкций инструментов при адаптации (`adaptExtensionTool`); устранение ложных фоллбеков описаний в тексте промпта; обеспечение персистентности набора при resume без лишних ходов; сохранение 100% работоспособности Codemode и субагентов. Статус: **PASS (VERIFIED)**.
+- **Устранённые дефекты и первоисточники:**
+  1. *[P1: Разрыв связки setActiveTools и emitBeforeAgentStart с Durable (AP-010, AP-020, AP-026)]:*
+     - Первоисточник: GitHub Issue VanDalkvist/bb-plugin-provider-pi-durable#32, `packages/coding-agent/src/core/agent-session.ts:1935–1946`.
+     - Коренная причина: `actions.setActiveTools` в `extension-bridge.ts` мутировал только локальную переменную в замыкании; `submit()` в `runtime-controller.ts` не передавал текущие инструменты в `emitBeforeAgentStart` и игнорировал `hookRes.systemPromptOptions.selectedTools`; `configure({ modelTools })` никогда не вызывался.
+     - Решение: Добавлен `onActiveToolsChanged` в `extension-bridge.ts`, `onConfigureModelTools` в `actionsDelegate`, двуканальное согласование хука `before_agent_start` vs `setActiveTools` в `runtime-controller.ts:submit` и вызов `ctx.bindings.current.configure({ modelTools: nextActiveTools.map(name => ({ name })) })`.
+  2. *[P2: Потеря promptSnippet и дублирование описаний в тексте промпта (AP-026, AP-012)]:*
+     - Первоисточник: JSDoc `ToolDefinition.promptSnippet` ("Custom tools are omitted from that section when this is not provided") и `packages/coding-agent/src/core/system-prompt.ts:137–142` ("Tools without a snippet are not listed").
+     - Коренная причина: `adaptExtensionTool` отбрасывал `promptSnippet` и `promptGuidelines`; `prompt.ts` содержал некорректный фоллбек `?? t.description`, из-за чего полные многостраничные описания 90 тулов дублировались в текст системного промпта (~8k лишних токенов).
+     - Решение: `adaptExtensionTool` сохраняет `promptSnippet` и `promptGuidelines` в объекте `ToolRegistration`. В `prompt.ts:buildSections` фоллбек на `description` полностью ликвидирован: в текст `<tools>` попадают строго тулы со сниппетом (`visibleTools.map(- ${name}: ${snippet})`), остальные тулы модель получает через JSON-схему API, как и задумано в каноне Pi.
+  3. *[P1: Персистентность active tools при reopen/resume (AP-010, AP-030)]:*
+     - Первоисточник: SQLite `AgentDoc` (`pi.agent`) в `@earendil-works/pi-durable`.
+     - Коренная причина: Набор `modelTools` сохраняется Durable в `session.sqlite`, но при возобновлении сессии `ExtensionRunner` создавался со всеми инструментами по умолчанию.
+     - Решение: При `!location.created` в `runtime.ts` считывается `rootAgent.tools` из базы сессии и гидратирует `activeEnvState.setActiveTools()`, восстанавливая точный активный набор в 0 дополнительных ходов. При `location.created` стартовый набор сразу передаётся в `harness.root({ agent: { modelTools } })`.
+  4. *[P1: Изоляция Codemode и субагентов (AP-011, AP-026)]:*
+     - Первоисточник: `packages/durable/src/harness/agent.ts:266` (`callable = enabled.filter(callableBy("tools"))`).
+     - Гарантия: `modelTools` фильтрует только `agent.tools` (вызов модели). Инструменты остаются в `agent.callable`, поэтому скрипты Codemode (`await tools.<name>()`) и `searchTools()` продолжают успешно вызывать скрытые инструменты даже под строгим `tool-diet`. Дочерние беседы субагентов наследуют или изолируют инструменты без утечки в родительскую беседу.
+  5. *[P2: Ликвидация пустых catch-блоков в index.ts (AP-012, AP-022, AP-024)]:*
+     - В `src/runner/index.ts:48–59` заменены 3 пустых `catch {}` на структурированные логи `console.warn('[Runner] Error ...')`.
+- **TDD и доказательная база:**
+  - `tests/prompt-tool-metadata.test.ts`: 77 строк (< 200). 2 теста: проброс `promptSnippet`/`promptGuidelines` и пропуск тулов без сниппета в тексте промпта (100% PASS).
+  - `tests/active-tool-loadout.test.ts`: 120 строк (< 200). 3 теста: передача `activeTools`, приоритет прямого редактирования хука, приоритет `setActiveTools` и гидратация при resume (100% PASS).
+  - `tests/active-tool-loadout-codemode.test.ts`: 135 строк (< 200). 2 теста: вызов `tools.read` из JS-песочницы Codemode под `modelTools: ["codemode"]` и изоляция субагента (100% PASS).
+  - Очищен ложно-зеленый ассерт в `tests/codemode-mcp-parity.test.ts` (100% PASS).
+  - Общий сьют: **588 тестов бэкенда pass + 117 тестов UI pass = 705 pass, 0 fail**.
+  - Контракты и типизация: `npm run test:contracts` (0 errors), `npx tsc --noEmit` (0 errors).
+  - Ацикличность графа импортов: `scripts/verify-import-graph.mjs` (147 файлов, 0 циклов).
+- **Line Budgets (AP-019):**
+  - `src/runner/tool-adapter.ts`: 174 строки (< 200)
+  - `src/runner/prompt.ts`: 183 строки (< 200)
+  - `src/runner/extension-bridge.ts`: 196 строк (< 200)
+  - `src/runner/extension-mount.ts`: 198 строк (< 200)
+  - `src/runner/runtime-controller.ts`: 193 строки (< 200)
+  - `src/runner/runtime-loader.ts`: 195 строк (< 200)
+  - `src/runner/runtime.ts`: 192 строки (< 200)
+  - `src/runner/index.ts`: 184 строки (< 200)
+  - Все новые тесты (`prompt-tool-metadata`, `active-tool-loadout`, `active-tool-loadout-codemode`) строго < 200 строк.
+- **Сборка (Build Receipt):**
+  - Версия обновлена `0.3.28` → `0.3.29` в `package.json` и `package-lock.json`.
+  - `npm run build` пересобрал бандлы: `dist/server.js`, `dist/app.js`, `dist/host.js`, `dist/runner/index.js` с версией `0.3.29`.
+
 ### Non-Blocking Background Subagents & Turn Watchdog Prevention (Cycle 79) — 2026-10-27 (Execution Receipt)
 - **Цель и статус:** Устранение блокировки родительской беседы при работе фоновых субагентов (P1-SUB1) и предотвращение ложного срабатывания сторожевого таймера 120s в BB Core (P1-WD1). Статус: **PASS (VERIFIED)**.
 - **Устранённые дефекты и первоисточники:**

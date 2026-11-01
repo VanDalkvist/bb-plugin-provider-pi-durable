@@ -176,4 +176,31 @@ describe("Extension Bridge (Cycle 60)", () => {
 
 		assert.deepEqual(resultWithoutOutput.output, [{ type: "text", text: "completed" }]);
 	});
+
+	it("setupExtensionRunner triggers onActiveToolsChanged when setActiveTools is called", async () => {
+		const { ModelRuntime } = await import("@earendil-works/pi-coding-agent");
+		let notifiedTools: string[] | undefined;
+		const { setupExtensionRunner } = await import("../src/runner/extension-bridge.ts");
+		const runner = await setupExtensionRunner({
+			extensions: [],
+			runtime: {
+				pendingProviderRegistrations: [],
+				pendingNativeProviderRegistrations: [],
+				pendingVirtualModelRegistrations: [],
+				flagValues: new Map(),
+				mcpServers: { list: () => [], setChangeListener: () => {} },
+				invalidate: () => {},
+			} as any,
+			cwd: process.cwd(),
+			modelRuntime: await ModelRuntime.create(),
+			executeToolFn: async () => ({ toolCall: {} as any, result: { content: [], details: {} }, isError: false }),
+			onActiveToolsChanged: (tools: string[]) => {
+				notifiedTools = tools;
+			},
+		});
+
+		runner.runtime.setActiveTools(["read", "edit"]);
+		assert.deepEqual(notifiedTools, ["read", "edit"]);
+		assert.deepEqual(runner.getActiveTools(), ["read", "edit"]);
+	});
 });

@@ -40,6 +40,8 @@ export interface LoadedHarnessEnvironment {
 	actionsDelegate?: import("./extension-mount.ts").ExtensionActionsDelegate;
 	dynamicSections?: DynamicPromptSections;
 	setNoticeForwarder?: (forwarder: (level: "info" | "warning" | "error", message: string) => void) => void;
+	setActiveTools?: (tools: string[]) => void;
+	getActiveTools?: () => string[];
 }
 
 function logRegError(kind: string, identifier: string, err: unknown): void {
@@ -187,5 +189,7 @@ export async function loadHarnessEnvironment(
 		setNoticeForwarder: (forwarder) => {
 			liveNoticeForwarder = forwarder;
 		},
+		setActiveTools: mounted.setActiveTools,
+		getActiveTools: mounted.getActiveTools,
 	};
 }

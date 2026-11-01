@@ -23,6 +23,8 @@ export interface ControllerContext {
  extensionRunner?: import("@earendil-works/pi-coding-agent").ExtensionRunner;
  dynamicSections?: import("./prompt.ts").DynamicPromptSections;
  cwd?: string;
+ setActiveTools?: (tools: string[]) => void;
+ getActiveTools?: () => string[];
 }
 
 export function createDurableController(ctx: ControllerContext): DurableController {
@@ -66,17 +68,30 @@ export function createDurableController(ctx: ControllerContext): DurableControll
 				const isStr = typeof input === "string";
 				const prompt = isStr ? input : input.filter((c) => c.type === "text").map((c: any) => c.text).join("\n");
 				const images = isStr ? undefined : (input.filter((c) => c.type === "image") as any[]);
-				if (ctx.extensionRunner && ctx.dynamicSections) {
+				if (ctx.extensionRunner) {
 					try {
+						const currentAgent = await ctx.bindings.current.agent(runtimeContext);
+						const activeTools = currentAgent.tools.map((t) => t.name);
 						const hookRes = await ctx.extensionRunner.emitBeforeAgentStart(
 							{ messageType: "user", prompt, images: images?.length ? images : undefined },
 							{
 								cwd: ctx.cwd ?? process.cwd(),
-								sections: ctx.dynamicSections.getSections(),
+								selectedTools: activeTools,
+								sections: ctx.dynamicSections?.getSections() ?? {},
 							} as import("@earendil-works/pi-coding-agent").BuildSystemPromptOptions,
 						);
-						if (hookRes?.systemPromptOptions?.sections) {
+						if (hookRes?.systemPromptOptions?.sections && ctx.dynamicSections) {
 							ctx.dynamicSections.updateSections(hookRes.systemPromptOptions.sections);
+						}
+						const selectedTools = hookRes?.systemPromptOptions?.selectedTools;
+						const handlerEdited = selectedTools && (
+							selectedTools.length !== activeTools.length ||
+							selectedTools.some((name, i) => name !== activeTools[i])
+						);
+						const nextActiveTools = handlerEdited ? selectedTools : (ctx.getActiveTools?.() ?? ctx.extensionRunner?.getActiveTools?.() ?? activeTools);
+						if (handlerEdited && ctx.setActiveTools) ctx.setActiveTools(selectedTools);
+						if (nextActiveTools && (nextActiveTools.length !== activeTools.length || nextActiveTools.some((name, i) => name !== activeTools[i]))) {
+							await ctx.bindings.current.configure({ modelTools: nextActiveTools.map((name) => ({ name })) as any }, runtimeContext);
 						}
 					} catch (err) {
 						ctx.notice(

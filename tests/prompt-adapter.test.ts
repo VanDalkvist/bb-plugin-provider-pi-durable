@@ -166,6 +166,7 @@ describe("Prompt Adapter (Cycle 61 - AP-010, AP-018)", () => {
 					{
 						name: "agent_spawn",
 						description: "Spawn a child agent",
+						promptSnippet: "Spawn a child agent",
 						promptGuidelines: ["Never spawn recursive cycles of agents"],
 					},
 				],

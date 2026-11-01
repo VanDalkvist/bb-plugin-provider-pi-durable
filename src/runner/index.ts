@@ -45,8 +45,12 @@ async function main() {
 	const handleExit = async (signalOrReason: string) => {
 		if (isTerminating) return;
 		isTerminating = true;
-		try { activeControlChannel?.close(); } catch {}
-		try { activeGraphSource?.teardown(); } catch {}
+		try { activeControlChannel?.close(); } catch (err) {
+			console.warn(`[Runner] Error closing control channel on ${signalOrReason}: ${err instanceof Error ? err.message : String(err)}`);
+		}
+		try { activeGraphSource?.teardown(); } catch (err) {
+			console.warn(`[Runner] Error tearing down graph source on ${signalOrReason}: ${err instanceof Error ? err.message : String(err)}`);
+		}
 		try { activeTaskBridge?.unsubscribe(); } catch (err) {
 			console.warn(`[Runner] Error unsubscribing task graph bridge on ${signalOrReason}: ${err instanceof Error ? err.message : String(err)}`);
 		}
@@ -56,7 +60,9 @@ async function main() {
 		try { await activeDurable?.close(); } catch (err) {
 			console.error(`[Runner] Error releasing durable lock on ${signalOrReason}:`, err);
 		}
-		try { await flushWireStdout(); } catch {}
+		try { await flushWireStdout(); } catch (err) {
+			console.warn(`[Runner] Error flushing stdout on ${signalOrReason}: ${err instanceof Error ? err.message : String(err)}`);
+		}
 		process.exit(0);
 	};
 
