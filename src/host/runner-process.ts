@@ -26,6 +26,7 @@ export class RunnerProcess {
 		this.options.onError?.(error);
 	});
 	public exited = false;
+	private eventQueue: Promise<void> = Promise.resolve();
 	private cleanupPrompts: () => void;
 
 	constructor(options: RunnerProcessOptions) {
@@ -96,14 +97,18 @@ export class RunnerProcess {
 		}
 		const handled = this.channel.handleIncoming(msg);
 		if (!handled) {
-			try {
-				void Promise.resolve(this.options.onEvent?.(msg)).catch((cause: unknown) => {
+			this.eventQueue = this.eventQueue.then(async () => {
+				try {
+					await this.options.onEvent?.(msg);
+				} catch (cause: unknown) {
 					this.channel.failProtocol(new RunnerProtocolError("CONSUMER_FAILURE", cause));
-				});
-			} catch (cause) {
-				this.channel.failProtocol(new RunnerProtocolError("CONSUMER_FAILURE", cause));
-			}
+				}
+			});
 		}
+	}
+
+	public waitForEvents(): Promise<void> {
+		return this.eventQueue;
 	}
 
 	public async request(cmd: Record<string, unknown>, timeoutMs = 30000): Promise<unknown> {

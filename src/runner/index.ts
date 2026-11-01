@@ -153,21 +153,26 @@ async function main() {
 	);
 	activeGraphSource.subscribe((snapshot) => output({ type: "runtime_graph_snapshot", snapshot }));
 
-	// Handle stdin RPC commands in active session
-	attachJsonlLineReader(process.stdin, async (line) => {
-		let cmd: RunnerCommandPayload;
-		try {
-			cmd = parseRunnerCommand(line);
-		} catch (e) {
-			error(undefined, "parse", "INVALID_COMMAND");
-			return;
-		}
+	// Handle stdin RPC commands in active session with sequential FIFO queue
+	let stdinQueue = Promise.resolve();
+	attachJsonlLineReader(process.stdin, (line) => {
+		stdinQueue = stdinQueue.then(async () => {
+			let cmd: RunnerCommandPayload;
+			try {
+				cmd = parseRunnerCommand(line);
+			} catch (e) {
+				error(undefined, "parse", "INVALID_COMMAND");
+				return;
+			}
 
-		try {
-			await handleActiveSessionCommand(cmd, durable, modelRuntime, args, { success, error });
-		} catch (err) {
-			error(cmd.id, cmd.type ?? "unknown", err instanceof Error ? err.message : String(err));
-		}
+			try {
+				await handleActiveSessionCommand(cmd, durable, modelRuntime, args, { success, error });
+			} catch (err) {
+				error(cmd.id, cmd.type ?? "unknown", err instanceof Error ? err.message : String(err));
+			}
+		}).catch((fatal) => {
+			console.error(`[Runner stdin] Unhandled command error: ${fatal}`);
+		});
 	});
 
 	// Signal active session readiness only after SQLite store, event stream and stdin listener are active
