@@ -21,7 +21,6 @@ const base = {
  compaction_end: { type: "compaction_end", reason: "manual", aborted: false },
  auto_retry_start: { type: "auto_retry_start", attempt: 1 },
  auto_retry_end: { type: "auto_retry_end", attempt: 1, success: true },
- tasks_snapshot: { type: "tasks_snapshot", steps: [] },
  runtime_graph_snapshot: {
   type: "runtime_graph_snapshot",
   snapshot: {

@@ -141,11 +141,6 @@ export class DeltaTranslator {
 				break;
 			}
 
-			case "tasks_snapshot":
-				// Discontinued: native BB todo/planSteps synchronization removed in favor of runtime graph.
-				// Kept as an explicit no-op to preserve backwards wire protocol validation.
-				break;
-
 			case "runtime_graph_snapshot": {
 				deltas.push(...translateRuntimeGraphSnapshot(event, event.conversationId));
 				break;

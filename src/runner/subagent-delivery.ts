@@ -2,7 +2,6 @@ import {
 	AssistantEntry, defineTask, type Extension,
 } from "@earendil-works/pi-durable";
 import { SubagentsDoc, extractAssistantText } from "./subagent-docs.ts";
-import { nativeChildTitle } from "../shared/child-title.ts";
 import type {
 	CourierTask, ReporterInput, ReporterState,
 	SubagentAdmission, SubagentTaskExtension,
@@ -38,7 +37,7 @@ export function reporterFor(courier: CourierTask, admit?: SubagentAdmission): Su
 					const doc = await tx.doc(SubagentsDoc, runtime.conversationId);
 					doc.agents ??= {};
 					const record = doc.agents[task.input.key] ?? {
-						name: nativeChildTitle(task.input.task, "worker"), conversationId: task.input.conversationId, requestId: task.input.requestId,
+						name: task.input.task.trim(), conversationId: task.input.conversationId, requestId: task.input.requestId,
 						task: task.input.task, role: "worker", ownerTaskId: task.id, background: true,
 					};
 					doc.agents[task.input.key] = record;

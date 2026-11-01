@@ -6,7 +6,6 @@ import { DurableEventAdapter } from "../src/runner/bridge/durable-event-adapter.
 import { DurableChildEventAdapter } from "../src/runner/bridge/durable-child-event-adapter.ts";
 import type { RunnerEvent, AgentStartEvent, TurnStartEvent, TurnEndEvent, AgentEndEvent } from "../src/contracts/runner-event.ts";
 import type { AssistantMessage, AssistantMessageUsage } from "../src/contracts/wire-message.ts";
-import type { PlanStep } from "../src/contracts/wire-lifecycle.ts";
 import { viewFixture } from "./fixtures/durable.ts";
 
 test("DurableEventAdapter instantiates and translates native FSM events into canonical RunnerEvent stream", () => {

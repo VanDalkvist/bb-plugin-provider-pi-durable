@@ -9,7 +9,6 @@ import {
 } from "@earendil-works/pi-durable";
 import { SubagentsDoc, type SubagentRecord } from "./subagent-docs.ts";
 import { Anchor, BACKGROUND, DefaultReporter, answerText } from "./subagent-delivery.ts";
-import { nativeChildTitle } from "../shared/child-title.ts";
 import { buildTechnicalWorkerRole } from "./subagent-role.ts";
 import { resolveSubagentModelConfiguration } from "../policy/resolver.ts";
 import type { SubagentPolicyRecord } from "../policy/types.ts";
@@ -94,7 +93,7 @@ export function createSubagentExtension(
 							}
 
 							const record: SubagentRecord = {
-								name: nativeChildTitle(args.task, "worker"),
+								name: args.task.trim(),
 								conversationId: childId,
 								requestId,
 								task: args.task,

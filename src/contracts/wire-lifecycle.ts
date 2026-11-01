@@ -3,15 +3,6 @@ import { wireContextSchema } from "./wire-context.ts";
 import { assistantMessageSchema } from "./wire-message.ts";
 import { runtimeGraphSnapshotSchema } from "../runtime-graph/schema.ts";
 
-export const planStepSchema = z.object({
-	step: z.string(),
-	status: z.enum(["pending", "active", "completed", "failed"]),
-}).passthrough();
-export type PlanStep = z.infer<typeof planStepSchema>;
-
-export const tasksSnapshotSchema = wireContextSchema.extend({ type: z.literal("tasks_snapshot"), steps: z.array(planStepSchema) });
-export type TasksSnapshotEvent = z.infer<typeof tasksSnapshotSchema>;
-
 export const runtimeGraphSnapshotEventSchema = wireContextSchema.extend({
 	type: z.literal("runtime_graph_snapshot"),
 	snapshot: runtimeGraphSnapshotSchema,
@@ -28,7 +19,6 @@ export const lifecycleSchemas = [
 	wireContextSchema.extend({ type: z.literal("compaction_end"), reason: z.enum(["manual", "threshold"]), aborted: z.boolean() }),
 	wireContextSchema.extend({ type: z.literal("auto_retry_start"), attempt: z.number(), at: z.number().optional() }),
 	wireContextSchema.extend({ type: z.literal("auto_retry_end"), attempt: z.number(), success: z.boolean().optional() }),
-	tasksSnapshotSchema,
 	runtimeGraphSnapshotEventSchema,
 ] as const;
 

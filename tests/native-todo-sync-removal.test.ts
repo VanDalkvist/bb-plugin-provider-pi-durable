@@ -4,7 +4,7 @@ import { threadDeltaSchema } from "@get-bb/plugin-sdk/provider-bridge";
 import { DeltaTranslator } from "../src/host/delta-translator.ts";
 import { SessionSubagentHandler } from "../src/host/session-subagent-handler.ts";
 import { wireFixture } from "./fixtures/wire.ts";
-import type { PlanStep } from "../src/contracts/wire-lifecycle.ts";
+type PlanStep = { step: string; status: "pending" | "active" | "completed" | "failed" };
 import type { RuntimeGraphSnapshot } from "../src/runtime-graph/types.ts";
 
 function createMockSnapshot(): RuntimeGraphSnapshot {
@@ -41,15 +41,10 @@ function createMockSnapshot(): RuntimeGraphSnapshot {
 	};
 }
 
-test("native-todo-sync-removal: tasks_snapshot produces zero thread deltas and no planSteps mutation", () => {
+test("native-todo-sync-removal: unknown or legacy tasks_snapshot produces zero thread deltas", () => {
 	const translator = new DeltaTranslator();
-	const steps: PlanStep[] = [
-		{ step: "#1 assistant turn", status: "active" },
-		{ step: "  #2 bash: echo test", status: "completed" },
-	];
-
 	const deltas = translator.translate(
-		wireFixture("tasks_snapshot", { type: "tasks_snapshot", steps }),
+		{ type: "tasks_snapshot" as any },
 		{ threadId: "thr-test-parent" },
 	);
 
@@ -125,12 +120,11 @@ test("native-todo-sync-removal: subagent child routing leaves native todo untouc
 
 	handler.markActive(2, { task: "child task" });
 
-	// 1. Deliver tasks_snapshot targeted at child conversation
-	const childTaskSnapshotEvent = wireFixture("tasks_snapshot", {
+	// 1. Deliver legacy tasks_snapshot targeted at child conversation
+	const childTaskSnapshotEvent = {
 		type: "tasks_snapshot",
-		conversationId: 2 as any,
-		steps: [{ step: "#2 subagent worker", status: "active" }],
-	});
+		conversationId: 2,
+	} as any;
 	handler.handleEvent(childTaskSnapshotEvent, fakeSession as any, (method, params) => {
 		notifications.push({ method, params });
 	});
