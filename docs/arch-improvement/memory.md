@@ -246,6 +246,27 @@
 - Use next time: Whenever retrying a submission or command through an idempotency-protecting substrate, retry attempts must rotate the `requestId` suffix (e.g. `...:r1`, `...:r2`) so the underlying engine treats it as a fresh attempt while preserving batch identity.
 - Evidence: `src/runner/subagent-courier.ts`, `src/runner/subagent-docs.ts`, `tests/subagent-courier-lifecycle.test.ts`, Cycle 101.
 
+## 2026-11-02 - WASM Asset Retention and Direct Dependency Anchoring in Plugin Environments (Cycle 102)
+- Context: Loading QuickJS WebAssembly module in `@earendil-works/pi-codemode` via `quickjs-wasi/quickjs.wasm`.
+- Symptom: In long-running host processes, after a plugin update, calling `codemode` crashed with `MODULE_NOT_FOUND: Cannot find module 'quickjs-wasi/quickjs.wasm'`.
+- Cause: Beyond Boundaries installs plugins into git commit hash directories (`~/.bb/plugins/cache/git/.../<commit-hash>`). When BB updates a plugin or restarts, it cleans up old commit folders. If `quickjs-wasi` was resolved dynamically from disk without being anchored in direct `dependencies` and copied into `dist/`, the runtime lost the `.wasm` file path while the process was still alive.
+- Use next time: Any package requiring native binary or WebAssembly assets must be declared in direct `dependencies` in `package.json`, and the build pipeline (`scripts/build-runner.mjs`) must explicitly copy `.wasm` files directly into `dist/` so that runtime resolution does not depend on ephemeral cache directories.
+- Evidence: `scripts/build-runner.mjs`, `package.json`, `dist/runner/quickjs.wasm`, Cycle 102.
+
+## 2026-11-02 - StructuredOutput Enforcement on Tools with outputSchema in Pi Durable (Cycle 102)
+- Context: Executing MCP and extension tools through `codemode` and tool adapters in `src/runner/tool-adapter.ts` and `src/runner/extension-mount.ts`.
+- Symptom: Invoking an MCP tool from a JavaScript snippet in QuickJS failed with `Error: Tool <name> returned no structuredOutput`, marking the tool call as `isError: true` despite successful execution.
+- Cause: In `@earendil-works/pi-durable`, when a tool registers `outputSchema` (or `structuredOutputSchema`), the engine validates `outcome.result.structuredOutput`. The custom adapter was stripping `result.structuredContent` and returning only textual `output: result.content`. Because `structuredOutput` was missing, Durable's `structuredOutputError()` guard rejected the call.
+- Use next time: Whenever adapting tools that can declare structured schemas, adapters must always preserve and forward both `output` (text blocks) AND `structuredOutput` (`structuredContent ?? structuredOutput`). Nested tool execution contexts must also surface `structuredOutput` to callers.
+- Evidence: `src/runner/tool-adapter.ts`, `src/runner/extension-mount.ts`, `tests/codemode-structured-output.test.ts`, `scripts/diagnose-codemode.ts`, Cycle 102.
+
+## 2026-11-02 - Complete Lifecycle Teardown for Sandboxes and Worker Threads (Cycle 102)
+- Context: Session termination and cleanup in `src/runner/runtime-loader.ts` and `src/runner/plugins/built-in/codemode.ts`.
+- Symptom: Node.js worker threads and WebAssembly instances were leaked between restarts, degrading host daemon performance.
+- Cause: `createCodingRegistry` instantiated `DurablePluginRegistry` locally and discarded it. Plugins that allocated resources (such as `CodemodeSandbox`) never had their `teardown()` methods called because the registry was unlinked from session `cleanup()`.
+- Use next time: The Composition Root must maintain and return references to all registries holding stateful resources. Session `cleanup()` must invoke `pluginRegistry.teardownAll()`, and plugins must implement `teardown()` to terminate worker threads (`sandbox.close()`) and clear transient holds.
+- Evidence: `src/runner/plugins/built-in/codemode.ts`, `src/runner/harness-setup.ts`, `src/runner/runtime-loader.ts`, `tests/codemode-plugin-lifecycle.test.ts`, Cycle 102.
+
 
 
 

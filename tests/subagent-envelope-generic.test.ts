@@ -5,9 +5,9 @@ import {
 	parseSubagentMirrorPrompt,
 } from "../src/shared/subagent-envelope.ts";
 
-test("formatSubagentMirrorPrompt generates sovereign pi prefix", () => {
-	const formatted = formatSubagentMirrorPrompt("session-1", "parent-1", "2", "Do work");
-	assert.ok(formatted.startsWith("[pi:subagent-mirror:v1 session=session-1 parent=parent-1 conv=2]"));
+test("formatSubagentMirrorPrompt generates sovereign pi prefix when requested", () => {
+	const formatted = formatSubagentMirrorPrompt("session-1", "parent-1", "2", "Do work", "pi");
+	assert.ok(formatted.startsWith("[pi-subagent-mirror:v1 session=session-1 parent=parent-1 conv=2]"));
 });
 
 test("parseSubagentMirrorPrompt parses both sovereign pi and legacy bb prefixes", () => {

@@ -52,11 +52,11 @@ export function adaptExtensionTool(
 	getExtensionRunner?: () => ExtensionRunner | undefined,
 ): ToolRegistration {
 	const exposure = toolDef.exposure as string | undefined;
-	const isDeferred = exposure === "deferred" || exposure === "codemode";
+	const isDeferred = exposure === "deferred" || exposure === "codemode" || exposure === "codemode-deferred";
 	const callers =
 		exposure === "model-only"
 			? (["model"] as const)
-			: exposure === "codemode"
+			: exposure === "codemode" || exposure === "codemode-deferred"
 				? (["tools"] as const)
 				: exposure === "hidden"
 					? ([] as const)

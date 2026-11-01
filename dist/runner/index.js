@@ -285,6 +285,7 @@ var codingToolsPlugin = {
 // src/runner/plugins/built-in/codemode.ts
 import { createCodemodeExtension } from "@earendil-works/pi-durable/codemode";
 import { CodemodeSandbox } from "@earendil-works/pi-codemode";
+var activeSandbox;
 var codemodePlugin = {
   id: "codemode",
   name: "Codemode",
@@ -292,13 +293,25 @@ var codemodePlugin = {
   version: "1.0.0",
   register(ctx) {
     if (!ctx.registry) return;
+    activeSandbox = new CodemodeSandbox();
     const ext = createCodemodeExtension({
-      sandbox: new CodemodeSandbox(),
+      sandbox: activeSandbox,
       get namespaces() {
         return ctx.dynamicNamespaces?.getNamespaces?.() ?? [];
       }
     });
     ctx.registry.install(ext);
+  },
+  async teardown() {
+    if (activeSandbox) {
+      const sb = activeSandbox;
+      if (typeof sb.close === "function") {
+        await sb.close();
+      } else if (typeof sb.dispose === "function") {
+        await sb.dispose();
+      }
+      activeSandbox = void 0;
+    }
   }
 };
 
@@ -805,6 +818,8 @@ var subagentsPlugin = {
     ctx.registry.install(Anchor);
     ctx.registry.install(DefaultCourier);
     ctx.registry.install(DefaultReporter);
+  },
+  teardown() {
   }
 };
 
@@ -868,7 +883,7 @@ async function createCodingRegistry(settingsManager, cwd, getSubagentPolicy, pro
   await pluginRegistry.initAll(ctx);
   registry.install(createToolSearchExtension());
   registry.install(createPiPrompt(settingsManager, cwd, promptOptions));
-  return registry;
+  return Object.assign(registry, { pluginRegistry });
 }
 var ExecutionEnvs = class {
   #defaultCwd;
@@ -1641,7 +1656,7 @@ function hasOutput(api) {
 }
 function adaptExtensionTool(toolDef, executeToolFn, createToolContext, getExtensionRunner) {
   const exposure = toolDef.exposure;
-  const isDeferred = exposure === "deferred" || exposure === "codemode-deferred";
+  const isDeferred = exposure === "deferred" || exposure === "codemode" || exposure === "codemode-deferred";
   const callers = exposure === "model-only" ? ["model"] : exposure === "codemode" || exposure === "codemode-deferred" ? ["tools"] : exposure === "hidden" ? [] : ["model", "tools"];
   return defineTool2({
     name: toolDef.name,
@@ -1655,8 +1670,9 @@ function adaptExtensionTool(toolDef, executeToolFn, createToolContext, getExtens
       outputSchema: toolDef.outputSchema,
       structuredOutputSchema: toolDef.outputSchema
     } : {},
-    async execute(args2, api) {
+    async execute(args2, api, runtimeContext2) {
       const runner = getExtensionRunner?.();
+      const abortSignal = runtimeContext2?.abortSignal;
       if (runner?.hasHandlers("tool_call")) {
         const hookResult = await runner.emitToolCall({
           type: "tool_call",
@@ -1692,7 +1708,7 @@ function adaptExtensionTool(toolDef, executeToolFn, createToolContext, getExtens
         const result = await toolDef.execute(
           api.callId,
           args2,
-          void 0,
+          abortSignal,
           (update) => {
             if (update?.content && hasOutput(api)) {
               const textChunks = update.content.filter((c) => c.type === "text").map((c) => c.text).join("");
@@ -1712,10 +1728,12 @@ function adaptExtensionTool(toolDef, executeToolFn, createToolContext, getExtens
             isError: result.isError ?? false
           });
         }
+        const structuredOutput = result.structuredContent !== void 0 ? result.structuredContent : result.structuredOutput;
         return {
           output: result.content,
           isError: result.isError,
-          details: result.details ?? void 0
+          details: result.details ?? void 0,
+          ...structuredOutput !== void 0 ? { structuredOutput } : {}
         };
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
@@ -1806,7 +1824,16 @@ function createNestedToolExecutor(registry, getExtensionRunner, getEnv) {
           isError: !!res?.isError
         });
       }
-      return { toolCall: { type: "toolCall", id: `${callerId}/nested`, name, arguments: args2 }, result: { content, details: res?.details }, isError: !!res?.isError };
+      const structuredOutput = res?.structuredContent !== void 0 ? res.structuredContent : res?.structuredOutput;
+      return {
+        toolCall: { type: "toolCall", id: `${callerId}/nested`, name, arguments: args2 },
+        result: {
+          content,
+          details: res?.details,
+          ...structuredOutput !== void 0 ? { structuredOutput } : {}
+        },
+        isError: !!res?.isError
+      };
     } catch (err) {
       const errorContent = [{ type: "text", text: err instanceof Error ? err.message : String(err) }];
       if (runner?.hasHandlers("tool_result")) {
@@ -1917,9 +1944,15 @@ var DynamicCodemodeNamespaces = class {
   }
   registerNamespace(ns) {
     if (this.seen.has(ns.prefix)) {
-      if (ns.description) {
-        const idx = this.list.findIndex((n) => n.prefix === ns.prefix);
-        if (idx !== -1) this.list[idx] = ns;
+      const idx = this.list.findIndex((n) => n.prefix === ns.prefix);
+      if (idx !== -1) {
+        const existing = this.list[idx];
+        this.list[idx] = {
+          name: ns.name || existing.name,
+          prefix: ns.prefix,
+          description: ns.description ?? existing.description,
+          instructions: ns.instructions ?? existing.instructions
+        };
       }
       return;
     }
@@ -1932,11 +1965,11 @@ var DynamicCodemodeNamespaces = class {
       if (match && match[1]) {
         const serverName = match[1];
         const prefix = `mcp__${serverName}__`;
-        const desc = def.namespace?.description ?? def.namespace?.instructions;
         this.registerNamespace({
           name: def.namespace?.name ?? serverName,
           prefix,
-          ...desc ? { description: desc } : {}
+          ...def.namespace?.description ? { description: def.namespace.description } : {},
+          ...def.namespace?.instructions ? { instructions: def.namespace.instructions } : {}
         });
       }
     }
@@ -2144,7 +2177,7 @@ async function loadHarnessEnvironment(location, options, envs) {
     }
     return subagentPolicyHolder.getRecord();
   };
-  const registry = await createCodingRegistry(
+  const codingRegistry = await createCodingRegistry(
     settingsManager,
     location.cwd,
     getSubagentPolicy,
@@ -2152,6 +2185,7 @@ async function loadHarnessEnvironment(location, options, envs) {
     dynamicNamespaces,
     options.plugins
   );
+  const registry = codingRegistry;
   const pendingReports = [];
   const report = (error) => pendingReports.push(error);
   let liveNoticeForwarder;
@@ -2183,6 +2217,12 @@ async function loadHarnessEnvironment(location, options, envs) {
   );
   runnerRef = mounted.extensionRunner;
   let harness;
+  const sessionCleanup = async () => {
+    await codingRegistry.pluginRegistry.teardownAll().catch((err) => {
+      console.warn("[RuntimeLoader] Plugin teardown error:", err);
+    });
+    await mounted.cleanup?.();
+  };
   try {
     harness = await Harness.open(
       await openNodeSqliteStorage(location.database),
@@ -2193,7 +2233,7 @@ async function loadHarnessEnvironment(location, options, envs) {
   } catch (error) {
     await Promise.allSettled([
       harness?.close(runtimeContext),
-      mounted.cleanup?.()
+      sessionCleanup()
     ]);
     throw error;
   }
@@ -2212,7 +2252,7 @@ async function loadHarnessEnvironment(location, options, envs) {
     setActiveModelRef: (ref) => {
       activeModelRef = ref;
     },
-    cleanup: mounted.cleanup,
+    cleanup: sessionCleanup,
     extensionRunner: mounted.extensionRunner,
     actionsDelegate,
     dynamicSections,

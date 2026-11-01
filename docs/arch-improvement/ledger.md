@@ -622,22 +622,36 @@
   - *BL-09 (P1, AP-012, AP-059):* В `src/host/diagnostics.ts` проверка доступности дефолтной модели перенесена после перезагрузки расширений и учитывает включённые модели провайдеров (`antigravity`), обеспечивая чистый вердикт `HEALTHY` в `doctor.mjs`.
   - *BL-10 (P2, AP-023):* В `src/runner/task-labels.ts` и `src/runner/runtime-graph-source.ts` внедрены скользящие окна с ограничением емкости карт (512 для TaskNames, 256 для nativeStartedAt) с FIFO-вытеснением старейших записей для предотвращения утечек памяти в долгоживущих сессиях.
 - **TDD и доказательная база:**
+### Codemode Hardening & Sovereign Decoupling Preparation (Cycle 102) — 2026-11-02
+
+- **Цель и статус:** Полное устранение блокирующих дефектов подсистемы `codemode` и плагинов рантайма (BL-CM-01..BL-CM-04, BL-CM-08, BL-PI-05), предотвращение сбоев из-за очистки WASM-кэша BB (BL-CM-05), обобщение конверта зеркала субагентов (BL-CM-06), код-гигиена мёртвых импортов (BL-PI-06/07) и подготовка 100% чистых архитектурных границ для декомпозиции суверенного ядра `pi-durable-runtime` и `pi-durable-sdk`. Статус: **PASS (VERIFIED)**.
+- **Устранённые дефекты и первоисточники:**
+  - *BL-CM-01 (P0, AP-012, AP-013, AP-026):* В `src/runner/extension-mount.ts` (`createNestedToolExecutor`) и `src/runner/tool-adapter.ts` (`adaptExtensionTool`) восстановлен и типизирован проброс `structuredOutput` / `structuredContent`. Результаты вызовов MCP-инструментов больше не вызывают ошибку ядра `@earendil-works/pi-durable` `invalid_structured_output`, позволяя скриптам в QuickJS песочнице корректно получать типизированные JSON-объекты.
+  - *BL-CM-02 & BL-PI-05 (P0/P2, AP-014, AP-020, AP-023, AP-045):* В `src/runner/plugins/built-in/codemode.ts` реализован метод `teardown(): Promise<void>`, закрывающий `activeSandbox` через `close()`/`dispose()` и освобождающий потоки `Worker` и память WebAssembly. В `src/runner/harness-setup.ts` возвращается `CodingRegistry = Registry & { pluginRegistry }`. В `src/runner/runtime-loader.ts` вызов `pluginRegistry.teardownAll()` привязан к общему `cleanup()` сессии. В `subagentsPlugin` внедрён метод `teardown()`.
+  - *BL-CM-03 (P1, AP-012, AP-026):* В `src/runner/codemode-namespaces.ts` устранена перезапись `description` полем `instructions`. Оба поля сохраняются раздельно, гарантируя корректность системного промпта и доступность операционных контрактов серверов в `await describeNamespace()`.
+  - *BL-CM-04 (P1, AP-010, AP-026, AP-029):* В `src/runner/tool-adapter.ts` устранён синтетический тип экспозиции `"codemode-deferred"` с сохранением обратной совместимости. Канонический `exposure === "codemode"` теперь корректно выставляет `callers: ["tools"]` и `deferred: true`.
+  - *BL-CM-08 (P1, AP-023, AP-045, AP-047):* В `src/runner/tool-adapter.ts` в сигнатуру `execute(args, api, runtimeContext)` добавлен приём контекста Chord/Durable и проброс `context.abortSignal` в `toolDef.execute`. При отмене хода пользователем (Stop/Abort) сетевые вызовы MCP-инструментов прерываются немедленно.
+  - *BL-CM-05 (P1, AP-013, AP-020):* Зависимость `"quickjs-wasi": "3.6.2"` зафиксирована в прямых `dependencies` `package.json`. В `scripts/build-runner.mjs` настроено обязательное копирование `quickjs.wasm` в `dist/runner/quickjs.wasm`, гарантирующее устойчивость рантайма к сборке мусора и очистке кэша коммитов в Beyond Boundaries.
+  - *BL-CM-06 (P2, AP-010, AP-025):* В `src/shared/subagent-envelope.ts` парсер и форматер конверта обобщены до нейтрального формата `[pi:subagent-mirror:v1...]` с поддержкой параметра `prefix: "pi" | "bb:pi"` для бесшовной обратной совместимости с существующими сессиями и субтредами Beyond Boundaries.
+  - *BL-PI-06 & BL-PI-07 (P3, AP-015, AP-029):* В `src/runner/harness-setup.ts` удалены 7 мёртвых неиспользуемых импортов инструментов. В `src/runner/plugins/types.ts` устранён открытый индексный тип `[key: string]: any` и зафиксирована строгая типизация `DurablePluginContext`.
+- **TDD и доказательная база:**
   - Новые тесты цикла:
-    * `tests/model-ref-normalization.test.ts`: проверка парсинга `{ provider, id }`, `{ provider, modelId }` и стрипинга префиксов.
-    * `tests/red-subagent-model-resolution.test.ts`: проверка наследования модели родителя в inherit-режиме и нормализации префиксов в configured-режиме.
-    * `tests/subthread-spawner-model-args.test.ts`: проверка генерации чистого аргумента `--model` без дублирования префиксов.
-    * `tests/session-stop-cascading-abort.test.ts`: проверка вызова `session.abort({ background: true })` при остановке родительского треда.
-    * `tests/diagnostics-init-order.test.ts`: проверка FIFO-ограничения емкости кэша `TaskNames`.
-  - Полный сьют тестов: **623 теста бэкенда/ядра pass + 117 тестов UI pass = 740 pass, 0 fail**.
-  - Контрактная безопасность: `npm run test:contracts` (0 type errors, negative contract guard pass).
+    * `tests/codemode-structured-output.test.ts`: проверка проброса `structuredOutput` в вызовах инструментов со схемой `outputSchema` из QuickJS codemode.
+    * `tests/codemode-plugin-lifecycle.test.ts`: проверка жизненного цикла `teardown()` плагинов `codemode`, `subagents` и очистки песочницы через `pluginRegistry.teardownAll()`.
+    * `tests/codemode-namespaces-contract.test.ts`: проверка раздельного сохранения `description` и `instructions` в `DynamicCodemodeNamespaces`.
+    * `tests/tool-adapter-canonical.test.ts`: проверка канонической экспозиции `exposure` и проброса `abortSignal` в `toolDef.execute`.
+    * `tests/subagent-envelope-generic.test.ts`: проверка обобщенного конверта субагентов с суверенным и legacy префиксами.
+  - Полный сьют тестов: **634 теста бэкенда/ядра pass + 117 тестов UI pass = 751 pass, 0 fail**.
+  - Контрактная безопасность: `npm run test:contracts` (Negative guard TS2322 PASS, 0 type errors).
   - Ацикличность импортов: `node scripts/verify-import-graph.mjs` (166 файлов, 0 циклов).
   - Фаервол слоёв: `node scripts/verify-layer-boundaries.mjs` (0 нарушений).
   - Проверка здоровья: `npm run doctor` (PASSED / Healthy).
+  - Диагностический скрипт: `node --import tsx scripts/diagnose-codemode.ts` (100% PASS, 0.1s).
 - **Line Budgets (AP-019):**
   - 100% файлов в `src/` строго < 250 LOC (максимальный файл: `src/host/session-registry.ts` — 239 LOC).
 - **Сборка (Build Receipt):**
-  - Версия `0.4.2` в `package.json` и `package-lock.json`.
-  - `npm run build` пересобрал дистрибутивы: `dist/runner/index.js`, `dist/server.js`, `dist/app.js`, `dist/host.js`.
+  - Версия `0.4.3` в `package.json` и `package-lock.json`.
+  - `npm run build` пересобрал дистрибутивы: `dist/runner/index.js`, `dist/runner/quickjs.wasm`, `dist/server.js`, `dist/app.js`, `dist/host.js`.
 
 
 
