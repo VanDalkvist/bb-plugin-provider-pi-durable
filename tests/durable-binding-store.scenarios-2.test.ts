@@ -44,8 +44,8 @@ test("DurableBindingManager.readOfflineBindings: cold offline recovery from SQLi
 				version INTEGER,
 				content TEXT
 			);
-			INSERT INTO documents VALUES (1, 'bb.native-child-binding', 0, '', 'conversation', 7, 1000, NULL, '{}');
-			INSERT INTO document_revisions VALUES (1, 1, 'base', 2, '{"binding":{"bbThreadId":"thr_offline_7","conversationId":7}}');
+			INSERT INTO documents VALUES (1, 'durable.binding', 0, '', 'conversation', 7, 1000, NULL, '{}');
+			INSERT INTO document_revisions VALUES (1, 1, 'base', 2, '{"binding":{"threadId":"thr_offline_7","conversationId":7}}');
 		`);
 		db.close();
 

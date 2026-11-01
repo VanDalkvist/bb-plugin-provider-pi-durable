@@ -304,10 +304,6 @@ describe("Runner Path Discovery & Portability (Issue #2)", () => {
 			process.env.BB_DATA_DIR = customDataDir;
 			const resolved = resolveRunnerPath({ fromDir: join(temp, "isolated-dir") });
 			assert.equal(resolved, expectedRunner);
-
-			// Also verify resolveSessionDir uses BB_DATA_DIR
-			const sessionDir = resolveSessionDir(process.env);
-			assert.equal(sessionDir, join(customDataDir, "pi-bridge-sessions"));
 		} finally {
 			if (savedBridge !== undefined) process.env.BB_PI_DURABLE_BRIDGE_COMMAND = savedBridge;
 			if (savedRunner !== undefined) process.env.PI_DURABLE_RUNNER_PATH = savedRunner;

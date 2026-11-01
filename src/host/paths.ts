@@ -1,14 +1,11 @@
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { DurableStorageError } from "../runner/errors.ts";
 import {
-	cacheRootsFor,
-	dataDirsToSearch,
-	findRunnerBesideSiblings,
-	findRunnerFromDb,
-	findRunnerInCache,
-	pluginDirCandidates,
+	cacheRootsFor, dataDirsToSearch, findRunnerBesideSiblings,
+	findRunnerFromDb, findRunnerInCache, pluginDirCandidates,
 } from "./runner-lookup.ts";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -16,7 +13,6 @@ const __dirname = dirname(__filename);
 
 export interface ResolveRunnerOptions {
 	fromDir?: string;
-	/** The data dir this host runs against, when the caller knows it; suppresses the guesses below. */
 	dataDir?: string;
 	bbDbPath?: string;
 	cacheDir?: string;
@@ -25,8 +21,7 @@ export interface ResolveRunnerOptions {
 
 export function getBbDataDir(env: NodeJS.ProcessEnv = process.env): string {
 	const custom = env.BB_DATA_DIR?.trim();
-	if (custom) return resolve(custom);
-	return join(homedir(), ".bb");
+	return custom ? resolve(custom) : join(homedir(), ".bb");
 }
 
 export function resolveRunnerPath(options?: ResolveRunnerOptions): string {
@@ -52,8 +47,6 @@ export function resolveRunnerPath(options?: ResolveRunnerOptions): string {
 
 	const searched: string[] = [...directCandidates];
 
-	// A caller that named its own paths is taken at its word; a caller that did not gets the guesses, in the order
-	// `runner-lookup.ts` explains. Guessing here is what let a foreign ~/.bb install answer for this plugin (#18).
 	if (options?.bbDbPath !== undefined) {
 		const found = findRunnerFromDb(options.bbDbPath);
 		if (found) return found;
@@ -103,14 +96,29 @@ export function resolveRunnerPath(options?: ResolveRunnerOptions): string {
 }
 
 export function resolveSessionDir(env: NodeJS.ProcessEnv = process.env): string {
-	const custom = env.BB_PI_BRIDGE_SESSION_DIR?.trim();
+	const custom = env.DURABLE_SESSIONS_DIR?.trim() || env.BB_PI_BRIDGE_SESSION_DIR?.trim();
 	if (custom) return resolve(custom);
-	return join(getBbDataDir(env), "pi-bridge-sessions");
+	return join(homedir(), ".durable", "sessions");
+}
+
+export function ensureSessionDirectory(dirPath: string): string {
+	mkdirSync(dirPath, { recursive: true, mode: 0o700 });
+	try {
+		chmodSync(dirPath, 0o700);
+	} catch {
+		// Ignore chmod errors on systems that don't support POSIX modes
+	}
+	return dirPath;
 }
 
 export function resolveSessionFilePath(threadId: string, env: NodeJS.ProcessEnv = process.env): string {
+	if (!threadId || threadId.includes("..") || threadId.startsWith("/") || threadId.startsWith("\\")) {
+		throw new DurableStorageError(`Path traversal rejected: ${threadId}`);
+	}
 	const sanitized = threadId.replace(/[^A-Za-z0-9._-]/g, "_");
-	return join(resolveSessionDir(env), sanitized);
+	const dirPath = join(resolveSessionDir(env), sanitized);
+	ensureSessionDirectory(dirPath);
+	return dirPath;
 }
 
 let activeScratchDir: string | null = null;
@@ -127,15 +135,7 @@ export function requireExtensionPath(): string {
 	if (!activeExtensionPath) {
 		const scratch = requireScratchDir();
 		const extFile = join(scratch, "bb-pi-extension.mjs");
-		writeFileSync(
-			extFile,
-			`// Pi Durable BB Bridge stub extension
-export default function (pi) {
-  // Bridge side channel active
-}
-`,
-			"utf8",
-		);
+		writeFileSync(extFile, "// Pi Durable BB Bridge stub extension\nexport default function (pi) {}\n", "utf8");
 		activeExtensionPath = extFile;
 	}
 	return activeExtensionPath;

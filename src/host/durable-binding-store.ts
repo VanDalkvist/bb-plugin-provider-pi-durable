@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 export interface StoredBindingItem {
+	readonly threadId: string;
 	readonly bbThreadId: string;
 	readonly conversationId: string;
 	readonly parentThreadId?: string | null;
@@ -14,32 +15,22 @@ export class DurableBindingManager {
 	private runnerRpc?: (cmd: Record<string, unknown>) => Promise<unknown>;
 	private sessionDir?: string;
 
-	public setSessionDir(dir: string): void {
-		this.sessionDir = dir;
-	}
-
-	public setRpc(rpc: (cmd: Record<string, unknown>) => Promise<unknown>): void {
-		this.runnerRpc = rpc;
-	}
+	public setSessionDir(dir: string): void { this.sessionDir = dir; }
+	public setRpc(rpc: (cmd: Record<string, unknown>) => Promise<unknown>): void { this.runnerRpc = rpc; }
 
 	public register(threadId: string, conversationId?: string | number, parentThreadId?: string): void {
-		if (conversationId === undefined || conversationId === null || String(conversationId).trim() === "") {
-			return;
-		}
+		if (conversationId === undefined || conversationId === null || String(conversationId).trim() === "") return;
 		const convStr = String(conversationId);
 		this.convToThread.set(convStr, threadId);
 		this.threadToConv.set(threadId, convStr);
 		this.persistAdapterManifest(threadId, convStr, parentThreadId);
-
 		if (this.runnerRpc) {
 			void this.runnerRpc({
 				type: "register_binding",
 				bbThreadId: threadId,
 				conversationId: Number(conversationId),
 				...(parentThreadId ? { parentThreadId } : {}),
-			}).catch((err) => {
-				console.warn(`[BindingManager] Failed to persist binding to runner: ${err}`);
-			});
+			}).catch((err) => console.warn(`[BindingManager] Failed to persist binding to runner: ${err}`));
 		}
 	}
 
@@ -49,8 +40,8 @@ export class DurableBindingManager {
 			mkdirSync(this.sessionDir, { recursive: true });
 			const manifestPath = join(this.sessionDir, "adapter-bindings.json");
 			const existing = this.readOfflineBindings(this.sessionDir);
-			const filtered = existing.filter((b) => b.bbThreadId !== threadId);
-			filtered.push({ bbThreadId: threadId, conversationId, parentThreadId });
+			const filtered = existing.filter((b) => b.threadId !== threadId && b.bbThreadId !== threadId);
+			filtered.push({ threadId, bbThreadId: threadId, conversationId, parentThreadId });
 			writeFileSync(manifestPath, JSON.stringify(filtered, null, 2), "utf8");
 		} catch (err) {
 			console.warn(`[BindingManager] Failed to write adapter manifest: ${err}`);
@@ -80,7 +71,6 @@ export class DurableBindingManager {
 				bindings?: Array<{ bbThreadId?: string; conversationId?: string | number }>;
 				data?: { bindings?: Array<{ bbThreadId?: string; conversationId?: string | number }> };
 			} | undefined;
-
 			const rawList = res?.bindings ?? res?.data?.bindings;
 			if (Array.isArray(rawList)) {
 				for (const item of rawList) {
@@ -101,25 +91,18 @@ export class DurableBindingManager {
 		const manifestPath = join(dir, "adapter-bindings.json");
 		if (existsSync(manifestPath)) {
 			try {
-				const content = readFileSync(manifestPath, "utf8");
-				const parsed = JSON.parse(content);
+				const parsed = JSON.parse(readFileSync(manifestPath, "utf8"));
 				if (Array.isArray(parsed)) {
-					return parsed.filter((item) => item && typeof item.bbThreadId === "string" && item.conversationId !== undefined)
-						.map((item) => ({
-							bbThreadId: item.bbThreadId,
-							conversationId: String(item.conversationId),
-							parentThreadId: item.parentThreadId ?? null,
-						}));
+					return parsed.filter((i) => i && (typeof i.threadId === "string" || typeof i.bbThreadId === "string") && i.conversationId !== undefined)
+						.map((i) => {
+							const tid = i.threadId ?? i.bbThreadId;
+							return { threadId: tid, bbThreadId: tid, conversationId: String(i.conversationId), parentThreadId: i.parentThreadId ?? null };
+						});
 				}
-			} catch (err) {
-				console.warn(`[BindingManager] Failed to read adapter manifest: ${err}`);
-			}
+			} catch (err) { console.warn(`[BindingManager] Failed to read adapter manifest: ${err}`); }
 		}
 
-		const dbPath = sessionFilePath.endsWith(".sqlite")
-			? sessionFilePath
-			: join(sessionFilePath, "session.sqlite");
-
+		const dbPath = sessionFilePath.endsWith(".sqlite") ? sessionFilePath : join(sessionFilePath, "session.sqlite");
 		if (!existsSync(dbPath)) return [];
 
 		const results: StoredBindingItem[] = [];
@@ -130,54 +113,31 @@ export class DurableBindingManager {
 			const hasRevs = db.prepare("SELECT 1 FROM sqlite_master WHERE type = ? AND name IN (?, ?)").get("table", "document_revisions", "documentRevisions");
 			if (!hasDocs || !hasRevs) return [];
 
-			const revsTable = db.prepare("SELECT 1 FROM sqlite_master WHERE type = ? AND name = ?").get("table", "document_revisions")
-				? "document_revisions"
-				: "documentRevisions";
-
-			const stmt = db.prepare(`
-				SELECT r.content FROM documents d
-				JOIN ${revsTable} r ON d.id = r.document_id
-				WHERE d.kind IN ('durable.binding', '"durable.binding"', 'bb.native-child-binding', '"bb.native-child-binding"') AND d.retired_at IS NULL
-				ORDER BY r.seq DESC
-			`);
-			const rows = stmt.all() as Array<{ content: string }>;
+			const revsTable = db.prepare("SELECT 1 FROM sqlite_master WHERE type = ? AND name = ?").get("table", "document_revisions") ? "document_revisions" : "documentRevisions";
+			const stmt = db.prepare(`SELECT r.content FROM documents d JOIN ${revsTable} r ON d.id = r.document_id WHERE d.kind IN ('durable.binding', '"durable.binding"') AND d.retired_at IS NULL ORDER BY r.seq DESC`);
 			const seen = new Set<string>();
 
-			for (const row of rows) {
+			for (const row of stmt.all() as Array<{ content: string }>) {
 				try {
-					const parsed = JSON.parse(row.content) as {
-						binding?: { threadId?: string; bbThreadId?: string; conversationId?: string | number };
-					};
-					const b = parsed?.binding;
-					const threadId = b?.threadId ?? b?.bbThreadId;
-					if (b && typeof threadId === "string" && b.conversationId !== undefined) {
-						const convStr = String(b.conversationId);
-						if (!seen.has(threadId)) {
-							seen.add(threadId);
-							results.push({ bbThreadId: threadId, conversationId: convStr });
-						}
+					const b = (JSON.parse(row.content) as { binding?: { threadId?: string; conversationId?: string | number } })?.binding;
+					if (b && typeof b.threadId === "string" && b.conversationId !== undefined && !seen.has(b.threadId)) {
+						seen.add(b.threadId);
+						results.push({ threadId: b.threadId, bbThreadId: b.threadId, conversationId: String(b.conversationId) });
 					}
-				} catch {
-					// Ignore malformed revision content
-				}
+				} catch { /* Ignore malformed revision content */ }
 			}
 		} catch (err) {
 			console.warn(`[BindingManager] Failed to read offline bindings: ${err}`);
 		} finally {
-			try {
-				db?.close();
-			} catch {
-				// Ignore close error on read-only database
-			}
+			try { db?.close(); } catch { /* Ignore close error */ }
 		}
 		return results;
 	}
 
 	public hydrateFromOffline(sessionFilePath: string): void {
-		const items = this.readOfflineBindings(sessionFilePath);
-		for (const item of items) {
-			this.convToThread.set(item.conversationId, item.bbThreadId);
-			this.threadToConv.set(item.bbThreadId, item.conversationId);
+		for (const item of this.readOfflineBindings(sessionFilePath)) {
+			this.convToThread.set(item.conversationId, item.threadId);
+			this.threadToConv.set(item.threadId, item.conversationId);
 		}
 	}
 }
