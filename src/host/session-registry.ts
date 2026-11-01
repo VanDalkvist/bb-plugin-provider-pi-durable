@@ -213,6 +213,14 @@ export class SessionRegistry {
 		this.bindings.unbind(threadId);
 		const session = this.sessions.get(threadId);
 		if (session) {
+			const isParent = session.options.threadId === threadId;
+			if (isParent) {
+				try {
+					await session.abort();
+				} catch {
+					// Session abort error should not prevent session teardown
+				}
+			}
 			session.unregisterThread?.(threadId);
 			this.sessions.delete(threadId);
 			if (!Array.from(this.sessions.values()).includes(session)) await session.closeGracefully();

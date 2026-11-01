@@ -101,7 +101,19 @@ export class SessionSubagentHandler {
 						conversationId: convId,
 						actualModel,
 						thinkingLevel,
-					}, session).catch((err) => {
+					}, session).then((id) => {
+						if (!id) {
+							sendNotification("thread/delta", {
+								threadId: session.options.threadId,
+								deltas: [{
+									kind: "item.open",
+									key: { channel: "subagent_warning" },
+									presentation: { icon: "AlertTriangle", tone: "warn" },
+									text: `[Subagent Warning] Could not spawn child thread in Beyond Boundaries for task: "${task.slice(0, 60)}"`,
+								}],
+							});
+						}
+					}).catch((err) => {
 						console.warn(`[SessionSubagentHandler] Failed to spawn subthread: ${err instanceof Error ? err.message : String(err)}`);
 					});
 				}
