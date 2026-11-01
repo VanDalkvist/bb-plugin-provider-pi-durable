@@ -5,10 +5,10 @@ import {
 	ModelRuntime,
 	SettingsManager,
 } from "@earendil-works/pi-coding-agent";
-import { createStandardExtensionFactories, setupExtensionRunner } from "../runner/extension-bridge.ts";
-import { getAgentDir } from "../runner/session-storage.ts";
+import { createStandardExtensionFactories, setupExtensionRunner } from "../shared/extension-runner.ts";
+import { getAgentDir } from "../shared/agent-dir.ts";
 import { resolvePluginVersion } from "./installation-manager.ts";
-import { getPiDurableVersion } from "../runner/version.ts";
+import { getPiDurableVersion } from "../shared/version.ts";
 import { SUPPORTED_EXTENSION_HOOKS } from "./diagnostics-hooks.ts";
 import type { ExtensionDiagnostic, PiDiagnosticsReport, PiPathStatus } from "../contracts/diagnostics.ts";
 

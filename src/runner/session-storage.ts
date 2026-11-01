@@ -7,11 +7,8 @@ import { homedir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import lockfile from "proper-lockfile";
 
-export function getAgentDir(): string {
-	const override = process.env.PI_AGENT_DIR;
-	if (override && override.trim().length > 0) return resolve(override.trim());
-	return join(homedir(), ".pi", "agent");
-}
+import { getAgentDir } from "../shared/agent-dir.ts";
+export { getAgentDir };
 
 export interface SessionOwnerInfo {
 	pid: number;

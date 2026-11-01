@@ -53,7 +53,7 @@
     "build:runner": "node scripts/build-runner.mjs",
     "build:host": "bb plugin build",
     "build": "node scripts/build-runner.mjs && bb plugin build",
-    "test": "npm run test:contracts && node --test tests/*.test.ts && tsx --test tests/ui/*.test.ts",
+    "test": "node scripts/verify-layer-boundaries.mjs && npm run test:contracts && node --test tests/*.test.ts && tsx --test tests/ui/*.test.ts",
     "test:contracts": "tsc --noEmit -p tsconfig.contract-tests.json && node scripts/check-negative-contracts.mjs",
     "doctor": "node scripts/doctor.mjs"
   }

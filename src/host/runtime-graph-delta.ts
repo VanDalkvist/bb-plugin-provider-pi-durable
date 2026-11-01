@@ -1,6 +1,6 @@
 import type { ThreadDelta } from "./types.ts";
 import type { RuntimeGraphSnapshot } from "../runtime-graph/types.ts";
-import { filterSnapshotForConversation } from "../runner/runtime-graph-scope.ts";
+import { filterSnapshotForConversation } from "../runtime-graph/scope.ts";
 
 export const RUNTIME_GRAPH_EXTENSION_KIND = "provider-pi-durable/runtime-graph";
 

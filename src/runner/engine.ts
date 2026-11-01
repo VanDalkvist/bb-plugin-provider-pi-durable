@@ -13,7 +13,7 @@ export interface DurableEngineOptions {
 }
 
 export class DurableEngine {
-	public readonly instance: Awaited<ReturnType<typeof openDurable>>;
+	readonly #instance: Awaited<ReturnType<typeof openDurable>>;
 	public readonly sessionDir: string;
 	private eventListeners = new Set<(event: RunnerEvent) => void>();
 	private eventAdapter: DurableEventAdapter;
@@ -24,14 +24,14 @@ export class DurableEngine {
 		instance: Awaited<ReturnType<typeof openDurable>>,
 		sessionDir: string,
 	) {
-		this.instance = instance;
+		this.#instance = instance;
 		this.sessionDir = sessionDir;
 		this.eventAdapter = new DurableEventAdapter((event) => {
 			for (const listener of this.eventListeners) {
 				listener(event);
 			}
 		});
-		this.unsubscribeView = this.instance.view.subscribe(this.eventAdapter.subscriber);
+		this.unsubscribeView = this.#instance.view.subscribe(this.eventAdapter.subscriber);
 	}
 
 	public static async open(options: DurableEngineOptions = {}): Promise<DurableEngine> {
@@ -55,8 +55,12 @@ export class DurableEngine {
 		return engine;
 	}
 
+	public getSnapshot() {
+		return this.#instance.view.current();
+	}
+
 	public async prompt(content: string, options?: { deliverAs?: "steer" | "followUp" }): Promise<void> {
-		await this.instance.controller.submit(content, options?.deliverAs ?? "followUp");
+		await this.#instance.controller.submit(content, options?.deliverAs ?? "followUp");
 	}
 
 	public events(callback: (event: RunnerEvent) => void): () => void {
@@ -65,13 +69,13 @@ export class DurableEngine {
 	}
 
 	public async abort(): Promise<void> {
-		await this.instance.controller.abort();
+		await this.#instance.controller.abort();
 	}
 
 	public async close(): Promise<void> {
 		this.eventListeners.clear();
 		this.unsubscribeView?.();
 		this.watcher?.close();
-		await this.instance.close();
+		await this.#instance.close();
 	}
 }

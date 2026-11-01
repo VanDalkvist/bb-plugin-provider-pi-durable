@@ -2,7 +2,7 @@ import { chmodSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { DurableStorageError } from "../runner/errors.ts";
+import { DurableStorageError } from "../shared/errors.ts";
 import {
 	cacheRootsFor, dataDirsToSearch, findRunnerBesideSiblings,
 	findRunnerFromDb, findRunnerInCache, pluginDirCandidates,

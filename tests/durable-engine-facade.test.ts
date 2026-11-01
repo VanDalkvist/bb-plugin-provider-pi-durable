@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { mkdtempSync, rmSync } from "node:fs";
 
-test("DurableEngine: provides a cohesive in-process facade for headless library usage", async () => {
+test("DurableEngine: provides a cohesive in-process facade with encapsulated instance", async () => {
 	const sessionDir = mkdtempSync(join(tmpdir(), "pi-engine-facade-"));
 	try {
 		const engine = await DurableEngine.open({ sessionDir });
@@ -13,6 +13,9 @@ test("DurableEngine: provides a cohesive in-process facade for headless library 
 		assert.equal(typeof engine.prompt, "function");
 		assert.equal(typeof engine.events, "function");
 		assert.equal(typeof engine.close, "function");
+		assert.equal(typeof engine.getSnapshot, "function");
+		// Verify instance is encapsulated and not leaked on the facade
+		assert.equal((engine as any).instance, undefined);
 		await engine.close();
 	} finally {
 		rmSync(sessionDir, { recursive: true, force: true });
