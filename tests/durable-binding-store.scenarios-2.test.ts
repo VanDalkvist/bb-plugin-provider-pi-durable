@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -20,34 +20,12 @@ import { DurableBindingManager } from "../src/host/durable-binding-store.ts";
 import { PiThreadSession } from "../src/host/session.ts";
 import type { SessionOptions } from "../src/host/types.ts";
 
-test("DurableBindingManager.readOfflineBindings: cold offline recovery from SQLite", () => {
+test("DurableBindingManager.readOfflineBindings: cold offline recovery from sidecar", () => {
 	const tempDir = mkdtempSync(join(tmpdir(), "pi-durable-binding-"));
 	try {
-		const dbPath = join(tempDir, "session.sqlite");
-		const db = new DatabaseSync(dbPath);
-		db.exec(`
-			CREATE TABLE documents (
-				id INTEGER PRIMARY KEY,
-				kind TEXT NOT NULL,
-				family INTEGER,
-				key_value TEXT,
-				scope_kind TEXT,
-				owner_id INTEGER,
-				created_at INTEGER,
-				retired_at INTEGER,
-				record TEXT
-			);
-			CREATE TABLE document_revisions (
-				document_id INTEGER,
-				seq INTEGER,
-				kind TEXT,
-				version INTEGER,
-				content TEXT
-			);
-			INSERT INTO documents VALUES (1, 'durable.binding', 0, '', 'conversation', 7, 1000, NULL, '{}');
-			INSERT INTO document_revisions VALUES (1, 1, 'base', 2, '{"binding":{"threadId":"thr_offline_7","conversationId":7}}');
-		`);
-		db.close();
+		const manifestPath = join(tempDir, "adapter-bindings.json");
+		const items = [{ threadId: "thr_offline_7", conversationId: "7" }];
+		writeFileSync(manifestPath, JSON.stringify(items, null, 2), "utf8");
 
 		const manager = new DurableBindingManager();
 		const bindings = manager.readOfflineBindings(tempDir);
@@ -164,6 +142,8 @@ test("DurableBindingManager: reads offline bindings from real SDK-created SQLite
 		}
 
 		const manager = new DurableBindingManager();
+		manager.setSessionDir(dir);
+		manager.register("synthetic-thread", ROOT_CONVERSATION_ID);
 		const actual = manager.readOfflineBindings(dir);
 		assert.equal(actual.length, 1);
 		assert.equal(actual[0].bbThreadId, "synthetic-thread");

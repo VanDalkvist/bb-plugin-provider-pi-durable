@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -155,8 +155,8 @@ test("DurableBindingManager: L1 cache operations and asynchronous RPC sync", asy
 	assert.equal(rpcCalls.length, 1);
 	assert.deepEqual(rpcCalls[0], {
 		type: "register_binding",
-		bbThreadId: "thr_child_42",
-		conversationId: 5,
+		threadId: "thr_child_42",
+		conversationId: "5",
 		parentThreadId: "thr_root_1",
 	});
 
@@ -190,62 +190,23 @@ test("DurableBindingManager.hydrateFromRunner: restores thread mappings", async 
 	assert.equal(manager.getConversationId("thr_102"), "3");
 });
 
-test("DurableBindingManager.readOfflineBindings: queries only durable.binding and populates threadId (zero fallback)", () => {
+test("DurableBindingManager.readOfflineBindings: reads from adapter-bindings.json sidecar (zero raw SQL)", () => {
 	const tempDir = mkdtempSync(join(tmpdir(), "pi-sovereign-binding-"));
 	try {
-		const dbPath = join(tempDir, "session.sqlite");
-		const db = new DatabaseSync(dbPath);
-		db.exec(`
-			CREATE TABLE documents (
-				id INTEGER PRIMARY KEY,
-				kind TEXT NOT NULL,
-				family INTEGER,
-				key_value TEXT,
-				scope_kind TEXT,
-				owner_id INTEGER,
-				created_at INTEGER,
-				retired_at INTEGER,
-				record TEXT
-			);
-			CREATE TABLE document_revisions (
-				document_id INTEGER,
-				seq INTEGER,
-				kind TEXT,
-				version INTEGER,
-				content TEXT
-			);
-			-- Valid durable.binding
-			INSERT INTO documents VALUES (1, 'durable.binding', 0, '', 'conversation', 10, 1000, NULL, '{}');
-			INSERT INTO document_revisions VALUES (1, 1, 'base', 2, '{"binding":{"threadId":"thr_sovereign_10","conversationId":10}}');
-
-			-- Quoted "durable.binding" with higher sequence
-			INSERT INTO documents VALUES (2, '"durable.binding"', 0, '', 'conversation', 20, 1000, NULL, '{}');
-			INSERT INTO document_revisions VALUES (2, 2, 'base', 2, '{"binding":{"threadId":"thr_sovereign_20","conversationId":20}}');
-
-			-- Banned legacy bb.native-child-binding: MUST NOT BE SELECTED
-			INSERT INTO documents VALUES (3, 'bb.native-child-binding', 0, '', 'conversation', 30, 1000, NULL, '{}');
-			INSERT INTO document_revisions VALUES (3, 1, 'base', 2, '{"binding":{"threadId":"thr_legacy_30","conversationId":30}}');
-
-			-- Banned fallback with only bbThreadId (zero fallback to bbThreadId): MUST NOT BE PARSED
-			INSERT INTO documents VALUES (4, 'durable.binding', 0, '', 'conversation', 40, 1000, NULL, '{}');
-			INSERT INTO document_revisions VALUES (4, 1, 'base', 2, '{"binding":{"bbThreadId":"thr_banned_40","conversationId":40}}');
-
-			-- Retired durable.binding: MUST NOT BE SELECTED
-			INSERT INTO documents VALUES (5, 'durable.binding', 0, '', 'conversation', 50, 1000, 2000, '{}');
-			INSERT INTO document_revisions VALUES (5, 1, 'base', 2, '{"binding":{"threadId":"thr_retired_50","conversationId":50}}');
-		`);
-		db.close();
+		const manifestPath = join(tempDir, "adapter-bindings.json");
+		const items = [
+			{ threadId: "thr_sovereign_20", conversationId: "20" },
+			{ threadId: "thr_sovereign_10", conversationId: "10" },
+		];
+		writeFileSync(manifestPath, JSON.stringify(items, null, 2), "utf8");
 
 		const manager = new DurableBindingManager();
 		const bindings = manager.readOfflineBindings(tempDir);
 
-		// Assert strictly selects durable.binding and "durable.binding", excludes retired and legacy
 		assert.equal(bindings.length, 2);
-		assert.equal(bindings[0].threadId, "thr_sovereign_20"); // seq DESC
-		assert.equal(bindings[0].bbThreadId, "thr_sovereign_20");
+		assert.equal(bindings[0].threadId, "thr_sovereign_20");
 		assert.equal(bindings[0].conversationId, "20");
 		assert.equal(bindings[1].threadId, "thr_sovereign_10");
-		assert.equal(bindings[1].bbThreadId, "thr_sovereign_10");
 		assert.equal(bindings[1].conversationId, "10");
 	} finally {
 		rmSync(tempDir, { recursive: true, force: true });
