@@ -30,6 +30,7 @@
     "@get-bb/plugin-sdk": "0.6.79",
     "@types/proper-lockfile": "^4.1.4",
     "proper-lockfile": "^4.1.2",
+    "quickjs-wasi": "3.6.2",
     "zod": "^4.6.6"
   },
   "overrides": {

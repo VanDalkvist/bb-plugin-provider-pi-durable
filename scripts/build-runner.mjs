@@ -4,6 +4,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
 import { builtinModules } from "node:module";
+import fs from "node:fs/promises";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const projectRoot = resolve(__dirname, "..");
@@ -41,3 +42,12 @@ await build({
 });
 
 console.log("Built dist/runner/index.js successfully!");
+
+try {
+	const wasmSource = resolve(projectRoot, "node_modules/quickjs-wasi/quickjs.wasm");
+	const wasmDest = resolve(projectRoot, "dist/runner/quickjs.wasm");
+	await fs.copyFile(wasmSource, wasmDest);
+	console.log("Copied quickjs.wasm to dist/runner/quickjs.wasm successfully!");
+} catch (err) {
+	console.warn("Could not copy quickjs.wasm to dist/runner:", err);
+}
