@@ -3070,12 +3070,125 @@ var DurableEventAdapter = class {
   }
 };
 
+// src/runner/subagent-watcher.ts
+import {
+  ROOT_CONVERSATION_ID as ROOT_CONVERSATION_ID2,
+  watchEvents as defaultWatchEvents
+} from "@earendil-works/pi-durable";
+import { BACKGROUND_CONTEXT as BACKGROUND_CONTEXT2 } from "@earendil-works/chord/context";
+
+// src/runner/binding-docs.ts
+import { defineDoc as defineDoc3 } from "@earendil-works/pi-durable";
+var BindingDoc = defineDoc3({
+  kind: "durable.binding",
+  version: 2,
+  scope: "conversation",
+  checkpointWhen: () => false,
+  history: "latest",
+  fork: "initial",
+  initial: () => ({ binding: null })
+});
+var BindingIndexDoc = defineDoc3({
+  kind: "durable.binding-index",
+  version: 1,
+  scope: "session",
+  checkpointWhen: () => false,
+  initial: () => ({ byIdentity: {}, byThreadId: {} })
+});
+function identityKey(identity) {
+  return JSON.stringify([identity.providerId, identity.sessionId, identity.threadId]);
+}
+
+// src/runner/subagent-watcher.ts
+function extractChildConversationId(event) {
+  if (event.type === "tool_execution_update" || event.type === "tool_execution_end") {
+    const details = extractCanonicalToolDetails(event);
+    return details?.conversationId;
+  }
+  return void 0;
+}
+async function startSubagentWatcher(harness, adapter, getCurrentView, options) {
+  const watch2 = options?.watchEventsFn ?? defaultWatchEvents;
+  const attached = /* @__PURE__ */ new Set();
+  const activeStreams = /* @__PURE__ */ new Map();
+  const attach = async (conversationId, parentCallId) => {
+    if (attached.has(conversationId)) return;
+    attached.add(conversationId);
+    const isChild = parentCallId !== void 0;
+    const childAdapter = isChild ? adapter.createChildAdapter(parentCallId, conversationId) : void 0;
+    try {
+      const stream = await watch2(harness, conversationId, BACKGROUND_CONTEXT2);
+      activeStreams.set(conversationId, stream);
+      stream.start(async (batch) => {
+        try {
+          const view = getCurrentView();
+          if (childAdapter) {
+            childAdapter.handleBatch(batch, view);
+          } else {
+            adapter.handleBatch(batch, view);
+          }
+          for (const event of batch) {
+            const childId = extractChildConversationId(event);
+            if (childId !== void 0 && !attached.has(childId)) {
+              const callId = "toolCallId" in event ? isChild ? `${parentCallId}:${String(event.toolCallId)}` : String(event.toolCallId) : parentCallId ?? "subagent";
+              void attach(childId, callId);
+            }
+          }
+        } catch (err) {
+          console.error(`[SubagentWatcher] Batch handling error for conversation ${conversationId}:`, err);
+        }
+      });
+    } catch (err) {
+      console.error(`[SubagentWatcher] Failed to attach stream for conversation ${conversationId}:`, err);
+    }
+  };
+  await attach(ROOT_CONVERSATION_ID2);
+  try {
+    const index = await harness.snapshot(BindingIndexDoc, BACKGROUND_CONTEXT2);
+    if (index?.byThreadId) {
+      for (const convId of Object.values(index.byThreadId)) {
+        if (convId && convId !== ROOT_CONVERSATION_ID2) {
+          await attach(convId, "subagent");
+        }
+      }
+    }
+    const subagents = await harness.snapshot(SubagentsDoc, ROOT_CONVERSATION_ID2, BACKGROUND_CONTEXT2);
+    if (subagents?.agents) {
+      for (const agent of Object.values(subagents.agents)) {
+        if (agent?.conversationId && agent.conversationId !== ROOT_CONVERSATION_ID2) {
+          await attach(agent.conversationId, String(agent.ownerTaskId ?? "subagent"));
+        }
+      }
+    }
+  } catch (err) {
+    console.warn(`[SubagentWatcher] Bootstrap child discovery warning: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  return {
+    ensureAttached: async (conversationId, parentCallId) => {
+      await attach(conversationId, parentCallId ?? "subagent");
+    },
+    close: () => {
+      for (const stream of activeStreams.values()) {
+        try {
+          stream.stop();
+        } catch (err) {
+          console.warn(`[SubagentWatcher] Stream stop warning: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
+      activeStreams.clear();
+      attached.clear();
+    }
+  };
+}
+
 // src/runner/engine.ts
 var DurableEngine = class _DurableEngine {
   instance;
   sessionDir;
   eventListeners = /* @__PURE__ */ new Set();
   eventAdapter;
+  watcher;
+  unsubscribeView;
   constructor(instance, sessionDir) {
     this.instance = instance;
     this.sessionDir = sessionDir;
@@ -3084,6 +3197,7 @@ var DurableEngine = class _DurableEngine {
         listener(event);
       }
     });
+    this.unsubscribeView = this.instance.view.subscribe(this.eventAdapter.subscriber);
   }
   static async open(options = {}) {
     const sessionDir = options.sessionDir ?? options.session ?? process.cwd();
@@ -3097,7 +3211,13 @@ var DurableEngine = class _DurableEngine {
         noGlobalExtensions: options.noGlobalExtensions
       }
     });
-    return new _DurableEngine(instance, sessionDir);
+    const engine = new _DurableEngine(instance, sessionDir);
+    engine.watcher = await startSubagentWatcher(
+      instance.harness,
+      engine.eventAdapter,
+      () => instance.view.current()
+    );
+    return engine;
   }
   async prompt(content, options) {
     await this.instance.controller.submit(content, options?.deliverAs ?? "followUp");
@@ -3111,6 +3231,8 @@ var DurableEngine = class _DurableEngine {
   }
   async close() {
     this.eventListeners.clear();
+    this.unsubscribeView?.();
+    this.watcher?.close();
     await this.instance.close();
   }
 };
@@ -3263,30 +3385,8 @@ function parseCliArgs(argv2) {
 }
 
 // src/runner/session-commands.ts
-import { ROOT_CONVERSATION_ID as ROOT_CONVERSATION_ID4 } from "@earendil-works/pi-durable";
-import { BACKGROUND_CONTEXT as BACKGROUND_CONTEXT3 } from "@earendil-works/chord/context";
-
-// src/runner/binding-docs.ts
-import { defineDoc as defineDoc3 } from "@earendil-works/pi-durable";
-var BindingDoc = defineDoc3({
-  kind: "durable.binding",
-  version: 2,
-  scope: "conversation",
-  checkpointWhen: () => false,
-  history: "latest",
-  fork: "initial",
-  initial: () => ({ binding: null })
-});
-var BindingIndexDoc = defineDoc3({
-  kind: "durable.binding-index",
-  version: 1,
-  scope: "session",
-  checkpointWhen: () => false,
-  initial: () => ({ byIdentity: {}, byThreadId: {} })
-});
-function identityKey(identity) {
-  return JSON.stringify([identity.providerId, identity.sessionId, identity.threadId]);
-}
+import { ROOT_CONVERSATION_ID as ROOT_CONVERSATION_ID5 } from "@earendil-works/pi-durable";
+import { BACKGROUND_CONTEXT as BACKGROUND_CONTEXT4 } from "@earendil-works/chord/context";
 
 // src/runner/errors.ts
 var DurableHarnessError = class extends Error {
@@ -3385,14 +3485,14 @@ async function handleBindingCommand(cmd, durable, responder) {
 }
 
 // src/runner/session-state-commands.ts
-import { ROOT_CONVERSATION_ID as ROOT_CONVERSATION_ID3 } from "@earendil-works/pi-durable";
-import { BACKGROUND_CONTEXT as BACKGROUND_CONTEXT2 } from "@earendil-works/chord/context";
+import { ROOT_CONVERSATION_ID as ROOT_CONVERSATION_ID4 } from "@earendil-works/pi-durable";
+import { BACKGROUND_CONTEXT as BACKGROUND_CONTEXT3 } from "@earendil-works/chord/context";
 import { estimateContextTokens } from "@earendil-works/pi-ai/utils/estimate";
 
 // src/runner/conversation-id.ts
-import { ROOT_CONVERSATION_ID as ROOT_CONVERSATION_ID2 } from "@earendil-works/pi-durable";
+import { ROOT_CONVERSATION_ID as ROOT_CONVERSATION_ID3 } from "@earendil-works/pi-durable";
 function parseConversationId(id) {
-  if (id === void 0 || id === null) return ROOT_CONVERSATION_ID2;
+  if (id === void 0 || id === null) return ROOT_CONVERSATION_ID3;
   const trimmed = typeof id === "string" ? id.trim() : id;
   if (trimmed === "") {
     throw new Error(`Invalid conversationId: ${String(id)}`);
@@ -3409,12 +3509,12 @@ async function handleSessionStateCommand(cmd, durable, modelRuntime, args2, resp
   if (cmd.type === "get_state") {
     const targetId = parseConversationId(cmd.conversationId);
     let agentDoc;
-    if (targetId !== ROOT_CONVERSATION_ID3) {
-      const conv = await durable.harness.conversation(targetId, BACKGROUND_CONTEXT2);
+    if (targetId !== ROOT_CONVERSATION_ID4) {
+      const conv = await durable.harness.conversation(targetId, BACKGROUND_CONTEXT3);
       if (!conv) {
         throw new Error(`Conversation not found: ${cmd.conversationId}`);
       }
-      const agentState = await conv.agent(BACKGROUND_CONTEXT2);
+      const agentState = await conv.agent(BACKGROUND_CONTEXT3);
       agentDoc = agentState;
     } else {
       const current = durable.view.current();
@@ -3436,9 +3536,9 @@ async function handleSessionStateCommand(cmd, durable, modelRuntime, args2, resp
   if (cmd.type === "get_session_stats") {
     const targetId = parseConversationId(cmd.conversationId);
     let agentDoc;
-    if (targetId !== ROOT_CONVERSATION_ID3) {
-      const conv = await durable.harness.conversation(targetId, BACKGROUND_CONTEXT2);
-      const agentState = conv ? await conv.agent(BACKGROUND_CONTEXT2) : void 0;
+    if (targetId !== ROOT_CONVERSATION_ID4) {
+      const conv = await durable.harness.conversation(targetId, BACKGROUND_CONTEXT3);
+      const agentState = conv ? await conv.agent(BACKGROUND_CONTEXT3) : void 0;
       agentDoc = agentState ?? {};
     } else {
       const current = durable.view.current();
@@ -3453,9 +3553,9 @@ async function handleSessionStateCommand(cmd, durable, modelRuntime, args2, resp
     }
     let tokens = null;
     try {
-      const conv = await durable.harness.conversation(targetId, BACKGROUND_CONTEXT2);
+      const conv = await durable.harness.conversation(targetId, BACKGROUND_CONTEXT3);
       if (conv) {
-        const ctxView = await conv.context(BACKGROUND_CONTEXT2);
+        const ctxView = await conv.context(BACKGROUND_CONTEXT3);
         const estimate = estimateContextTokens(ctxView.messages);
         tokens = estimate.tokens;
       }
@@ -3498,13 +3598,13 @@ async function handleActiveSessionCommand(cmd, durable, modelRuntime, args2, res
       respond.success(cmd.id, "prompt");
       const behavior = cmd.streamingBehavior || "followUp";
       const targetId = parseConversationId(cmd.conversationId);
-      if (targetId !== ROOT_CONVERSATION_ID4) {
+      if (targetId !== ROOT_CONVERSATION_ID5) {
         if (durable.watcher) await durable.watcher.ensureAttached(targetId);
-        const conv = await durable.harness.conversation(targetId, BACKGROUND_CONTEXT3);
+        const conv = await durable.harness.conversation(targetId, BACKGROUND_CONTEXT4);
         if (!conv) {
           throw new Error(`Conversation not found: ${cmd.conversationId}`);
         }
-        await conv.submit({ type: "input", content, whenBusy: behavior }, BACKGROUND_CONTEXT3);
+        await conv.submit({ type: "input", content, whenBusy: behavior }, BACKGROUND_CONTEXT4);
       } else {
         await durable.controller.submit(content, behavior);
       }
@@ -3518,13 +3618,13 @@ async function handleActiveSessionCommand(cmd, durable, modelRuntime, args2, res
       }
       respond.success(cmd.id, "steer");
       const targetId = parseConversationId(cmd.conversationId);
-      if (targetId !== ROOT_CONVERSATION_ID4) {
+      if (targetId !== ROOT_CONVERSATION_ID5) {
         if (durable.watcher) await durable.watcher.ensureAttached(targetId);
-        const conv = await durable.harness.conversation(targetId, BACKGROUND_CONTEXT3);
+        const conv = await durable.harness.conversation(targetId, BACKGROUND_CONTEXT4);
         if (!conv) {
           throw new Error(`Conversation not found: ${cmd.conversationId}`);
         }
-        await conv.submit({ type: "input", content, whenBusy: "steer" }, BACKGROUND_CONTEXT3);
+        await conv.submit({ type: "input", content, whenBusy: "steer" }, BACKGROUND_CONTEXT4);
       } else {
         await durable.controller.submit(content, "steer");
       }
@@ -3532,10 +3632,10 @@ async function handleActiveSessionCommand(cmd, durable, modelRuntime, args2, res
     }
     case "abort": {
       const targetId = parseConversationId(cmd.conversationId);
-      if (targetId !== ROOT_CONVERSATION_ID4) {
-        const conv = await durable.harness.conversation(targetId, BACKGROUND_CONTEXT3);
+      if (targetId !== ROOT_CONVERSATION_ID5) {
+        const conv = await durable.harness.conversation(targetId, BACKGROUND_CONTEXT4);
         if (conv) {
-          await conv.abort(BACKGROUND_CONTEXT3);
+          await conv.abort(BACKGROUND_CONTEXT4);
         }
       } else {
         await durable.controller.abort();
@@ -3548,7 +3648,7 @@ async function handleActiveSessionCommand(cmd, durable, modelRuntime, args2, res
         respond.error(cmd.id, "abort_task", "Missing taskId");
         return;
       }
-      await durable.harness.abortTask(cmd.taskId, BACKGROUND_CONTEXT3);
+      await durable.harness.abortTask(cmd.taskId, BACKGROUND_CONTEXT4);
       respond.success(cmd.id, "abort_task", { ok: true });
       break;
     }
@@ -3764,93 +3864,6 @@ function initBridgeInboundChannel(modelScope, sendToBridge2) {
       console.warn(`[BridgeChannel] Inbound channel setup notice: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
-}
-
-// src/runner/subagent-watcher.ts
-import {
-  ROOT_CONVERSATION_ID as ROOT_CONVERSATION_ID5,
-  watchEvents as defaultWatchEvents
-} from "@earendil-works/pi-durable";
-import { BACKGROUND_CONTEXT as BACKGROUND_CONTEXT4 } from "@earendil-works/chord/context";
-function extractChildConversationId(event) {
-  if (event.type === "tool_execution_update" || event.type === "tool_execution_end") {
-    const details = extractCanonicalToolDetails(event);
-    return details?.conversationId;
-  }
-  return void 0;
-}
-async function startSubagentWatcher(harness, adapter, getCurrentView, options) {
-  const watch2 = options?.watchEventsFn ?? defaultWatchEvents;
-  const attached = /* @__PURE__ */ new Set();
-  const activeStreams = /* @__PURE__ */ new Map();
-  const attach = async (conversationId, parentCallId) => {
-    if (attached.has(conversationId)) return;
-    attached.add(conversationId);
-    const isChild = parentCallId !== void 0;
-    const childAdapter = isChild ? adapter.createChildAdapter(parentCallId, conversationId) : void 0;
-    try {
-      const stream = await watch2(harness, conversationId, BACKGROUND_CONTEXT4);
-      activeStreams.set(conversationId, stream);
-      stream.start(async (batch) => {
-        try {
-          const view = getCurrentView();
-          if (childAdapter) {
-            childAdapter.handleBatch(batch, view);
-          } else {
-            adapter.handleBatch(batch, view);
-          }
-          for (const event of batch) {
-            const childId = extractChildConversationId(event);
-            if (childId !== void 0 && !attached.has(childId)) {
-              const callId = "toolCallId" in event ? isChild ? `${parentCallId}:${String(event.toolCallId)}` : String(event.toolCallId) : parentCallId ?? "subagent";
-              void attach(childId, callId);
-            }
-          }
-        } catch (err) {
-          console.error(`[SubagentWatcher] Batch handling error for conversation ${conversationId}:`, err);
-        }
-      });
-    } catch (err) {
-      console.error(`[SubagentWatcher] Failed to attach stream for conversation ${conversationId}:`, err);
-    }
-  };
-  await attach(ROOT_CONVERSATION_ID5);
-  try {
-    const index = await harness.snapshot(BindingIndexDoc, BACKGROUND_CONTEXT4);
-    if (index?.byThreadId) {
-      for (const convId of Object.values(index.byThreadId)) {
-        if (convId && convId !== ROOT_CONVERSATION_ID5) {
-          await attach(convId, "subagent");
-        }
-      }
-    }
-    const subagents = await harness.snapshot(SubagentsDoc, ROOT_CONVERSATION_ID5, BACKGROUND_CONTEXT4);
-    if (subagents?.agents) {
-      for (const agent of Object.values(subagents.agents)) {
-        if (agent?.conversationId && agent.conversationId !== ROOT_CONVERSATION_ID5) {
-          await attach(agent.conversationId, String(agent.ownerTaskId ?? "subagent"));
-        }
-      }
-    }
-  } catch (err) {
-    console.warn(`[SubagentWatcher] Bootstrap child discovery warning: ${err instanceof Error ? err.message : String(err)}`);
-  }
-  return {
-    ensureAttached: async (conversationId, parentCallId) => {
-      await attach(conversationId, parentCallId ?? "subagent");
-    },
-    close: () => {
-      for (const stream of activeStreams.values()) {
-        try {
-          stream.stop();
-        } catch (err) {
-          console.warn(`[SubagentWatcher] Stream stop warning: ${err instanceof Error ? err.message : String(err)}`);
-        }
-      }
-      activeStreams.clear();
-      attached.clear();
-    }
-  };
 }
 
 // src/runtime-graph/schema.ts

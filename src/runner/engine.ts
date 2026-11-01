@@ -1,5 +1,6 @@
 import { openDurable } from "./runtime.ts";
 import { DurableEventAdapter } from "./bridge/durable-event-adapter.ts";
+import { startSubagentWatcher, type SubagentWatcherController } from "./subagent-watcher.ts";
 import type { RunnerEvent } from "../contracts/runner-event.ts";
 
 export interface DurableEngineOptions {
@@ -16,6 +17,8 @@ export class DurableEngine {
 	public readonly sessionDir: string;
 	private eventListeners = new Set<(event: RunnerEvent) => void>();
 	private eventAdapter: DurableEventAdapter;
+	private watcher?: SubagentWatcherController;
+	private unsubscribeView?: () => void;
 
 	private constructor(
 		instance: Awaited<ReturnType<typeof openDurable>>,
@@ -28,6 +31,7 @@ export class DurableEngine {
 				listener(event);
 			}
 		});
+		this.unsubscribeView = this.instance.view.subscribe(this.eventAdapter.subscriber);
 	}
 
 	public static async open(options: DurableEngineOptions = {}): Promise<DurableEngine> {
@@ -42,7 +46,13 @@ export class DurableEngine {
 				noGlobalExtensions: options.noGlobalExtensions,
 			},
 		});
-		return new DurableEngine(instance, sessionDir);
+		const engine = new DurableEngine(instance, sessionDir);
+		engine.watcher = await startSubagentWatcher(
+			instance.harness,
+			engine.eventAdapter,
+			() => instance.view.current(),
+		);
+		return engine;
 	}
 
 	public async prompt(content: string, options?: { deliverAs?: "steer" | "followUp" }): Promise<void> {
@@ -60,6 +70,8 @@ export class DurableEngine {
 
 	public async close(): Promise<void> {
 		this.eventListeners.clear();
+		this.unsubscribeView?.();
+		this.watcher?.close();
 		await this.instance.close();
 	}
 }

@@ -63,8 +63,8 @@ test("Subagent tool: registers record in SubagentsDoc, uses friendly name, and d
 	assert.equal(docStore.agents["subagent:task_parent_exec"].task, "Background integration job");
 	assert.equal(
 		docStore.agents["subagent:task_parent_exec"].name,
-		"Background integration job · worker",
-		"Subagent record name must use nativeChildTitle friendly name",
+		"Background integration job",
+		"Subagent record name must preserve trimmed domain task title",
 	);
 });
 
