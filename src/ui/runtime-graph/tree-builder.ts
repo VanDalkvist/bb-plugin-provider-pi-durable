@@ -136,7 +136,7 @@ export function buildTaskTree(snapshot: RuntimeGraphSnapshot): TaskTreeItem[] {
 	for (const item of itemsWithTokens) {
 		const total = (item.liveNode?.tokens?.total ?? item.receipt?.tokens?.total)!;
 		const prev = prevTokensByConv.get(item.conversationId);
-		item.tokenDelta = prev !== undefined ? total - prev : total;
+		item.tokenDelta = prev !== undefined && total >= prev ? total - prev : total;
 		prevTokensByConv.set(item.conversationId, total);
 	}
 
