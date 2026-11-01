@@ -1,12 +1,17 @@
-import { defineTask, type Extension, type Task, type TaskRecord } from "@earendil-works/pi-durable";
+import { defineTask, type Task, type TaskRecord } from "@earendil-works/pi-durable";
 import { SubagentsDoc } from "./subagent-docs.ts";
 import type { Admission, CourierState, SubagentTaskExtension } from "./subagent-delivery-types.ts";
 
 export const GATHER_MS = 50;
+export const DEFAULT_HOLD_TIMEOUT_MS = 5000;
 
 type CourierLiveness = { state: Pick<TaskRecord<null, { phase: string }, null>["state"], "status"> };
 export function courierIsIdle(active: CourierLiveness | undefined): boolean {
 	return active === undefined || active.state.status === "terminal";
+}
+
+export function clearDeliveryHold(doc: { deliveryHold?: unknown }): void {
+	delete doc.deliveryHold;
 }
 
 export function asExtensionTask<I, S extends { phase: string }, R, H extends object = object>(
@@ -15,7 +20,7 @@ export function asExtensionTask<I, S extends { phase: string }, R, H extends obj
 	return Object.assign(task, { name: extensionName, tasks: [task] });
 }
 
-export function courierFor(admit?: Admission): SubagentTaskExtension<null, CourierState, null> {
+export function courierFor(admit?: Admission, holdTimeoutMs = DEFAULT_HOLD_TIMEOUT_MS): SubagentTaskExtension<null, CourierState, null> {
 	const task = defineTask<null, CourierState, null>({
 		name: "durable.subagent-courier", version: 1,
 		initial: () => ({ phase: "gather" }),
@@ -63,7 +68,7 @@ export function courierFor(admit?: Admission): SubagentTaskExtension<null, Couri
 				const content = `[Subagent Reports Available]:\n\n${prompt}`;
 				const submission = await parent.submit({ type: "input", content, whenBusy: "followUp", requestId: sending.requestId }, context);
 				const settled = await submission.wait(context);
-				await runtime.commit(async (tx) => {
+				return runtime.commit(async (tx) => {
 					const current = await tx.doc(SubagentsDoc, runtime.conversationId);
 					if (current.sending?.requestId !== sending.requestId) return { status: "running", checkpoint: { phase: "next" } };
 					if (settled.status === "done") delete current.sending;
@@ -75,18 +80,32 @@ export function courierFor(admit?: Admission): SubagentTaskExtension<null, Couri
 				const watch = await runtime.watchDoc(SubagentsDoc, runtime.conversationId, context);
 				if (watch === undefined || watch.value?.deliveryHold === undefined) {
 					await watch?.stop();
-					await runtime.commit(() => ({ status: "running", checkpoint: { phase: "next" } }), context);
-					return;
+					return runtime.commit(() => ({ status: "running", checkpoint: { phase: "next" } }), context);
 				}
 				try {
-					await new Promise<void>((resolve, reject) => {
-						watch.start((v) => { if (v?.deliveryHold === undefined) resolve(); return Promise.resolve(); });
-						void watch.closed.then(() => reject(new Error("Courier hold watch ended")));
+					await new Promise<void>((resolve) => {
+						const timer = setTimeout(() => resolve(), holdTimeoutMs);
+						timer.unref?.();
+						watch.start((v) => {
+							if (v?.deliveryHold === undefined) {
+								clearTimeout(timer);
+								resolve();
+							}
+							return Promise.resolve();
+						});
+						void watch.closed.then(() => {
+							clearTimeout(timer);
+							resolve();
+						});
 					});
 				} finally {
 					await watch.stop();
 				}
-				await runtime.commit(() => ({ status: "running", checkpoint: { phase: "next" } }), context);
+				return runtime.commit(async (tx) => {
+					const current = await tx.doc(SubagentsDoc, runtime.conversationId);
+					delete current.deliveryHold;
+					return { status: "running", checkpoint: { phase: "next" } };
+				}, context);
 			},
 		},
 		abort: (_t, rt, ctx) => rt.commit(() => ({ status: "terminal", outcome: { status: "aborted" } }), ctx),

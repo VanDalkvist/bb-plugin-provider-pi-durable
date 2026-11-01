@@ -10,7 +10,7 @@ import { asExtensionTask, courierFor, courierIsIdle } from "./subagent-courier.t
 
 export type * from "./subagent-delivery-types.ts";
 export { answerText } from "./subagent-docs.ts";
-export { courierFor, courierIsIdle } from "./subagent-courier.ts";
+export { courierFor, courierIsIdle, clearDeliveryHold } from "./subagent-courier.ts";
 
 export const BACKGROUND = { ownership: { kind: "conversation" }, background: true } as const;
 
