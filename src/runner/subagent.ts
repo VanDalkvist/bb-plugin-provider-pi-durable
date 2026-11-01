@@ -35,6 +35,19 @@ export function createSubagentExtension(
 				}),
 				replay: "safe",
 				execute: async (args, api, context) => {
+					if (api.conversationId !== 1 && api.conversationId !== "1") {
+						return {
+							output: [
+								{
+									type: "text",
+									text: "Subagent recursion blocked: nested subagents are not permitted to spawn further subagents (max depth 1 reached).",
+								},
+							],
+							isError: true,
+							details: { error: "MAX_DEPTH_EXCEEDED", task: args.task },
+						};
+					}
+
 					const isBackground = args.background !== false;
 					const key = `subagent:${api.taskId}`;
 					const requestId = `subagent:${api.taskId}`;
@@ -56,16 +69,31 @@ export function createSubagentExtension(
 								? await api.models.getAvailable()
 								: [];
 
-						const resolved = resolveSubagentModelConfiguration(
-							policySnapshot,
-							{
-								model: parentAgent.model
-									? { provider: parentAgent.model.provider, modelId: parentAgent.model.modelId }
-									: undefined,
-								thinkingLevel: parentAgent.thinkingLevel,
-							},
-							availableModels,
-						);
+						let resolved;
+						try {
+							resolved = resolveSubagentModelConfiguration(
+								policySnapshot,
+								{
+									model: parentAgent?.model
+										? { provider: parentAgent.model.provider, modelId: parentAgent.model.modelId }
+										: undefined,
+									thinkingLevel: parentAgent?.thinkingLevel ?? "off",
+								},
+								availableModels,
+							);
+						} catch (policyErr: unknown) {
+							const msg = policyErr instanceof Error ? policyErr.message : String(policyErr);
+							return {
+								output: [
+									{
+										type: "text",
+										text: `Subagent creation rejected by model policy: ${msg}`,
+									},
+								],
+								isError: true,
+								details: { error: msg, task: args.task },
+							};
+						}
 
 						childRecord = await api.commit(async (tx) => {
 							const state = await tx.doc(SubagentsDoc, api.conversationId);
