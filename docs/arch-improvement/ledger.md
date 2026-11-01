@@ -650,7 +650,7 @@
 - **Line Budgets (AP-019):**
   - 100% файлов в `src/` строго < 250 LOC (максимальный файл: `src/host/session-registry.ts` — 239 LOC).
 - **Сборка (Build Receipt):**
-  - Версия `0.4.3` в `package.json` и `package-lock.json`.
+  - Версия `0.4.4` в `package.json` и `package-lock.json`.
   - `npm run build` пересобрал дистрибутивы: `dist/runner/index.js`, `dist/runner/quickjs.wasm`, `dist/server.js`, `dist/app.js`, `dist/host.js`.
 
 
