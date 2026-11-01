@@ -13,7 +13,7 @@ export function createBridgeSender(): (msg: unknown) => void {
 			writeSync(CHILD_TO_BRIDGE_FD, Buffer.from(str, "utf8"));
 		} catch (err) {
 			const code = (err as NodeJS.ErrnoException)?.code;
-			if (code !== "EBADF") {
+			if (code !== "EBADF" && code !== "ENXIO") {
 				console.warn(`[BridgeChannel] FD ${CHILD_TO_BRIDGE_FD} write warning: ${err instanceof Error ? err.message : String(err)}`);
 			}
 		}

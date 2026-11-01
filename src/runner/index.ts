@@ -87,7 +87,8 @@ async function main() {
 
 	// Handle probe / catalog mode (--no-session)
 	if (args.noSession) {
-		sendToBridge({ ready: true, kind: "ready" });
+		output({ type: "ready", kind: "ready", pid: process.pid });
+		sendToBridge({ ready: true, kind: "ready", pid: process.pid });
 		attachJsonlLineReader(process.stdin, (line) => {
 			if (!line.trim()) return;
 			try {
@@ -169,7 +170,8 @@ async function main() {
 	});
 
 	// Signal active session readiness only after SQLite store, event stream and stdin listener are active
-	sendToBridge({ ready: true, kind: "ready" });
+	output({ type: "ready", kind: "ready", pid: process.pid });
+	sendToBridge({ ready: true, kind: "ready", pid: process.pid });
 }
 
 main().catch((err) => {

@@ -90,6 +90,10 @@ export class RunnerProcess {
 	}
 
 	public handleIncoming(msg: RunnerEvent): void {
+		if ((msg as any).type === "ready" || (msg as any).kind === "ready") {
+			this.options.onChannelMessage?.({ kind: "ready" });
+			return;
+		}
 		const handled = this.channel.handleIncoming(msg);
 		if (!handled) {
 			try {

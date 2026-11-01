@@ -1480,6 +1480,80 @@ function installExtensionTools(registry, tools) {
   registry.install(defineExtension3({ name: "extension-tools", tools }));
 }
 
+// src/runner/extension-actions.ts
+function createExtensionActions(options, initialActiveTools = []) {
+  let activeToolNames = [...initialActiveTools];
+  let sessionName;
+  const sendMessage = (message, sendOptions) => {
+    if (sendOptions?.triggerTurn && message?.content) {
+      const text = typeof message.content === "string" ? message.content : JSON.stringify(message.content);
+      void options.onSubmitUserMessage?.(text, sendOptions.deliverAs === "steer" ? "steer" : "followUp");
+    }
+  };
+  const sendUserMessage = (content, sendOptions) => {
+    void options.onSubmitUserMessage?.(content, sendOptions?.deliverAs);
+  };
+  return {
+    getActiveTools: () => activeToolNames,
+    getAllTools: () => {
+      const map = /* @__PURE__ */ new Map();
+      if (options.getCallableTools) {
+        for (const t of options.getCallableTools()) {
+          map.set(t.name, {
+            name: t.name,
+            description: t.description,
+            parameters: t.parameters,
+            exposure: "direct",
+            reachesTools: t.name === "codemode" || t.name === "tool_search"
+          });
+        }
+      }
+      if (options.getRegisteredTools) {
+        for (const t of options.getRegisteredTools()) {
+          map.set(t.definition.name, {
+            name: t.definition.name,
+            description: t.definition.description,
+            parameters: t.definition.parameters,
+            promptGuidelines: t.definition.promptGuidelines,
+            exposure: t.definition.exposure ?? "direct",
+            namespace: t.definition.namespace,
+            annotations: t.definition.annotations,
+            sourceInfo: t.sourceInfo
+          });
+        }
+      }
+      return Array.from(map.values());
+    },
+    getSettings: () => ({
+      ...options.settingsManager?.getGlobalSettings() ?? {},
+      ...options.settingsManager?.getProjectSettings() ?? {}
+    }),
+    setActiveTools: (toolNames) => {
+      activeToolNames = [...toolNames];
+      options.onActiveToolsChanged?.(activeToolNames);
+    },
+    refreshTools: () => {
+      options.onToolsChanged?.();
+    },
+    getThinkingLevel: () => options.settingsManager?.getDefaultThinkingLevel?.() ?? "high",
+    setThinkingLevel: () => {
+    },
+    setModel: async () => false,
+    getCommands: () => [],
+    sendMessage,
+    sendUserMessage,
+    appendEntry: (customType, data) => {
+      options.sessionManager?.appendCustomEntry(customType, data);
+    },
+    setSessionName: (name) => {
+      sessionName = name;
+    },
+    getSessionName: () => sessionName,
+    setLabel: () => {
+    }
+  };
+}
+
 // src/runner/extension-bridge.ts
 function createExtensionUIContext(onNotice) {
   return {
@@ -1535,67 +1609,16 @@ async function setupExtensionRunner(options) {
   const modelRegistry = new ModelRegistry(options.modelRuntime);
   const runner = new ExtensionRunner(options.extensions, options.runtime, options.cwd, sessionManager, modelRegistry);
   runner.setUIContext(createExtensionUIContext(options.onNotice));
-  let activeToolNames = options.initialActiveTools ? [...options.initialActiveTools] : options.getCallableTools ? options.getCallableTools().map((t) => t.name) : [];
-  let sessionName;
-  const actions = {
-    getActiveTools: () => activeToolNames,
-    getAllTools: () => {
-      const map = /* @__PURE__ */ new Map();
-      if (options.getCallableTools) {
-        for (const t of options.getCallableTools()) {
-          map.set(t.name, {
-            name: t.name,
-            description: t.description,
-            parameters: t.parameters,
-            exposure: "direct",
-            reachesTools: t.name === "codemode" || t.name === "tool_search"
-          });
-        }
-      }
-      for (const t of runner.getAllRegisteredTools()) {
-        map.set(t.definition.name, {
-          name: t.definition.name,
-          description: t.definition.description,
-          parameters: t.definition.parameters,
-          promptGuidelines: t.definition.promptGuidelines,
-          exposure: t.definition.exposure ?? "direct",
-          namespace: t.definition.namespace,
-          annotations: t.definition.annotations,
-          sourceInfo: t.sourceInfo
-        });
-      }
-      return Array.from(map.values());
-    },
-    getSettings: () => ({
-      ...options.settingsManager?.getGlobalSettings() ?? {},
-      ...options.settingsManager?.getProjectSettings() ?? {}
-    }),
-    setActiveTools: (toolNames) => {
-      activeToolNames = [...toolNames];
-      options.onActiveToolsChanged?.(activeToolNames);
-    },
-    refreshTools: () => {
-      options.onToolsChanged?.();
-    },
-    getThinkingLevel: () => options.settingsManager?.getDefaultThinkingLevel?.() ?? "high",
-    setThinkingLevel: () => {
-    },
-    setModel: async () => false,
-    getCommands: () => [],
-    sendMessage: () => {
-    },
-    sendUserMessage: () => {
-    },
-    appendEntry: (customType, data) => {
-      sessionManager.appendCustomEntry(customType, data);
-    },
-    setSessionName: (name) => {
-      sessionName = name;
-    },
-    getSessionName: () => sessionName,
-    setLabel: () => {
-    }
-  };
+  const initialActive = options.initialActiveTools ? [...options.initialActiveTools] : options.getCallableTools ? options.getCallableTools().map((t) => t.name) : [];
+  const actions = createExtensionActions({
+    getRegisteredTools: () => runner.getAllRegisteredTools(),
+    getCallableTools: options.getCallableTools,
+    settingsManager: options.settingsManager,
+    onActiveToolsChanged: options.onActiveToolsChanged,
+    onToolsChanged: options.onToolsChanged,
+    sessionManager,
+    onSubmitUserMessage: options.onSubmitUserMessage
+  }, initialActive);
   const contextActions = {
     getModel: () => {
       const active = options.settingsManager?.getDefaultModel?.();
@@ -1766,7 +1789,8 @@ async function mountExtensionBridge(location, modelRuntime, extensionsResult, re
       onAbort: () => actionsDelegate?.onAbort?.(),
       onCompact: (i) => actionsDelegate?.onCompact?.(i),
       getContextUsage: () => actionsDelegate?.getContextUsage?.(),
-      isIdle: () => actionsDelegate?.isIdle ? actionsDelegate.isIdle() : true
+      isIdle: () => actionsDelegate?.isIdle ? actionsDelegate.isIdle() : true,
+      onSubmitUserMessage: (c, d) => actionsDelegate?.onSubmitUserMessage?.(c, d)
     });
     if (extensionRunner) {
       extensionRunner.onError((err) => {
@@ -2008,13 +2032,19 @@ async function loadHarnessEnvironment(location, options, envs) {
   }
   const modelRuntime = await ModelRuntime2.create();
   const settingsManager = SettingsManager2.create(location.cwd);
+  const extEnv = process.env.PI_ADDITIONAL_EXTENSIONS;
+  const extPaths = [
+    ...options.cli?.extensions ?? (options.cli?.extension ? [options.cli.extension] : []),
+    ...extEnv ? extEnv.split(",").map((s) => s.trim()).filter(Boolean) : []
+  ];
   const resourceLoader = new DefaultResourceLoader2({
     cwd: location.cwd,
     agentDir: getAgentDir2(),
     settingsManager,
     extensionFactories: createStandardExtensionFactories(),
     additionalSkillPaths: options.cli?.skills,
-    additionalExtensionPaths: options.cli?.extension ? [options.cli.extension] : void 0
+    additionalExtensionPaths: extPaths.length > 0 ? extPaths : void 0,
+    noExtensions: options.cli?.noGlobalExtensions ?? false
   });
   await resourceLoader.reload();
   const extensionsResult = resourceLoader.getExtensions();
@@ -2241,6 +2271,9 @@ async function openDurable(options = {}) {
         void controller.compact(i);
       };
       activeEnvState.actionsDelegate.isIdle = () => true;
+      activeEnvState.actionsDelegate.onSubmitUserMessage = async (content, deliverAs) => {
+        await controller.submit(content, deliverAs ?? "followUp");
+      };
       activeEnvState.actionsDelegate.onConfigureModelTools = async (tools) => {
         await root.configure({ modelTools: tools.map((name) => ({ name })) }, runtimeContext);
       };
@@ -3183,8 +3216,14 @@ function parseCliArgs(argv2) {
     else if (arg === "--system-prompt" && i + 1 < argv2.length) args2.systemPromptPath = argv2[++i];
     else if (arg === "--append-system-prompt" && i + 1 < argv2.length) args2.appendSystemPromptPath = argv2[++i];
     else if (arg === "--cwd" && i + 1 < argv2.length) args2.cwd = argv2[++i];
-    else if (arg === "--extension" && i + 1 < argv2.length) args2.extension = argv2[++i];
-    else if (arg === "--skill" && i + 1 < argv2.length) {
+    else if (arg === "--extension" && i + 1 < argv2.length) {
+      const ext = argv2[++i];
+      args2.extension = ext;
+      args2.extensions ??= [];
+      args2.extensions.push(ext);
+    } else if (arg === "--no-global-extensions") {
+      args2.noGlobalExtensions = true;
+    } else if (arg === "--skill" && i + 1 < argv2.length) {
       args2.skills ??= [];
       args2.skills.push(argv2[++i]);
     } else if (arg.startsWith("-")) {
@@ -3654,7 +3693,7 @@ function createBridgeSender() {
       writeSync(CHILD_TO_BRIDGE_FD, Buffer.from(str, "utf8"));
     } catch (err) {
       const code = err?.code;
-      if (code !== "EBADF") {
+      if (code !== "EBADF" && code !== "ENXIO") {
         console.warn(`[BridgeChannel] FD ${CHILD_TO_BRIDGE_FD} write warning: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
@@ -4781,7 +4820,8 @@ async function main() {
     output({ id, type: "response", command, success: false, error: message });
   };
   if (args.noSession) {
-    sendToBridge({ ready: true, kind: "ready" });
+    output({ type: "ready", kind: "ready", pid: process.pid });
+    sendToBridge({ ready: true, kind: "ready", pid: process.pid });
     attachJsonlLineReader(process.stdin, (line) => {
       if (!line.trim()) return;
       try {
@@ -4856,7 +4896,8 @@ async function main() {
       error(cmd.id, cmd.type ?? "unknown", err instanceof Error ? err.message : String(err));
     }
   });
-  sendToBridge({ ready: true, kind: "ready" });
+  output({ type: "ready", kind: "ready", pid: process.pid });
+  sendToBridge({ ready: true, kind: "ready", pid: process.pid });
 }
 main().catch((err) => {
   console.error(`Runner fatal error: ${err instanceof Error ? err.stack : err}`);
