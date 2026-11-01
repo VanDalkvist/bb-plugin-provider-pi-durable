@@ -49,13 +49,6 @@ export async function inspectPiEnvironment(options: { cwd?: string; agentDir?: s
 	await settingsManager.reload();
 	const globalSettings = settingsManager.getGlobalSettings() ?? {};
 
-	const modelRuntime = await ModelRuntime.create();
-	const allModels = modelRuntime.getModels();
-	const providers = modelRuntime.getProviders().map((p) => p.id);
-	const defaultProvider = settingsManager.getDefaultProvider();
-	const defaultModel = settingsManager.getDefaultModel();
-	const defaultModelAvailable = Boolean(defaultProvider && defaultModel && modelRuntime.getModel(defaultProvider, defaultModel));
-
 	const resourceLoader = new DefaultResourceLoader({
 		cwd,
 		agentDir,
@@ -64,6 +57,20 @@ export async function inspectPiEnvironment(options: { cwd?: string; agentDir?: s
 	});
 	await resourceLoader.reload();
 	const extResult = resourceLoader.getExtensions();
+
+	const modelRuntime = await ModelRuntime.create();
+	const allModels = modelRuntime.getModels();
+	const providers = modelRuntime.getProviders().map((p) => p.id);
+	const defaultProvider = settingsManager.getDefaultProvider();
+	const defaultModel = settingsManager.getDefaultModel();
+	const enabledModels = settingsManager.getEnabledModels() ?? [];
+	const hasProviderExtension = extResult.extensions.some((e) => defaultProvider && e.path.includes(defaultProvider));
+	const isEnabledInSettings = enabledModels.some((id) => id === `${defaultProvider}/${defaultModel}` || id === defaultModel);
+	const defaultModelAvailable = Boolean(
+		defaultProvider &&
+			defaultModel &&
+			(modelRuntime.getModel(defaultProvider, defaultModel) || isEnabledInSettings || hasProviderExtension),
+	);
 
 	const extensionItems: ExtensionDiagnostic[] = extResult.extensions.map((ext) => {
 		const hooks = Array.from(ext.handlers.keys());

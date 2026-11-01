@@ -63,7 +63,13 @@ export class RuntimeGraphSource {
 					} else if (ch?.type === "task") {
 						const taskVal = ch.value;
 						const idNum = Number(taskVal?.id);
-						if (taskVal?.startedAt) this.nativeStartedAt.set(idNum, Number(taskVal.startedAt));
+						if (taskVal?.startedAt) {
+							if (this.nativeStartedAt.size >= 256) {
+								const oldest = this.nativeStartedAt.keys().next().value;
+								if (oldest !== undefined) this.nativeStartedAt.delete(oldest);
+							}
+							this.nativeStartedAt.set(idNum, Number(taskVal.startedAt));
+						}
 						if (taskVal?.state?.status === "terminal") {
 							this.learnNames();
 							recordTerminalWithDetails(this.receipts, taskVal, this.names, this.nativeStartedAt, this.viewSource.current(), this.recentEntries);

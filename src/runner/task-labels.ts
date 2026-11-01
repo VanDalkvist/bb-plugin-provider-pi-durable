@@ -5,6 +5,7 @@ import type { DurableView } from "./runtime-types.ts";
 /** Longest a step's name may be; the panel is narrow, and a command's tail is rarely the informative part. */
 const MAX_NAME = 48;
 const MAX_TARGET_HINT = 128;
+const MAX_TASK_NAMES = 512;
 
 /** Names for the harness tasks the graph knows only by kind, complete as they stand. */
 const KIND_NAMES: Record<string, string> = {
@@ -74,6 +75,13 @@ export class TaskNames {
 			const hint = argumentHint(args);
 			const toolName = slot.name ? clip(slot.name, MAX_NAME) : undefined;
 			const preview = clip(hint === undefined ? slot.name : `${slot.name}: ${hint}`, MAX_NAME);
+			if (this.names.size >= MAX_TASK_NAMES) {
+				const oldest = this.names.keys().next().value;
+				if (oldest !== undefined) {
+					this.names.delete(oldest);
+					this.details.delete(oldest);
+				}
+			}
 			this.names.set(key, preview);
 			this.details.set(key, { toolName, targetHint: hint, preview });
 		}
