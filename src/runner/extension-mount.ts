@@ -80,7 +80,20 @@ export function createNestedToolExecutor(
 				});
 			}
 
-			return { toolCall: { type: "toolCall", id: `${callerId}/nested`, name, arguments: args }, result: { content, details: res?.details }, isError: !!res?.isError };
+			const structuredOutput =
+				(res as { structuredContent?: unknown })?.structuredContent !== undefined
+					? (res as { structuredContent?: unknown }).structuredContent
+					: (res as { structuredOutput?: unknown })?.structuredOutput;
+
+			return {
+				toolCall: { type: "toolCall", id: `${callerId}/nested`, name, arguments: args },
+				result: {
+					content,
+					details: res?.details,
+					...(structuredOutput !== undefined ? { structuredOutput } : {}),
+				},
+				isError: !!res?.isError,
+			};
 		} catch (err: unknown) {
 			const errorContent = [{ type: "text" as const, text: err instanceof Error ? err.message : String(err) }];
 			if (runner?.hasHandlers("tool_result")) {

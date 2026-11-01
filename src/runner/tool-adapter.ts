@@ -21,7 +21,11 @@ export type NestedToolExecutor = (
 	options?: { signal?: AbortSignal },
 ) => Promise<{
 	toolCall: { type: "toolCall"; id: string; name: string; arguments: unknown };
-	result: { content: Array<{ type: "text"; text: string }>; details: unknown };
+	result: {
+		content: Array<{ type: "text"; text: string }>;
+		details: unknown;
+		structuredOutput?: unknown;
+	};
 	isError: boolean;
 }>;
 
@@ -139,10 +143,16 @@ export function adaptExtensionTool(
 					});
 				}
 
+				const structuredOutput =
+					(result as { structuredContent?: unknown }).structuredContent !== undefined
+						? (result as { structuredContent?: unknown }).structuredContent
+						: (result as { structuredOutput?: unknown }).structuredOutput;
+
 				return {
 					output: result.content,
 					isError: result.isError,
 					details: (result.details ?? undefined) as JsonValue | undefined,
+					...(structuredOutput !== undefined ? { structuredOutput: structuredOutput as JsonValue } : {}),
 				};
 			} catch (err: unknown) {
 				const message = err instanceof Error ? err.message : String(err);
