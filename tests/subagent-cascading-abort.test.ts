@@ -97,3 +97,62 @@ test("createDurableController: abort() performs cascading abort with { backgroun
 	const childFinishedAbort = abortedConversations.find((c) => c.id === 4);
 	assert.equal(childFinishedAbort, undefined, "Settled subagent must not be called");
 });
+
+test("createDurableController: abort() does not execute child.abort inside commit transaction (prevents deadlock)", async () => {
+	let inCommit = false;
+	let abortedInsideCommit = false;
+
+	const child = {
+		id: 2,
+		abort: async () => {
+			if (inCommit) abortedInsideCommit = true;
+		},
+	};
+
+	const docStore: any = {
+		agents: {
+			"subagent:worker_1": {
+				name: "Worker 1",
+				conversationId: 2,
+				settled: false,
+			},
+		},
+	};
+
+	const mockCurrent: any = {
+		id: 1,
+		abort: async () => {},
+		commit: async (fn: any) => {
+			inCommit = true;
+			try {
+				const tx: any = {
+					doc: async (docDef: any) => {
+						if (docDef === SubagentsDoc) return docStore;
+						return {};
+					},
+				};
+				return await fn(tx);
+			} finally {
+				inCommit = false;
+			}
+		},
+	};
+
+	const mockOpened: any = {
+		conversation: async () => child,
+	};
+
+	const controller = createDurableController({
+		bindings: { current: mockCurrent } as any,
+		opened: mockOpened,
+		modelRuntime: { getModel: () => undefined } as any,
+		getState: () => ({ conversation: {} } as any),
+		notice: () => {},
+		fail: (err) => { throw err; },
+		setActiveModelRef: () => {},
+	});
+
+	await controller.abort();
+
+	assert.equal(abortedInsideCommit, false, "child.abort() must NEVER be invoked inside a commit transaction to avoid Pi Durable session line deadlocks");
+});

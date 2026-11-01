@@ -164,8 +164,8 @@ export class PiThreadSession {
 	public async steer(request: PromptRequest): Promise<void> {
 		await this.runner.requestOk({ type: "steer", message: request.text, ...(request.images?.length ? { images: request.images } : {}), conversationId: request.conversationId });
 	}
-	public async abort(conversationId?: string): Promise<void> {
-		try { await this.runner.requestOk({ type: "abort", conversationId }); } catch (err) { console.warn(`[PiThreadSession] Abort request failed: ${err}`); }
+	public async abort(conversationId?: string, timeoutMs = 8000): Promise<void> {
+		try { await this.runner.requestOk({ type: "abort", conversationId }, timeoutMs); } catch (err) { console.warn(`[PiThreadSession] Abort request failed: ${err}`); }
 	}
 	public async compact(instructions?: string): Promise<void> {
 		this.isProcessing = true;

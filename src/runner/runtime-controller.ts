@@ -150,24 +150,28 @@ export function createDurableController(ctx: ControllerContext): DurableControll
 		abort: () =>
 			command(async () => {
 				await ctx.bindings.current.abort(runtimeContext, { background: true });
+				const childConversationIds: ConversationId[] = [];
 				await ctx.bindings.current.commit(async (tx) => {
 					const doc = await tx.doc(SubagentsDoc, ctx.bindings.current.id);
 					for (const agent of Object.values(doc?.agents ?? {})) {
 						if (!agent.settled && agent.conversationId) {
-							const child = await ctx.opened.conversation(agent.conversationId, runtimeContext).catch((err) => {
-								ctx.notice("warning", `Failed to access subagent: ${err}`);
-								return undefined;
-							});
-							if (child) {
-								await child.abort(runtimeContext, { background: true }).catch((err) => {
-									ctx.notice("warning", `Failed to abort subagent: ${err}`);
-								});
-							}
+							childConversationIds.push(agent.conversationId as ConversationId);
 						}
 					}
 				}, runtimeContext).catch((err) => {
-					ctx.notice("warning", `Cascade abort error: ${err}`);
+					ctx.notice("warning", `Cascade abort read error: ${err}`);
 				});
+				for (const childId of childConversationIds) {
+					const child = await ctx.opened.conversation(childId, runtimeContext).catch((err) => {
+						ctx.notice("warning", `Failed to access subagent: ${err}`);
+						return undefined;
+					});
+					if (child) {
+						await child.abort(runtimeContext, { background: true }).catch((err) => {
+							ctx.notice("warning", `Failed to abort subagent: ${err}`);
+						});
+					}
+				}
 			}),
 
 		cycleThinking: () =>
