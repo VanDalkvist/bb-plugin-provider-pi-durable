@@ -532,3 +532,40 @@
   - Версия обновлена `0.3.26` → `0.3.27` в `package.json` и `package-lock.json`.
   - `npm run build` пересобрал бандлы: `dist/server.js`, `dist/app.js`, `dist/host.js`, `dist/runner/index.js` с версией `0.3.27`.
 
+### Sovereign Kernel Decoupling & Extension Parity (Cycle 99) — 2026-11-01
+
+- **Цель и статус:** Архитектурная декомпозиция и суверенизация раннера Pi Durable (`src/runner`) от Beyond Boundaries IDE (`src/host`) к релизу `v0.4.0`. Полное устранение хостовых утечек (raw SQL чтение `session.sqlite`, хранение клиентских `threadId` в ядре, привязка готовности к FD 3/4, колоночные лимиты 500 символов, `PlanStep`/`tasks_snapshot` в wire-контрактах) и паритет для внешних расширений Pi (`sendUserMessage` в FSM, мульти-флаги `--extension`, изоляция сессий через `--no-global-extensions`, и фасад `DurableEngine`). Статус: **PASS (VERIFIED)**.
+- **Устранённые дефекты и первоисточники:**
+  - *Extension Action Parity (AP-012, AP-013):* Устранена пустая заглушка `sendUserMessage: () => {}` и `sendMessage: () => {}`. Реализован `ExtensionActionsDelegate`, передающий сообщения напрямую в FSM Durable через `controller.submit(content, deliverAs ?? "followUp")`.
+  - *Multi-Extension CLI & Session Isolation (AP-010, AP-030):* Исправлена перезапись скалярного аргумента `extension?: string`. Теперь раннер и хост принимают массив `extensions?: string[]`. Добавлен флаг `--no-global-extensions`, отключающий загрузку глобальных расширений из `~/.pi/agent/extensions` через `noExtensions: true` в `DefaultResourceLoader`.
+  - *Storage Sovereignty & Elimination of Host Raw SQL (AP-010, AP-016):* Из хостового адаптера `src/host/durable-binding-store.ts` полностью удалён `DatabaseSync` из `node:sqlite`. Хост больше не открывает и не парсит внутренний файл БД `session.sqlite` раннера. Все привязки между `threadId` и `conversationId` сохраняются в изолированный сайдкар `adapter-bindings.json` и синхронизируются через асинхронный RPC.
+  - *POSIX Stdio Transport Portability (AP-021, AP-027):* Сигнал готовности `ready` (`{"type":"ready","kind":"ready","pid":...}`) теперь эмитится в стандартный `stdout` раннера. Канал `bridge-channel.ts` обрабатывает отсутствие FD 3 и FD 4 без крашей и без `ENXIO`/`EBADF`. Раннер запускается и взаимодействует как чистый POSIX JSON-RPC процесс без Beyond Boundaries.
+  - *Domain Contract Purification (AP-011, AP-018, AP-026):* Из `src/contracts/wire-lifecycle.ts` и `src/runner/bridge/contracts.ts` удалены устаревшие презентационные схемы `planStepSchema`, `PlanStep`, `tasksSnapshotSchema` и `TasksSnapshotEvent`. Из `src/runner/subagent.ts` и `subagent-delivery.ts` удалены импорты `nativeChildTitle`, искусственно обрезавшие названия задач под колоночный лимит хоста (`threads.title <= 500`).
+  - *In-Process Facade DurableEngine (AP-010, AP-020):* Создан `src/runner/engine.ts`, предоставляющий цельный программный API (`DurableEngine.open()`, `prompt()`, `events()`, `abort()`, `close()`) со встроенным `startSubagentWatcher` и подпиской на события.
+- **TDD и доказательная база:**
+  - Добавлены новые тесты:
+    * `tests/extension-user-message.test.ts`: проверка отправки сообщений расширениями в FSM.
+    * `tests/extension-cli-multi.test.ts`: проверка мульти-флагов `--extension` и изоляции.
+    * `tests/posix-stdio-transport.test.ts`: проверка ready-фрейма в stdout без FD 3/4.
+    * `tests/storage-sovereignty.test.ts`: проверка сохранения сайдкара без raw SQL.
+    * `tests/wire-contract-purity.test.ts`: проверка отсутствия презентационных схем.
+    * `tests/durable-engine-facade.test.ts`: проверка in-process фасада с телеметрией.
+  - Полный прогон тестов: **598 тестов бэкенда/ядра pass + 117 тестов UI pass = 715 pass, 0 fail**.
+  - Контрактная безопасность: `npm run test:contracts` (Negative contract guard: TS2322 rejection, pass).
+- **Line Budgets (AP-019):**
+  - `src/runner/engine.ts`: 77 строк (< 200)
+  - `src/runner/extension-actions.ts`: 92 строки (< 200)
+  - `src/runner/extension-bridge.ts`: 152 строки (< 200)
+  - `src/runner/extension-mount.ts`: 199 строк (< 200)
+  - `src/runner/cli-args.ts`: 59 строк (< 200)
+  - `src/runner/runtime-loader.ts`: 199 строк (< 200)
+  - `src/runner/runtime.ts`: 185 строк (< 200)
+  - `src/runner/subagent.ts`: 183 строки (< 200)
+  - `src/runner/subagent-delivery.ts`: 77 строк (< 200)
+  - `src/host/durable-binding-store.ts`: 126 строк (< 200)
+  - `src/host/delta-translator.ts`: 167 строк (< 200)
+  - `src/contracts/wire-lifecycle.ts`: 26 строк (< 200)
+- **Сборка (Build Receipt):**
+  - Версия `0.4.0` в `package.json` и `package-lock.json`.
+  - `npm run build` пересобрал дистрибутивы: `dist/runner/index.js`, `dist/server.js`, `dist/app.js`, `dist/host.js`.
+

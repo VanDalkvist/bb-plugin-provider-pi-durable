@@ -183,12 +183,20 @@
 - Use next time: Never put hardcoded pixel ceilings (`max-w-[Npx]`) on text elements inside flex containers that have right-aligned metrics (`ml-auto`). Use `truncate min-w-0` so the label fluidly expands across the entire card width, truncating with ellipsis only when the viewport or parent panel actually runs out of space.
 - Evidence: `src/ui/runtime-graph/node-row.tsx`, `tests/ui/runtime-graph-responsive-width.test.ts`, Cycle 92.
 
-## 2026-10-29 - Aligning Backend targetHint Limits with Wire Schema (Cycle 93)
-- Context: Serializing `targetHint` for tools and `taskLabel` for generation turns in `task-labels.ts`.
-- Symptom: Even after making UI rows fluid flexbox, file paths were cut at 48 characters with `...` (e.g. `read: /Users/vanya/Projects/arch-rules-skills/skills/...`), and parent generation rows displayed `assistant turn · gpt-6.1-sol (high) · ...`.
-- Cause: `sanitizeTargetHint` called `clip(s)` with `MAX_NAME = 48` (intended only for legacy `taskSteps` previews), even though the runtime graph wire schema permits 128 characters for `targetHint`. In addition, generation node labels retained redundant `· waiting on N` suffixes, which exceeded the parent breadcrumb width.
-- Use next time: Differentiate `preview` (bounded to 48 for legacy text panels) from `targetHint` (bounded to 128 per wire schema). In UI breadcrumbs, strip redundant ` · waiting on N` from generation labels when status badges already convey waiting task IDs, and allow sufficient parent max-width (`max-w-[280px]`).
-- Evidence: `src/runner/task-labels.ts`, `src/ui/runtime-graph/node-row.tsx`, `tests/ui/runtime-graph-responsive-width.test.ts`, Cycle 93.
+## 2026-11-01 - Sovereign Kernel Decoupling and Pure POSIX Stdio Readiness (Cycle 99)
+- Context: Decoupling the Pi Durable engine runner (`src/runner`) from the Beyond Boundaries host harness (`src/host`).
+- Symptom: Headless consumers connecting over standard POSIX stdin/stdout hung indefinitely waiting for readiness, received `ENXIO` errors on FD 3, and host adapters performed raw SQL queries on `session.sqlite` via `DatabaseSync`.
+- Cause: Readiness signal was emitted exclusively to FD 3 (`writeSync(3)`), and host adapter directly inspected the runner's internal SQLite database rather than maintaining an isolated sidecar manifest.
+- Use next time: All computing kernels must support POSIX stdio as first-class citizen. Readiness must be emitted to `stdout` (`{"type":"ready",...}`), and file descriptor operations (FD 3/4) must fail quietly without throwing `ENXIO`/`EBADF`. The host adapter must never execute raw SQL against the engine's internal database; client thread mappings belong in a host-owned sidecar (`adapter-bindings.json`) synchronized via RPC.
+- Evidence: `src/runner/stdout-guard.ts`, `src/runner/bridge-channel.ts`, `src/host/durable-binding-store.ts`, `tests/posix-stdio-transport.test.ts`, `tests/storage-sovereignty.test.ts`, Cycle 99.
+
+## 2026-11-01 - Elimination of Host UI Schemas and Database Constraints from Engine Kernel (Cycle 99)
+- Context: Wire lifecycle contracts and subagent task naming in `src/runner/`.
+- Symptom: Wire protocol carried `planStepSchema` and `tasks_snapshot` which were discontinued in the host, and subagent records in `SubagentsDoc` artificially truncated task titles with `nativeChildTitle` to fit Beyond Boundaries Core's 500-character SQLite column limit.
+- Cause: Presentation concerns from BB Inline UI and Core database schema leaked across architectural boundaries into domain entities and wire contracts.
+- Use next time: Domain models must never truncate data to accommodate client UI or host DB constraints. Sanitization for client database limits (`threads.title <= 500`) belongs exclusively in the host adapter (`subthread-spawner.ts`). The domain kernel must preserve full, unclipped task strings (`task.trim()`). Presentation UI cards must never be declared as wire lifecycle events.
+- Evidence: `src/contracts/wire-lifecycle.ts`, `src/runner/subagent.ts`, `src/runner/subagent-delivery.ts`, `tests/wire-contract-purity.test.ts`, Cycle 99.
+
 
 
 
