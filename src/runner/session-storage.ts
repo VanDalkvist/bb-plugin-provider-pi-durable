@@ -1,6 +1,7 @@
 /**
  * Session directory management, SQLite path resolution, and lockfile locking.
  */
+import { execFileSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -24,6 +25,20 @@ export function isProcessAlive(pid: number): boolean {
 		return true;
 	} catch (err: unknown) {
 		return (err as NodeJS.ErrnoException).code === "EPERM";
+	}
+}
+
+export function isVerifiedRunnerProcess(owner: SessionOwnerInfo): boolean {
+	if (!isProcessAlive(owner.pid)) return false;
+	try {
+		const output = execFileSync("ps", ["-p", String(owner.pid), "-o", "command="], {
+			encoding: "utf8",
+			timeout: 1000,
+			stdio: ["ignore", "pipe", "ignore"],
+		}).trim();
+		return output.includes("node") || output.includes("runner") || output.includes("durable") || output.includes("bb");
+	} catch {
+		return false;
 	}
 }
 
@@ -78,7 +93,10 @@ async function acquireSessionLock(directory: string, cwd: string, id: string): P
 			throw new Error(`Session is already open in another process: ${directory}`, { cause: initialErr });
 		}
 
-		if (!isProcessAlive(owner.pid)) {
+		const isAlive = isProcessAlive(owner.pid);
+		const isRunner = isAlive && isVerifiedRunnerProcess(owner);
+
+		if (!isAlive || !isRunner) {
 			await forceUnlock(directory);
 			await removeOwnerFile(directory);
 			try {
