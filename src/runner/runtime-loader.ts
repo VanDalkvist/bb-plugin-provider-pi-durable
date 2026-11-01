@@ -121,6 +121,7 @@ export async function loadHarnessEnvironment(
 		getSubagentPolicy,
 		{ ...options.prompt, resourceLoader, dynamicSections },
 		dynamicNamespaces,
+		options.plugins,
 	);
 
 	const pendingReports: unknown[] = [];

@@ -89,6 +89,7 @@ export interface OpenDurableOptions {
 		readonly noGlobalExtensions?: boolean;
 	};
 	readonly prompt?: PromptOptions;
+	readonly plugins?: import("./plugins/types.ts").DurablePlugin[];
 }
 
 export interface SubagentWatcherController {

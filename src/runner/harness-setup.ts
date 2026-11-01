@@ -24,6 +24,11 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { createPiPrompt, type PromptOptions } from "./prompt.ts";
 import type { DynamicCodemodeNamespaces } from "./codemode-namespaces.ts";
+import { DurablePluginRegistry } from "./plugins/registry.ts";
+import { codingToolsPlugin } from "./plugins/built-in/coding-tools.ts";
+import { codemodePlugin } from "./plugins/built-in/codemode.ts";
+import { subagentsPlugin } from "./plugins/built-in/subagents.ts";
+import type { DurablePlugin, DurablePluginContext } from "./plugins/types.ts";
 
 export function configureHarnessHttp(settingsManager: SettingsManager): void {
 	const proxy = settingsManager.getGlobalSettings()?.httpProxy?.trim();
@@ -76,29 +81,30 @@ export async function createCodingRegistry(
 	getSubagentPolicy: () => SubagentPolicyRecord,
 	promptOptions?: PromptOptions,
 	dynamicNamespaces?: DynamicCodemodeNamespaces,
+	customPlugins: DurablePlugin[] = [],
 ): Promise<Registry> {
 	const registry = createRegistry();
-	let codingTools = CodingTools;
-	try {
-		const images = await createNodePhotonImages();
-		codingTools = createCodingTools({ images });
-	} catch (err) {
-		console.warn("[HarnessSetup] Photon image processor fallback to basic tools:", err);
+	const pluginRegistry = new DurablePluginRegistry();
+
+	pluginRegistry.register(codingToolsPlugin);
+	pluginRegistry.register(codemodePlugin);
+	pluginRegistry.register(subagentsPlugin);
+
+	for (const plugin of customPlugins) {
+		pluginRegistry.register(plugin);
 	}
-	registry.install(codingTools);
-	registry.install(
-		createCodemodeExtension({
-			sandbox: new CodemodeSandbox(),
-			get namespaces() {
-				return dynamicNamespaces?.getNamespaces() ?? [];
-			},
-		}),
-	);
+
+	const ctx: DurablePluginContext = {
+		registry,
+		settingsManager,
+		cwd,
+		getSubagentPolicy,
+		prompt: promptOptions,
+		dynamicNamespaces,
+	};
+
+	await pluginRegistry.initAll(ctx);
 	registry.install(createToolSearchExtension());
-	registry.install(createSubagentExtension(getSubagentPolicy));
-	registry.install(Anchor);
-	registry.install(DefaultCourier);
-	registry.install(DefaultReporter);
 	registry.install(createPiPrompt(settingsManager, cwd, promptOptions));
 	return registry;
 }
