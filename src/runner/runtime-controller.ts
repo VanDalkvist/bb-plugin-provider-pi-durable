@@ -154,11 +154,20 @@ export function createDurableController(ctx: ControllerContext): DurableControll
 					const doc = await tx.doc(SubagentsDoc, ctx.bindings.current.id);
 					for (const agent of Object.values(doc?.agents ?? {})) {
 						if (!agent.settled && agent.conversationId) {
-							const child = await ctx.opened.conversation(agent.conversationId, runtimeContext).catch(() => undefined);
-							await child?.abort(runtimeContext, { background: true }).catch(() => undefined);
+							const child = await ctx.opened.conversation(agent.conversationId, runtimeContext).catch((err) => {
+								ctx.notice("warning", `Failed to access subagent: ${err}`);
+								return undefined;
+							});
+							if (child) {
+								await child.abort(runtimeContext, { background: true }).catch((err) => {
+									ctx.notice("warning", `Failed to abort subagent: ${err}`);
+								});
+							}
 						}
 					}
-				}, runtimeContext).catch(() => undefined);
+				}, runtimeContext).catch((err) => {
+					ctx.notice("warning", `Cascade abort error: ${err}`);
+				});
 			}),
 
 		cycleThinking: () =>

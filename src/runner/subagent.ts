@@ -35,7 +35,7 @@ export function createSubagentExtension(
 				}),
 				replay: "safe",
 				execute: async (args, api, context) => {
-					if (api.conversationId !== 1 && api.conversationId !== "1") {
+					if (api.conversationId !== undefined && Number(api.conversationId) > 1) {
 						return {
 							output: [
 								{
@@ -69,31 +69,16 @@ export function createSubagentExtension(
 								? await api.models.getAvailable()
 								: [];
 
-						let resolved;
-						try {
-							resolved = resolveSubagentModelConfiguration(
-								policySnapshot,
-								{
-									model: parentAgent?.model
-										? { provider: parentAgent.model.provider, modelId: parentAgent.model.modelId }
-										: undefined,
-									thinkingLevel: parentAgent?.thinkingLevel ?? "off",
-								},
-								availableModels,
-							);
-						} catch (policyErr: unknown) {
-							const msg = policyErr instanceof Error ? policyErr.message : String(policyErr);
-							return {
-								output: [
-									{
-										type: "text",
-										text: `Subagent creation rejected by model policy: ${msg}`,
-									},
-								],
-								isError: true,
-								details: { error: msg, task: args.task },
-							};
-						}
+						const resolved = resolveSubagentModelConfiguration(
+							policySnapshot,
+							{
+								model: parentAgent?.model
+									? { provider: parentAgent.model.provider, modelId: parentAgent.model.modelId }
+									: undefined,
+								thinkingLevel: parentAgent?.thinkingLevel ?? "off",
+							},
+							availableModels,
+						);
 
 						childRecord = await api.commit(async (tx) => {
 							const state = await tx.doc(SubagentsDoc, api.conversationId);

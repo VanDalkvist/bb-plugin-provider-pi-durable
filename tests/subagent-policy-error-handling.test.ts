@@ -1,8 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createSubagentExtension } from "../src/runner/subagent.ts";
+import { SubagentModelUnavailableError } from "../src/policy/errors.ts";
 
-test("Subagent: rejects nested subagent recursion when conversationId !== 1", async () => {
+test("Subagent: rejects nested subagent recursion when conversationId > 1", { timeout: 2000 }, async () => {
 	const ext = createSubagentExtension(() => ({
 		policy: { mode: "inherit" },
 		revision: 1,
@@ -23,9 +24,9 @@ test("Subagent: rejects nested subagent recursion when conversationId !== 1", as
 	assert.equal(result.details?.error, "MAX_DEPTH_EXCEEDED");
 });
 
-test("Subagent: returns isError: true with actionable explanation when model policy fails", async () => {
+test("Subagent: rejects with SubagentModelUnavailableError when configured model is unavailable", { timeout: 2000 }, async () => {
 	const ext = createSubagentExtension(() => ({
-		policy: { mode: "configured", model: { provider: "invalid", modelId: "missing-model" } },
+		policy: { mode: "configured", configuredProfile: { model: { provider: "invalid", modelId: "missing-model" } } },
 		revision: 1,
 		updatedAt: Date.now(),
 	}));
@@ -40,12 +41,13 @@ test("Subagent: returns isError: true with actionable explanation when model pol
 		}),
 		agent: async () => ({ model: undefined, thinkingLevel: "off" }),
 		models: {
-			getAvailable: async () => [], // empty models -> resolution will throw
+			getAvailable: async () => [], // empty models -> resolution must fail fast
 		},
 		details: async () => {},
 	};
 
-	const result = await subagentTool.execute({ task: "Run with unavailable model" }, mockApi, {} as any);
-	assert.equal(result.isError, true, "Model resolution error must return isError: true");
-	assert.match(result.output?.[0]?.text ?? "", /Subagent creation rejected by model policy/);
+	await assert.rejects(
+		() => subagentTool.execute({ task: "Run with unavailable model" }, mockApi, {} as any),
+		(err: any) => err instanceof SubagentModelUnavailableError || err.code === "SUBAGENT_MODEL_UNAVAILABLE",
+	);
 });

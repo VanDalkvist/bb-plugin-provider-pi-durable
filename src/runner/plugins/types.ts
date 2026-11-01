@@ -2,7 +2,7 @@ export type PluginCategory = "built-in" | "external";
 
 export interface DurablePluginContext {
 	cwd: string;
-	storageDir: string;
+	storageDir?: string;
 	registry?: any;
 	[key: string]: any;
 }

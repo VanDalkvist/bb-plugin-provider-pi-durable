@@ -9,17 +9,299 @@ import {
   createRegistry
 } from "@earendil-works/pi-durable";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
+import { createToolSearchExtension } from "@earendil-works/pi-durable/tool-search";
+import {
+  resolveCliModel
+} from "@earendil-works/pi-coding-agent";
+
+// src/runner/prompt.ts
+import { existsSync, readFileSync } from "node:fs";
+import { defineExtension, section } from "@earendil-works/pi-durable";
+import {
+  createBashToolDefinition,
+  createEditToolDefinition,
+  createReadToolDefinition,
+  createWriteToolDefinition,
+  formatSkillsForPrompt
+} from "@earendil-works/pi-coding-agent";
+var DynamicPromptSections = class {
+  sections = {};
+  revision = 0;
+  getSections() {
+    return { ...this.sections };
+  }
+  updateSections(sections) {
+    this.sections = { ...sections };
+    this.revision++;
+  }
+  getRevision() {
+    return this.revision;
+  }
+};
+var CANONICAL_TOOL_DEFS = {
+  read: createReadToolDefinition(process.cwd()),
+  write: createWriteToolDefinition(process.cwd()),
+  edit: createEditToolDefinition(process.cwd()),
+  bash: createBashToolDefinition(process.cwd()),
+  codemode: {
+    promptSnippet: "Run JavaScript in a sandbox to call other tools. Use it to batch, chain, or loop tool calls without roundtrips.",
+    promptGuidelines: [
+      "Use codemode to batch independent tool calls (Promise.allSettled), chain them, or filter large output, instead of many separate calls."
+    ]
+  },
+  tool_search: {
+    promptSnippet: "Search for deferred tools by keyword or concept and load matching tools for subsequent calls.",
+    promptGuidelines: ["Use tool_search to discover and activate deferred tools before calling them."]
+  },
+  subagent: {
+    promptSnippet: "Delegate a self-contained task to an async subagent. Uses the configured runtime subagent model policy (inherits parent model or uses provider-configured model). Runs in the background by default without blocking the conversation.",
+    promptGuidelines: [
+      "Use subagent to run background tasks asynchronously, or with background: false for immediate synchronous results."
+    ]
+  }
+};
+var KEYS = ["preamble", "tools", "rules", "docs", "addendum", "project_context", "skills", "cwd", "mcp_servers", "dynamic_sections"];
+function resolveContextFiles(options) {
+  return options.contextFiles && options.contextFiles.length > 0 ? options.contextFiles : options.resourceLoader?.getAgentsFiles?.()?.agentsFiles ?? [];
+}
+function resolveSkills(options) {
+  return options.resourceLoader?.getSkills?.()?.skills ?? [];
+}
+function buildRules(tools) {
+  const rules = [];
+  const seen = /* @__PURE__ */ new Set();
+  const addRule = (rule) => {
+    const normalized = rule.trim();
+    if (!normalized || seen.has(normalized)) return;
+    seen.add(normalized);
+    rules.push(normalized);
+  };
+  if (tools.some((t) => t.name === "bash")) {
+    addRule("Use bash for file operations like ls, rg, find");
+  }
+  for (const tool of tools) {
+    const def = CANONICAL_TOOL_DEFS[tool.name];
+    if (def?.promptGuidelines) {
+      for (const guideline of def.promptGuidelines) addRule(guideline);
+    }
+    if (tool.promptGuidelines) {
+      for (const guideline of tool.promptGuidelines) addRule(guideline);
+    }
+  }
+  addRule("Be concise in your responses");
+  addRule("Show file paths clearly when working with files");
+  return rules.map((r) => `- ${r}`).join("\n");
+}
+function tryReadPromptFile(path, label) {
+  if (!path || !existsSync(path)) return void 0;
+  try {
+    return readFileSync(path, "utf8").trim();
+  } catch (err) {
+    console.error(`Warning: failed to read ${label ?? "prompt"}: ${err}`);
+    return void 0;
+  }
+}
+function createPiPrompt(_settings, fallbackCwd, options = {}) {
+  const systemPromptOverride = tryReadPromptFile(options.systemPromptPath, "system-prompt");
+  const appendPrompt = tryReadPromptFile(options.appendSystemPromptPath, "append-system-prompt");
+  const buildSections = (input) => {
+    const cwd = input.env?.cwd ?? input.agent.cwd ?? fallbackCwd;
+    const contextFiles = resolveContextFiles(options);
+    const skills = resolveSkills(options);
+    const tools = input.agent.tools ?? [];
+    const sections = {};
+    if (systemPromptOverride) {
+      sections.preamble = systemPromptOverride;
+    } else {
+      sections.preamble = "You are an expert coding assistant operating inside pi, a coding agent harness. You help users by reading files, executing commands, editing code, and writing new files.";
+      const visibleTools = tools.flatMap((t) => {
+        const def = CANONICAL_TOOL_DEFS[t.name];
+        const snippet = def?.promptSnippet ?? t.promptSnippet;
+        return snippet ? [`- ${t.name}: ${snippet}`] : [];
+      });
+      const toolsText = visibleTools.length > 0 ? visibleTools.join("\n") : "(none)";
+      sections.tools = `<tools>
+${toolsText}
+
+In addition to the tools above, you may have access to other custom tools depending on the project.
+</tools>`;
+      sections.rules = `<rules>
+${buildRules(tools)}
+</rules>`;
+    }
+    if (appendPrompt) sections.addendum = `<addendum>
+${appendPrompt}
+</addendum>`;
+    if (contextFiles.length > 0) {
+      const rendered = contextFiles.map((cf) => `<project_instructions path="${cf.path}">
+${cf.content}
+</project_instructions>`).join("\n\n");
+      sections.project_context = `<project_context>
+Project-specific instructions and guidelines:
+
+${rendered}
+</project_context>`;
+    }
+    if (skills.length > 0) sections.skills = `<skills>
+${formatSkillsForPrompt(skills, "read")}
+</skills>`;
+    sections.cwd = `<cwd>
+${cwd.replace(/\\/g, "/")}
+</cwd>`;
+    if (options.dynamicSections) {
+      const extra = options.dynamicSections.getSections();
+      if (extra.mcp_servers?.trim()) sections.mcp_servers = `<mcp_servers>
+${extra.mcp_servers}
+</mcp_servers>`;
+      const otherEntries = Object.entries(extra).filter(([k, text]) => k !== "mcp_servers" && Boolean(text?.trim()));
+      if (otherEntries.length > 0) {
+        sections.dynamic_sections = otherEntries.map(([name, text]) => `<${name}>
+${text}
+</${name}>`).join("\n\n");
+      }
+    }
+    return sections;
+  };
+  const built = /* @__PURE__ */ new WeakMap();
+  const getOrBuild = (input) => {
+    const currentRev = options.dynamicSections?.getRevision?.() ?? 0;
+    const cached = built.get(input);
+    if (cached === void 0 || cached.revision !== currentRev) {
+      const sections = buildSections(input);
+      built.set(input, { revision: currentRev, sections });
+      return sections;
+    }
+    return cached.sections;
+  };
+  return defineExtension({
+    name: "pi-prompt",
+    sections: KEYS.map((key) => section(key, (input) => getOrBuild(input)[key], { tag: false }))
+  });
+}
+
+// src/shared/errors.ts
+var DurableHarnessError = class extends Error {
+  code;
+  constructor(message, code, cause) {
+    super(message, { cause });
+    this.name = new.target.name;
+    this.code = code;
+  }
+};
+var DurableCommandError = class extends DurableHarnessError {
+  constructor(message, cause, code = "COMMAND_ERROR") {
+    super(message, code, cause);
+  }
+};
+var InvalidCommandPayloadError = class extends DurableCommandError {
+  command;
+  constructor(command, message, cause) {
+    super(message ?? `Invalid payload for command: ${command}`, cause, "INVALID_COMMAND_PAYLOAD");
+    this.command = command;
+  }
+};
+var DurablePluginError = class extends DurableHarnessError {
+  pluginId;
+  constructor(pluginId, message, cause) {
+    super(message ?? `Plugin failure: ${pluginId}`, "PLUGIN_ERROR", cause);
+    this.pluginId = pluginId;
+  }
+};
+
+// src/runner/plugins/registry.ts
+var DurablePluginRegistry = class {
+  #plugins = /* @__PURE__ */ new Map();
+  register(plugin) {
+    if (this.#plugins.has(plugin.id)) {
+      throw new DurablePluginError(
+        plugin.id,
+        `Plugin with id '${plugin.id}' is already registered`
+      );
+    }
+    this.#plugins.set(plugin.id, plugin);
+  }
+  get(id) {
+    return this.#plugins.get(id);
+  }
+  list(category) {
+    const all = Array.from(this.#plugins.values());
+    if (!category) return all;
+    return all.filter((p) => p.category === category);
+  }
+  async initAll(ctx) {
+    for (const plugin of this.#plugins.values()) {
+      try {
+        await plugin.register(ctx);
+      } catch (err) {
+        if (err instanceof DurablePluginError) {
+          throw err;
+        }
+        throw new DurablePluginError(
+          plugin.id,
+          `Failed to initialize plugin '${plugin.id}': ${err instanceof Error ? err.message : String(err)}`,
+          err
+        );
+      }
+    }
+  }
+  async teardownAll() {
+    const plugins = Array.from(this.#plugins.values()).reverse();
+    for (const plugin of plugins) {
+      if (typeof plugin.teardown === "function") {
+        try {
+          await plugin.teardown();
+        } catch {
+        }
+      }
+    }
+  }
+};
+
+// src/runner/plugins/built-in/coding-tools.ts
 import { createCodingTools, CodingTools } from "@earendil-works/pi-durable/tools";
 import { createNodePhotonImages } from "@earendil-works/pi-durable/images/node";
+var codingToolsPlugin = {
+  id: "coding-tools",
+  name: "Coding Tools",
+  category: "built-in",
+  version: "1.0.0",
+  async register(ctx) {
+    if (!ctx.registry) return;
+    let tools = CodingTools;
+    try {
+      const images = await createNodePhotonImages();
+      tools = createCodingTools({ images });
+    } catch {
+    }
+    ctx.registry.install(tools);
+  }
+};
+
+// src/runner/plugins/built-in/codemode.ts
 import { createCodemodeExtension } from "@earendil-works/pi-durable/codemode";
 import { CodemodeSandbox } from "@earendil-works/pi-codemode";
-import { createToolSearchExtension } from "@earendil-works/pi-durable/tool-search";
+var codemodePlugin = {
+  id: "codemode",
+  name: "Codemode",
+  category: "built-in",
+  version: "1.0.0",
+  register(ctx) {
+    if (!ctx.registry) return;
+    const ext = createCodemodeExtension({
+      sandbox: new CodemodeSandbox(),
+      get namespaces() {
+        return ctx.dynamicNamespaces?.getNamespaces?.() ?? [];
+      }
+    });
+    ctx.registry.install(ext);
+  }
+};
 
 // src/runner/subagent.ts
 import { Type } from "@earendil-works/pi-ai";
 import {
   configure,
-  defineExtension,
+  defineExtension as defineExtension2,
   defineTool
 } from "@earendil-works/pi-durable";
 
@@ -60,13 +342,14 @@ import {
 // src/runner/subagent-courier.ts
 import { defineTask } from "@earendil-works/pi-durable";
 var GATHER_MS = 50;
+var DEFAULT_HOLD_TIMEOUT_MS = 5e3;
 function courierIsIdle(active) {
   return active === void 0 || active.state.status === "terminal";
 }
 function asExtensionTask(task, extensionName) {
   return Object.assign(task, { name: extensionName, tasks: [task] });
 }
-function courierFor(admit) {
+function courierFor(admit, holdTimeoutMs = DEFAULT_HOLD_TIMEOUT_MS) {
   const task = defineTask({
     name: "durable.subagent-courier",
     version: 1,
@@ -117,7 +400,7 @@ function courierFor(admit) {
 ${prompt}`;
         const submission = await parent.submit({ type: "input", content, whenBusy: "followUp", requestId: sending.requestId }, context);
         const settled = await submission.wait(context);
-        await runtime.commit(async (tx) => {
+        return runtime.commit(async (tx) => {
           const current = await tx.doc(SubagentsDoc, runtime.conversationId);
           if (current.sending?.requestId !== sending.requestId) return { status: "running", checkpoint: { phase: "next" } };
           if (settled.status === "done") delete current.sending;
@@ -129,21 +412,32 @@ ${prompt}`;
         const watch2 = await runtime.watchDoc(SubagentsDoc, runtime.conversationId, context);
         if (watch2 === void 0 || watch2.value?.deliveryHold === void 0) {
           await watch2?.stop();
-          await runtime.commit(() => ({ status: "running", checkpoint: { phase: "next" } }), context);
-          return;
+          return runtime.commit(() => ({ status: "running", checkpoint: { phase: "next" } }), context);
         }
         try {
-          await new Promise((resolve2, reject) => {
+          await new Promise((resolve3) => {
+            const timer = setTimeout(() => resolve3(), holdTimeoutMs);
+            timer.unref?.();
             watch2.start((v) => {
-              if (v?.deliveryHold === void 0) resolve2();
+              if (v?.deliveryHold === void 0) {
+                clearTimeout(timer);
+                resolve3();
+              }
               return Promise.resolve();
             });
-            void watch2.closed.then(() => reject(new Error("Courier hold watch ended")));
+            void watch2.closed.then(() => {
+              clearTimeout(timer);
+              resolve3();
+            });
           });
         } finally {
           await watch2.stop();
         }
-        await runtime.commit(() => ({ status: "running", checkpoint: { phase: "next" } }), context);
+        return runtime.commit(async (tx) => {
+          const current = await tx.doc(SubagentsDoc, runtime.conversationId);
+          delete current.deliveryHold;
+          return { status: "running", checkpoint: { phase: "next" } };
+        }, context);
       }
     },
     abort: (_t, rt, ctx) => rt.commit(() => ({ status: "terminal", outcome: { status: "aborted" } }), ctx)
@@ -314,7 +608,7 @@ function resolveSubagentModelConfiguration(record, parentContext, availableModel
 
 // src/runner/subagent.ts
 function createSubagentExtension(getPolicy) {
-  return defineExtension({
+  return defineExtension2({
     name: "subagent",
     tools: [
       defineTool({
@@ -331,6 +625,18 @@ function createSubagentExtension(getPolicy) {
         }),
         replay: "safe",
         execute: async (args2, api, context) => {
+          if (api.conversationId !== void 0 && Number(api.conversationId) > 1) {
+            return {
+              output: [
+                {
+                  type: "text",
+                  text: "Subagent recursion blocked: nested subagents are not permitted to spawn further subagents (max depth 1 reached)."
+                }
+              ],
+              isError: true,
+              details: { error: "MAX_DEPTH_EXCEEDED", task: args2.task }
+            };
+          }
           const isBackground = args2.background !== false;
           const key = `subagent:${api.taskId}`;
           const requestId = `subagent:${api.taskId}`;
@@ -348,8 +654,8 @@ function createSubagentExtension(getPolicy) {
             const resolved = resolveSubagentModelConfiguration(
               policySnapshot,
               {
-                model: parentAgent.model ? { provider: parentAgent.model.provider, modelId: parentAgent.model.modelId } : void 0,
-                thinkingLevel: parentAgent.thinkingLevel
+                model: parentAgent?.model ? { provider: parentAgent.model.provider, modelId: parentAgent.model.modelId } : void 0,
+                thinkingLevel: parentAgent?.thinkingLevel ?? "off"
               },
               availableModels
             );
@@ -358,9 +664,13 @@ function createSubagentExtension(getPolicy) {
               if (state?.agents?.[key]) {
                 return state.agents[key];
               }
-              const existingConv = (await tx.scanConversations({ ownerTaskId: api.taskId }, 1)).items[0];
-              let childId = existingConv?.id;
-              let anchorId;
+              const existingAnchorId = state?.agents?.[key]?.anchorTaskId;
+              let existingConv = (await tx.scanConversations({ ownerTaskId: api.taskId }, 1)).items[0];
+              if (!existingConv && existingAnchorId !== void 0) {
+                existingConv = (await tx.scanConversations({ ownerTaskId: existingAnchorId }, 1)).items[0];
+              }
+              let childId = existingConv?.id ?? state?.agents?.[key]?.conversationId;
+              let anchorId = existingAnchorId;
               if (childId === void 0) {
                 if (isBackground) {
                   anchorId = await tx.createTask(Anchor, null, BACKGROUND);
@@ -456,175 +766,22 @@ function createSubagentExtension(getPolicy) {
   });
 }
 
-// src/runner/harness-setup.ts
-import {
-  resolveCliModel
-} from "@earendil-works/pi-coding-agent";
-
-// src/runner/prompt.ts
-import { existsSync, readFileSync } from "node:fs";
-import { defineExtension as defineExtension2, section } from "@earendil-works/pi-durable";
-import {
-  createBashToolDefinition,
-  createEditToolDefinition,
-  createReadToolDefinition,
-  createWriteToolDefinition,
-  formatSkillsForPrompt
-} from "@earendil-works/pi-coding-agent";
-var DynamicPromptSections = class {
-  sections = {};
-  revision = 0;
-  getSections() {
-    return { ...this.sections };
-  }
-  updateSections(sections) {
-    this.sections = { ...sections };
-    this.revision++;
-  }
-  getRevision() {
-    return this.revision;
+// src/runner/plugins/built-in/subagents.ts
+var subagentsPlugin = {
+  id: "subagents",
+  name: "Subagents",
+  category: "built-in",
+  version: "1.0.0",
+  register(ctx) {
+    if (!ctx.registry) return;
+    if (typeof ctx.getSubagentPolicy === "function") {
+      ctx.registry.install(createSubagentExtension(ctx.getSubagentPolicy));
+    }
+    ctx.registry.install(Anchor);
+    ctx.registry.install(DefaultCourier);
+    ctx.registry.install(DefaultReporter);
   }
 };
-var CANONICAL_TOOL_DEFS = {
-  read: createReadToolDefinition(process.cwd()),
-  write: createWriteToolDefinition(process.cwd()),
-  edit: createEditToolDefinition(process.cwd()),
-  bash: createBashToolDefinition(process.cwd()),
-  codemode: {
-    promptSnippet: "Run JavaScript in a sandbox to call other tools. Use it to batch, chain, or loop tool calls without roundtrips.",
-    promptGuidelines: [
-      "Use codemode to batch independent tool calls (Promise.allSettled), chain them, or filter large output, instead of many separate calls."
-    ]
-  },
-  tool_search: {
-    promptSnippet: "Search for deferred tools by keyword or concept and load matching tools for subsequent calls.",
-    promptGuidelines: ["Use tool_search to discover and activate deferred tools before calling them."]
-  },
-  subagent: {
-    promptSnippet: "Delegate a self-contained task to an async subagent. Uses the configured runtime subagent model policy (inherits parent model or uses provider-configured model). Runs in the background by default without blocking the conversation.",
-    promptGuidelines: [
-      "Use subagent to run background tasks asynchronously, or with background: false for immediate synchronous results."
-    ]
-  }
-};
-var KEYS = ["preamble", "tools", "rules", "docs", "addendum", "project_context", "skills", "cwd", "mcp_servers", "dynamic_sections"];
-function resolveContextFiles(options) {
-  return options.contextFiles && options.contextFiles.length > 0 ? options.contextFiles : options.resourceLoader?.getAgentsFiles?.()?.agentsFiles ?? [];
-}
-function resolveSkills(options) {
-  return options.resourceLoader?.getSkills?.()?.skills ?? [];
-}
-function buildRules(tools) {
-  const rules = [];
-  const seen = /* @__PURE__ */ new Set();
-  const addRule = (rule) => {
-    const normalized = rule.trim();
-    if (!normalized || seen.has(normalized)) return;
-    seen.add(normalized);
-    rules.push(normalized);
-  };
-  if (tools.some((t) => t.name === "bash")) {
-    addRule("Use bash for file operations like ls, rg, find");
-  }
-  for (const tool of tools) {
-    const def = CANONICAL_TOOL_DEFS[tool.name];
-    if (def?.promptGuidelines) {
-      for (const guideline of def.promptGuidelines) addRule(guideline);
-    }
-    if (tool.promptGuidelines) {
-      for (const guideline of tool.promptGuidelines) addRule(guideline);
-    }
-  }
-  addRule("Be concise in your responses");
-  addRule("Show file paths clearly when working with files");
-  return rules.map((r) => `- ${r}`).join("\n");
-}
-function tryReadPromptFile(path, label) {
-  if (!path || !existsSync(path)) return void 0;
-  try {
-    return readFileSync(path, "utf8").trim();
-  } catch (err) {
-    console.error(`Warning: failed to read ${label ?? "prompt"}: ${err}`);
-    return void 0;
-  }
-}
-function createPiPrompt(_settings, fallbackCwd, options = {}) {
-  const systemPromptOverride = tryReadPromptFile(options.systemPromptPath, "system-prompt");
-  const appendPrompt = tryReadPromptFile(options.appendSystemPromptPath, "append-system-prompt");
-  const buildSections = (input) => {
-    const cwd = input.env?.cwd ?? input.agent.cwd ?? fallbackCwd;
-    const contextFiles = resolveContextFiles(options);
-    const skills = resolveSkills(options);
-    const tools = input.agent.tools ?? [];
-    const sections = {};
-    if (systemPromptOverride) {
-      sections.preamble = systemPromptOverride;
-    } else {
-      sections.preamble = "You are an expert coding assistant operating inside pi, a coding agent harness. You help users by reading files, executing commands, editing code, and writing new files.";
-      const visibleTools = tools.flatMap((t) => {
-        const def = CANONICAL_TOOL_DEFS[t.name];
-        const snippet = def?.promptSnippet ?? t.promptSnippet;
-        return snippet ? [`- ${t.name}: ${snippet}`] : [];
-      });
-      const toolsText = visibleTools.length > 0 ? visibleTools.join("\n") : "(none)";
-      sections.tools = `<tools>
-${toolsText}
-
-In addition to the tools above, you may have access to other custom tools depending on the project.
-</tools>`;
-      sections.rules = `<rules>
-${buildRules(tools)}
-</rules>`;
-    }
-    if (appendPrompt) sections.addendum = `<addendum>
-${appendPrompt}
-</addendum>`;
-    if (contextFiles.length > 0) {
-      const rendered = contextFiles.map((cf) => `<project_instructions path="${cf.path}">
-${cf.content}
-</project_instructions>`).join("\n\n");
-      sections.project_context = `<project_context>
-Project-specific instructions and guidelines:
-
-${rendered}
-</project_context>`;
-    }
-    if (skills.length > 0) sections.skills = `<skills>
-${formatSkillsForPrompt(skills, "read")}
-</skills>`;
-    sections.cwd = `<cwd>
-${cwd.replace(/\\/g, "/")}
-</cwd>`;
-    if (options.dynamicSections) {
-      const extra = options.dynamicSections.getSections();
-      if (extra.mcp_servers?.trim()) sections.mcp_servers = `<mcp_servers>
-${extra.mcp_servers}
-</mcp_servers>`;
-      const otherEntries = Object.entries(extra).filter(([k, text]) => k !== "mcp_servers" && Boolean(text?.trim()));
-      if (otherEntries.length > 0) {
-        sections.dynamic_sections = otherEntries.map(([name, text]) => `<${name}>
-${text}
-</${name}>`).join("\n\n");
-      }
-    }
-    return sections;
-  };
-  const built = /* @__PURE__ */ new WeakMap();
-  const getOrBuild = (input) => {
-    const currentRev = options.dynamicSections?.getRevision?.() ?? 0;
-    const cached = built.get(input);
-    if (cached === void 0 || cached.revision !== currentRev) {
-      const sections = buildSections(input);
-      built.set(input, { revision: currentRev, sections });
-      return sections;
-    }
-    return cached.sections;
-  };
-  return defineExtension2({
-    name: "pi-prompt",
-    sections: KEYS.map((key) => section(key, (input) => getOrBuild(input)[key], { tag: false }))
-  });
-}
 
 // src/runner/harness-setup.ts
 function configureHarnessHttp(settingsManager) {
@@ -665,29 +822,26 @@ function createHarnessSettings(settingsManager, getActiveModel) {
     }
   };
 }
-async function createCodingRegistry(settingsManager, cwd, getSubagentPolicy, promptOptions, dynamicNamespaces) {
+async function createCodingRegistry(settingsManager, cwd, getSubagentPolicy, promptOptions, dynamicNamespaces, customPlugins = []) {
   const registry = createRegistry();
-  let codingTools = CodingTools;
-  try {
-    const images = await createNodePhotonImages();
-    codingTools = createCodingTools({ images });
-  } catch (err) {
-    console.warn("[HarnessSetup] Photon image processor fallback to basic tools:", err);
+  const pluginRegistry = new DurablePluginRegistry();
+  pluginRegistry.register(codingToolsPlugin);
+  pluginRegistry.register(codemodePlugin);
+  pluginRegistry.register(subagentsPlugin);
+  for (const plugin of customPlugins) {
+    pluginRegistry.register(plugin);
   }
-  registry.install(codingTools);
-  registry.install(
-    createCodemodeExtension({
-      sandbox: new CodemodeSandbox(),
-      get namespaces() {
-        return dynamicNamespaces?.getNamespaces() ?? [];
-      }
-    })
-  );
+  const ctx = {
+    registry,
+    settingsManager,
+    cwd,
+    storageDir: cwd,
+    getSubagentPolicy,
+    prompt: promptOptions,
+    dynamicNamespaces
+  };
+  await pluginRegistry.initAll(ctx);
   registry.install(createToolSearchExtension());
-  registry.install(createSubagentExtension(getSubagentPolicy));
-  registry.install(Anchor);
-  registry.install(DefaultCourier);
-  registry.install(DefaultReporter);
   registry.install(createPiPrompt(settingsManager, cwd, promptOptions));
   return registry;
 }
@@ -746,16 +900,22 @@ async function findInitialAgentModel(settingsManager, modelRuntime, cli) {
 }
 
 // src/runner/session-storage.ts
+import { execFileSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
-import { homedir } from "node:os";
-import { basename, join, resolve } from "node:path";
+import { basename, join as join2, resolve as resolve2 } from "node:path";
 import lockfile from "proper-lockfile";
-function getAgentDir() {
-  const override = process.env.PI_AGENT_DIR;
-  if (override && override.trim().length > 0) return resolve(override.trim());
+
+// src/shared/agent-dir.ts
+import { homedir } from "node:os";
+import { join, resolve } from "node:path";
+function getAgentDir(env = process.env) {
+  const override = env.PI_AGENT_DIR?.trim() || env.PI_CODING_AGENT_DIR?.trim();
+  if (override && override.length > 0) return resolve(override);
   return join(homedir(), ".pi", "agent");
 }
+
+// src/runner/session-storage.ts
 function isProcessAlive(pid) {
   if (!pid || pid <= 0) return false;
   try {
@@ -765,17 +925,30 @@ function isProcessAlive(pid) {
     return err.code === "EPERM";
   }
 }
+function isVerifiedRunnerProcess(owner) {
+  if (!isProcessAlive(owner.pid)) return false;
+  try {
+    const output2 = execFileSync("ps", ["-p", String(owner.pid), "-o", "command="], {
+      encoding: "utf8",
+      timeout: 1e3,
+      stdio: ["ignore", "pipe", "ignore"]
+    }).trim();
+    return output2.includes("node") || output2.includes("runner") || output2.includes("durable") || output2.includes("bb");
+  } catch {
+    return false;
+  }
+}
 function logUnexpectedErr(err, allowedCode, context) {
   if (err?.code !== allowedCode) {
     console.warn(`[SessionStorage] ${context}: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
 async function writeOwnerFile(directory, owner) {
-  await writeFile(join(directory, "session.owner.json"), JSON.stringify(owner, null, 2), "utf8");
+  await writeFile(join2(directory, "session.owner.json"), JSON.stringify(owner, null, 2), "utf8");
 }
 async function readOwnerFile(directory) {
   try {
-    const content = await readFile(join(directory, "session.owner.json"), "utf8");
+    const content = await readFile(join2(directory, "session.owner.json"), "utf8");
     return JSON.parse(content);
   } catch (err) {
     logUnexpectedErr(err, "ENOENT", `Corrupted or unreadable session.owner.json in ${directory}`);
@@ -783,7 +956,7 @@ async function readOwnerFile(directory) {
   }
 }
 async function removeOwnerFile(directory) {
-  await rm(join(directory, "session.owner.json"), { force: true }).catch(
+  await rm(join2(directory, "session.owner.json"), { force: true }).catch(
     (err) => logUnexpectedErr(err, "ENOENT", `Failed to remove owner file in ${directory}`)
   );
 }
@@ -809,7 +982,9 @@ async function acquireSessionLock(directory, cwd, id) {
     if (!owner) {
       throw new Error(`Session is already open in another process: ${directory}`, { cause: initialErr });
     }
-    if (!isProcessAlive(owner.pid)) {
+    const isAlive = isProcessAlive(owner.pid);
+    const isRunner = isAlive && isVerifiedRunnerProcess(owner);
+    if (!isAlive || !isRunner) {
       await forceUnlock(directory);
       await removeOwnerFile(directory);
       try {
@@ -855,14 +1030,14 @@ async function acquireSessionLock(directory, cwd, id) {
   };
 }
 async function selectSession(cwdInput, continueSession, targetSession) {
-  const cwd = await realpath(resolve(cwdInput));
-  const root = join(getAgentDir(), "experimental", "durable-sessions", createHash("sha256").update(cwd).digest("hex").slice(0, 24));
+  const cwd = await realpath(resolve2(cwdInput));
+  const root = join2(getAgentDir(), "experimental", "durable-sessions", createHash("sha256").update(cwd).digest("hex").slice(0, 24));
   await mkdir(root, { recursive: true });
   let directory;
   let created = false;
   if (targetSession) {
-    const clean = targetSession.endsWith(".sqlite") ? resolve(targetSession, "..") : targetSession;
-    directory = clean.includes("/") || clean.includes("\\") ? resolve(clean) : join(root, clean);
+    const clean = targetSession.endsWith(".sqlite") ? resolve2(targetSession, "..") : targetSession;
+    directory = clean.includes("/") || clean.includes("\\") ? resolve2(clean) : join2(root, clean);
     try {
       await mkdir(directory, { recursive: true });
       const entries = await readdir(directory);
@@ -876,15 +1051,15 @@ async function selectSession(cwdInput, continueSession, targetSession) {
     const entries = await readdir(root, { withFileTypes: true });
     const newest = entries.filter((entry) => entry.isDirectory() && /^\d{13}-[0-9a-f-]{36}$/u.test(entry.name)).map((entry) => entry.name).sort().at(-1);
     if (!newest) throw new Error(`No durable session exists for ${cwd}`);
-    directory = join(root, newest);
+    directory = join2(root, newest);
   } else {
-    directory = join(root, `${String(Date.now()).padStart(13, "0")}-${randomUUID()}`);
+    directory = join2(root, `${String(Date.now()).padStart(13, "0")}-${randomUUID()}`);
     await mkdir(directory);
     created = true;
   }
   const id = basename(directory);
   const release = await acquireSessionLock(directory, cwd, id);
-  return { id, directory, database: join(directory, "session.sqlite"), cwd, created, release };
+  return { id, directory, database: join2(directory, "session.sqlite"), cwd, created, release };
 }
 
 // src/runner/runtime-types.ts
@@ -1049,7 +1224,27 @@ function createDurableController(ctx) {
         }
       }).catch(ctx.fail);
     }),
-    abort: () => ctx.bindings.current.abort(runtimeContext).catch(ctx.fail),
+    abort: () => command(async () => {
+      await ctx.bindings.current.abort(runtimeContext, { background: true });
+      await ctx.bindings.current.commit(async (tx) => {
+        const doc = await tx.doc(SubagentsDoc, ctx.bindings.current.id);
+        for (const agent of Object.values(doc?.agents ?? {})) {
+          if (!agent.settled && agent.conversationId) {
+            const child = await ctx.opened.conversation(agent.conversationId, runtimeContext).catch((err) => {
+              ctx.notice("warning", `Failed to access subagent: ${err}`);
+              return void 0;
+            });
+            if (child) {
+              await child.abort(runtimeContext, { background: true }).catch((err) => {
+                ctx.notice("warning", `Failed to abort subagent: ${err}`);
+              });
+            }
+          }
+        }
+      }, runtimeContext).catch((err) => {
+        ctx.notice("warning", `Cascade abort error: ${err}`);
+      });
+    }),
     cycleThinking: () => command(async () => {
       const model = agentModel();
       if (!model.reasoning) throw new Error("Current model does not support thinking");
@@ -1224,16 +1419,207 @@ import {
   initTheme
 } from "@earendil-works/pi-coding-agent";
 
-// src/runner/extension-bridge.ts
+// src/shared/extension-runner.ts
 import {
+  createMcpExtension,
   ExtensionRunner,
   ModelRegistry,
   SessionManager
 } from "@earendil-works/pi-coding-agent";
 
+// src/shared/extension-ui-context.ts
+function createExtensionUIContext(onNotice) {
+  return {
+    select: async () => void 0,
+    confirm: async () => false,
+    input: async () => void 0,
+    notify: (message, type = "info") => {
+      onNotice?.(type, message);
+    },
+    onTerminalInput: () => () => {
+    },
+    setStatus: () => {
+    },
+    setWorkingMessage: () => {
+    },
+    setWorkingVisible: () => {
+    },
+    setWorkingIndicator: () => {
+    },
+    setHiddenThinkingLabel: () => {
+    },
+    setWidget: () => {
+    },
+    setFooter: () => {
+    },
+    setHeader: () => {
+    },
+    setTitle: () => {
+    },
+    custom: async () => void 0,
+    pasteToEditor: () => {
+    },
+    setEditorText: () => {
+    },
+    getEditorText: () => "",
+    editor: async () => void 0,
+    addAutocompleteProvider: () => {
+    },
+    setEditorComponent: () => {
+    },
+    getEditorComponent: () => void 0,
+    theme: {},
+    getAllThemes: () => [],
+    getTheme: () => void 0,
+    setTheme: () => ({ success: true }),
+    getToolsExpanded: () => false,
+    setToolsExpanded: () => {
+    }
+  };
+}
+
+// src/shared/extension-runner.ts
+function createStandardExtensionFactories() {
+  return [createMcpExtension()];
+}
+function createExtensionActions(options, initialActiveTools = []) {
+  let activeToolNames = [...initialActiveTools];
+  let sessionName;
+  const sendMessage = (message, sendOptions) => {
+    if (sendOptions?.triggerTurn && message?.content) {
+      const text = typeof message.content === "string" ? message.content : JSON.stringify(message.content);
+      void options.onSubmitUserMessage?.(text, sendOptions.deliverAs === "steer" ? "steer" : "followUp");
+    }
+  };
+  const sendUserMessage = (content, sendOptions) => {
+    void options.onSubmitUserMessage?.(content, sendOptions?.deliverAs);
+  };
+  return {
+    getActiveTools: () => activeToolNames,
+    getAllTools: () => {
+      const map = /* @__PURE__ */ new Map();
+      if (options.getCallableTools) {
+        for (const t of options.getCallableTools()) {
+          map.set(t.name, {
+            name: t.name,
+            description: t.description,
+            parameters: t.parameters,
+            exposure: "direct",
+            reachesTools: t.name === "codemode" || t.name === "tool_search"
+          });
+        }
+      }
+      if (options.getRegisteredTools) {
+        for (const t of options.getRegisteredTools()) {
+          map.set(t.definition.name, {
+            name: t.definition.name,
+            description: t.definition.description,
+            parameters: t.definition.parameters,
+            promptGuidelines: t.definition.promptGuidelines,
+            exposure: t.definition.exposure ?? "direct",
+            namespace: t.definition.namespace,
+            annotations: t.definition.annotations,
+            sourceInfo: t.sourceInfo
+          });
+        }
+      }
+      return Array.from(map.values());
+    },
+    getSettings: () => ({
+      ...options.settingsManager?.getGlobalSettings() ?? {},
+      ...options.settingsManager?.getProjectSettings() ?? {}
+    }),
+    setActiveTools: (toolNames) => {
+      activeToolNames = [...toolNames];
+      options.onActiveToolsChanged?.(activeToolNames);
+    },
+    refreshTools: () => {
+      options.onToolsChanged?.();
+    },
+    getThinkingLevel: () => options.settingsManager?.getDefaultThinkingLevel?.() ?? "high",
+    setThinkingLevel: () => {
+    },
+    setModel: async () => false,
+    getCommands: () => [],
+    sendMessage,
+    sendUserMessage,
+    appendEntry: (customType, data) => {
+      options.sessionManager?.appendCustomEntry(customType, data);
+    },
+    setSessionName: (name) => {
+      sessionName = name;
+    },
+    getSessionName: () => sessionName,
+    setLabel: () => {
+    }
+  };
+}
+async function setupExtensionRunner(options) {
+  const sessionManager = SessionManager.create(options.cwd);
+  const modelRegistry = new ModelRegistry(options.modelRuntime);
+  const runner = new ExtensionRunner(options.extensions, options.runtime, options.cwd, sessionManager, modelRegistry);
+  runner.setUIContext(createExtensionUIContext(options.onNotice));
+  const initialActive = options.initialActiveTools ? [...options.initialActiveTools] : options.getCallableTools ? options.getCallableTools().map((t) => t.name) : [];
+  const actions = createExtensionActions({
+    getRegisteredTools: () => runner.getAllRegisteredTools(),
+    getCallableTools: options.getCallableTools,
+    settingsManager: options.settingsManager,
+    onActiveToolsChanged: options.onActiveToolsChanged,
+    onToolsChanged: options.onToolsChanged,
+    sessionManager,
+    onSubmitUserMessage: options.onSubmitUserMessage
+  }, initialActive);
+  const contextActions = {
+    getModel: () => {
+      const active = options.settingsManager?.getDefaultModel?.();
+      const provider = options.settingsManager?.getDefaultProvider?.();
+      if (active && provider) {
+        const found = options.modelRuntime.getModel(provider, active);
+        if (found) return found;
+      }
+      return options.modelRuntime.getAvailableSnapshot()[0];
+    },
+    getScopedModels: () => options.modelRuntime.getAvailableSnapshot().map((model) => ({ model })),
+    isIdle: () => options.isIdle ? options.isIdle() : true,
+    isProjectTrusted: () => true,
+    getSignal: () => void 0,
+    abort: () => {
+      options.onAbort?.();
+    },
+    hasPendingMessages: () => false,
+    shutdown: () => {
+    },
+    getContextUsage: () => {
+      const u = options.getContextUsage?.();
+      if (!u) return void 0;
+      const pct = typeof u.tokens === "number" && u.contextWindow > 0 ? u.tokens / u.contextWindow * 100 : null;
+      return { tokens: u.tokens, contextWindow: u.contextWindow, percent: pct };
+    },
+    compact: (opts) => {
+      options.onCompact?.(typeof opts === "string" ? opts : opts?.customInstructions);
+    },
+    getSystemPrompt: () => "",
+    getSystemPromptOptions: () => ({ cwd: options.cwd }),
+    executeTool: (callerId, name, args2, opts) => options.executeToolFn(callerId, name, args2, opts),
+    getCallableTools: () => options.getCallableTools ? options.getCallableTools() : runner.getAllRegisteredTools().map((t) => ({
+      name: t.definition.name,
+      description: t.definition.description,
+      parameters: t.definition.parameters,
+      promptGuidelines: t.definition.promptGuidelines,
+      exposure: t.definition.exposure,
+      namespace: t.definition.namespace,
+      annotations: t.definition.annotations,
+      sourceInfo: t.sourceInfo
+    }))
+  };
+  runner.bindCore(actions, contextActions);
+  await runner.emit({ type: "session_start", reason: "startup" });
+  return runner;
+}
+
 // src/runner/tool-adapter.ts
 import {
-  createMcpExtension
+  createMcpExtension as createMcpExtension2
 } from "@earendil-works/pi-coding-agent";
 import {
   defineExtension as defineExtension3,
@@ -1241,9 +1627,6 @@ import {
 } from "@earendil-works/pi-durable";
 function hasOutput(api) {
   return typeof api === "object" && api !== null && "output" in api && typeof api.output === "function";
-}
-function createStandardExtensionFactories() {
-  return [createMcpExtension()];
 }
 function adaptExtensionTool(toolDef, executeToolFn, createToolContext, getExtensionRunner) {
   const exposure = toolDef.exposure;
@@ -1348,193 +1731,6 @@ function adaptExtensionTool(toolDef, executeToolFn, createToolContext, getExtens
 function installExtensionTools(registry, tools) {
   if (tools.length === 0) return;
   registry.install(defineExtension3({ name: "extension-tools", tools }));
-}
-
-// src/runner/extension-actions.ts
-function createExtensionActions(options, initialActiveTools = []) {
-  let activeToolNames = [...initialActiveTools];
-  let sessionName;
-  const sendMessage = (message, sendOptions) => {
-    if (sendOptions?.triggerTurn && message?.content) {
-      const text = typeof message.content === "string" ? message.content : JSON.stringify(message.content);
-      void options.onSubmitUserMessage?.(text, sendOptions.deliverAs === "steer" ? "steer" : "followUp");
-    }
-  };
-  const sendUserMessage = (content, sendOptions) => {
-    void options.onSubmitUserMessage?.(content, sendOptions?.deliverAs);
-  };
-  return {
-    getActiveTools: () => activeToolNames,
-    getAllTools: () => {
-      const map = /* @__PURE__ */ new Map();
-      if (options.getCallableTools) {
-        for (const t of options.getCallableTools()) {
-          map.set(t.name, {
-            name: t.name,
-            description: t.description,
-            parameters: t.parameters,
-            exposure: "direct",
-            reachesTools: t.name === "codemode" || t.name === "tool_search"
-          });
-        }
-      }
-      if (options.getRegisteredTools) {
-        for (const t of options.getRegisteredTools()) {
-          map.set(t.definition.name, {
-            name: t.definition.name,
-            description: t.definition.description,
-            parameters: t.definition.parameters,
-            promptGuidelines: t.definition.promptGuidelines,
-            exposure: t.definition.exposure ?? "direct",
-            namespace: t.definition.namespace,
-            annotations: t.definition.annotations,
-            sourceInfo: t.sourceInfo
-          });
-        }
-      }
-      return Array.from(map.values());
-    },
-    getSettings: () => ({
-      ...options.settingsManager?.getGlobalSettings() ?? {},
-      ...options.settingsManager?.getProjectSettings() ?? {}
-    }),
-    setActiveTools: (toolNames) => {
-      activeToolNames = [...toolNames];
-      options.onActiveToolsChanged?.(activeToolNames);
-    },
-    refreshTools: () => {
-      options.onToolsChanged?.();
-    },
-    getThinkingLevel: () => options.settingsManager?.getDefaultThinkingLevel?.() ?? "high",
-    setThinkingLevel: () => {
-    },
-    setModel: async () => false,
-    getCommands: () => [],
-    sendMessage,
-    sendUserMessage,
-    appendEntry: (customType, data) => {
-      options.sessionManager?.appendCustomEntry(customType, data);
-    },
-    setSessionName: (name) => {
-      sessionName = name;
-    },
-    getSessionName: () => sessionName,
-    setLabel: () => {
-    }
-  };
-}
-
-// src/runner/extension-bridge.ts
-function createExtensionUIContext(onNotice) {
-  return {
-    select: async () => void 0,
-    confirm: async () => false,
-    input: async () => void 0,
-    notify: (message, type = "info") => {
-      onNotice?.(type, message);
-    },
-    onTerminalInput: () => () => {
-    },
-    setStatus: () => {
-    },
-    setWorkingMessage: () => {
-    },
-    setWorkingVisible: () => {
-    },
-    setWorkingIndicator: () => {
-    },
-    setHiddenThinkingLabel: () => {
-    },
-    setWidget: () => {
-    },
-    setFooter: () => {
-    },
-    setHeader: () => {
-    },
-    setTitle: () => {
-    },
-    custom: async () => void 0,
-    pasteToEditor: () => {
-    },
-    setEditorText: () => {
-    },
-    getEditorText: () => "",
-    editor: async () => void 0,
-    addAutocompleteProvider: () => {
-    },
-    setEditorComponent: () => {
-    },
-    getEditorComponent: () => void 0,
-    theme: {},
-    getAllThemes: () => [],
-    getTheme: () => void 0,
-    setTheme: () => ({ success: true }),
-    getToolsExpanded: () => false,
-    setToolsExpanded: () => {
-    }
-  };
-}
-async function setupExtensionRunner(options) {
-  const sessionManager = SessionManager.create(options.cwd);
-  const modelRegistry = new ModelRegistry(options.modelRuntime);
-  const runner = new ExtensionRunner(options.extensions, options.runtime, options.cwd, sessionManager, modelRegistry);
-  runner.setUIContext(createExtensionUIContext(options.onNotice));
-  const initialActive = options.initialActiveTools ? [...options.initialActiveTools] : options.getCallableTools ? options.getCallableTools().map((t) => t.name) : [];
-  const actions = createExtensionActions({
-    getRegisteredTools: () => runner.getAllRegisteredTools(),
-    getCallableTools: options.getCallableTools,
-    settingsManager: options.settingsManager,
-    onActiveToolsChanged: options.onActiveToolsChanged,
-    onToolsChanged: options.onToolsChanged,
-    sessionManager,
-    onSubmitUserMessage: options.onSubmitUserMessage
-  }, initialActive);
-  const contextActions = {
-    getModel: () => {
-      const active = options.settingsManager?.getDefaultModel?.();
-      const provider = options.settingsManager?.getDefaultProvider?.();
-      if (active && provider) {
-        const found = options.modelRuntime.getModel(provider, active);
-        if (found) return found;
-      }
-      return options.modelRuntime.getAvailableSnapshot()[0];
-    },
-    getScopedModels: () => options.modelRuntime.getAvailableSnapshot().map((model) => ({ model })),
-    isIdle: () => options.isIdle ? options.isIdle() : true,
-    isProjectTrusted: () => true,
-    getSignal: () => void 0,
-    abort: () => {
-      options.onAbort?.();
-    },
-    hasPendingMessages: () => false,
-    shutdown: () => {
-    },
-    getContextUsage: () => {
-      const u = options.getContextUsage?.();
-      if (!u) return void 0;
-      const pct = typeof u.tokens === "number" && u.contextWindow > 0 ? u.tokens / u.contextWindow * 100 : null;
-      return { tokens: u.tokens, contextWindow: u.contextWindow, percent: pct };
-    },
-    compact: (opts) => {
-      options.onCompact?.(typeof opts === "string" ? opts : opts?.customInstructions);
-    },
-    getSystemPrompt: () => "",
-    getSystemPromptOptions: () => ({ cwd: options.cwd }),
-    executeTool: (callerId, name, args2, opts) => options.executeToolFn(callerId, name, args2, opts),
-    getCallableTools: () => options.getCallableTools ? options.getCallableTools() : runner.getAllRegisteredTools().map((t) => ({
-      name: t.definition.name,
-      description: t.definition.description,
-      parameters: t.definition.parameters,
-      promptGuidelines: t.definition.promptGuidelines,
-      exposure: t.definition.exposure,
-      namespace: t.definition.namespace,
-      annotations: t.definition.annotations,
-      sourceInfo: t.sourceInfo
-    }))
-  };
-  runner.bindCore(actions, contextActions);
-  await runner.emit({ type: "session_start", reason: "startup" });
-  return runner;
 }
 
 // src/runner/extension-mount.ts
@@ -1799,7 +1995,7 @@ function createSubagentPolicyHolder(options) {
     },
     async setRecord(record) {
       const validated = subagentPolicyRecordSchema.parse(record);
-      return new Promise((resolve2, reject) => {
+      return new Promise((resolve3, reject) => {
         writeQueue = writeQueue.catch(() => {
         }).then(async () => {
           try {
@@ -1812,7 +2008,7 @@ function createSubagentPolicyHolder(options) {
               const currentStr = JSON.stringify(currentRecord);
               const incomingStr = JSON.stringify(validated);
               if (currentStr === incomingStr) {
-                resolve2();
+                resolve3();
                 return;
               }
               throw new SubagentRevisionConflictError(
@@ -1821,7 +2017,7 @@ function createSubagentPolicyHolder(options) {
             }
             await options.persist(validated);
             currentRecord = validated;
-            resolve2();
+            resolve3();
           } catch (error) {
             reject(error);
           }
@@ -1942,7 +2138,8 @@ async function loadHarnessEnvironment(location, options, envs) {
     location.cwd,
     getSubagentPolicy,
     { ...options.prompt, resourceLoader, dynamicSections },
-    dynamicNamespaces
+    dynamicNamespaces,
+    options.plugins
   );
   const pendingReports = [];
   const report = (error) => pendingReports.push(error);
@@ -3183,21 +3380,21 @@ async function startSubagentWatcher(harness, adapter, getCurrentView, options) {
 
 // src/runner/engine.ts
 var DurableEngine = class _DurableEngine {
-  instance;
+  #instance;
   sessionDir;
   eventListeners = /* @__PURE__ */ new Set();
   eventAdapter;
   watcher;
   unsubscribeView;
   constructor(instance, sessionDir) {
-    this.instance = instance;
+    this.#instance = instance;
     this.sessionDir = sessionDir;
     this.eventAdapter = new DurableEventAdapter((event) => {
       for (const listener of this.eventListeners) {
         listener(event);
       }
     });
-    this.unsubscribeView = this.instance.view.subscribe(this.eventAdapter.subscriber);
+    this.unsubscribeView = this.#instance.view.subscribe(this.eventAdapter.subscriber);
   }
   static async open(options = {}) {
     const sessionDir = options.sessionDir ?? options.session ?? process.cwd();
@@ -3219,21 +3416,24 @@ var DurableEngine = class _DurableEngine {
     );
     return engine;
   }
+  getSnapshot() {
+    return this.#instance.view.current();
+  }
   async prompt(content, options) {
-    await this.instance.controller.submit(content, options?.deliverAs ?? "followUp");
+    await this.#instance.controller.submit(content, options?.deliverAs ?? "followUp");
   }
   events(callback) {
     this.eventListeners.add(callback);
     return () => this.eventListeners.delete(callback);
   }
   async abort() {
-    await this.instance.controller.abort();
+    await this.#instance.controller.abort();
   }
   async close() {
     this.eventListeners.clear();
     this.unsubscribeView?.();
     this.watcher?.close();
-    await this.instance.close();
+    await this.#instance.close();
   }
 };
 
@@ -3387,28 +3587,6 @@ function parseCliArgs(argv2) {
 // src/runner/session-commands.ts
 import { ROOT_CONVERSATION_ID as ROOT_CONVERSATION_ID5 } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT as BACKGROUND_CONTEXT4 } from "@earendil-works/chord/context";
-
-// src/runner/errors.ts
-var DurableHarnessError = class extends Error {
-  code;
-  constructor(message, code, cause) {
-    super(message, { cause });
-    this.name = new.target.name;
-    this.code = code;
-  }
-};
-var DurableCommandError = class extends DurableHarnessError {
-  constructor(message, cause, code = "COMMAND_ERROR") {
-    super(message, code, cause);
-  }
-};
-var InvalidCommandPayloadError = class extends DurableCommandError {
-  command;
-  constructor(command, message, cause) {
-    super(message ?? `Invalid payload for command: ${command}`, cause, "INVALID_COMMAND_PAYLOAD");
-    this.command = command;
-  }
-};
 
 // src/runner/binding-commands.ts
 function toConversationId(id) {
@@ -3635,7 +3813,7 @@ async function handleActiveSessionCommand(cmd, durable, modelRuntime, args2, res
       if (targetId !== ROOT_CONVERSATION_ID5) {
         const conv = await durable.harness.conversation(targetId, BACKGROUND_CONTEXT4);
         if (conv) {
-          await conv.abort(BACKGROUND_CONTEXT4);
+          await conv.abort(BACKGROUND_CONTEXT4, { background: true });
         }
       } else {
         await durable.controller.abort();
@@ -3752,10 +3930,10 @@ function parseRunnerCommand(line) {
   return parsed.data;
 }
 
-// src/runner/version.ts
+// src/shared/version.ts
 import { existsSync as existsSync2, readFileSync as readFileSync2 } from "node:fs";
 import { createRequire } from "node:module";
-import { dirname, join as join2 } from "node:path";
+import { dirname, join as join3 } from "node:path";
 import { fileURLToPath } from "node:url";
 var esmRequire = createRequire(import.meta.url);
 var currentDir = dirname(fileURLToPath(import.meta.url));
@@ -3773,7 +3951,7 @@ function getPiDurableVersion() {
     }
   }
   try {
-    const pluginPkg = join2(currentDir, "..", "..", "package.json");
+    const pluginPkg = join3(currentDir, "..", "..", "package.json");
     if (existsSync2(pluginPkg)) {
       const parsed = JSON.parse(readFileSync2(pluginPkg, "utf8"));
       const dep = parsed.dependencies?.["@earendil-works/pi-durable"]?.replace(/^[\^~]/, "");
@@ -4642,7 +4820,7 @@ import { ROOT_CONVERSATION_ID as ROOT_CONVERSATION_ID6 } from "@earendil-works/p
 
 // src/runner/stdout-guard.ts
 import { getPackageDir } from "@earendil-works/pi-coding-agent";
-import { join as join3 } from "node:path";
+import { join as join4 } from "node:path";
 import { pathToFileURL } from "node:url";
 import { existsSync as existsSync3, readFileSync as readFileSync3 } from "node:fs";
 var SUPPORTED_PI_VERSION_PREFIX = "1.4.";
@@ -4679,7 +4857,7 @@ function validateUpstreamGuardShape(mod) {
 async function loadUpstreamGuard() {
   if (activeGuard) return activeGuard;
   const pkgDir = getPackageDir();
-  const pkgJsonPath = join3(pkgDir, "package.json");
+  const pkgJsonPath = join4(pkgDir, "package.json");
   if (!existsSync3(pkgJsonPath)) {
     throw new UpstreamStdoutGuardPortError(`Cannot locate package.json at ${pkgJsonPath}`, "MISSING_PACKAGE_JSON");
   }
@@ -4694,7 +4872,7 @@ async function loadUpstreamGuard() {
     );
   }
   validateUpstreamGuardVersion(version);
-  const guardPath = join3(pkgDir, EXPECTED_GUARD_RELATIVE_PATH);
+  const guardPath = join4(pkgDir, EXPECTED_GUARD_RELATIVE_PATH);
   if (!existsSync3(guardPath)) {
     throw new UpstreamStdoutGuardPortError(`Missing upstream output guard artifact at ${guardPath}`, "MISSING_ARTIFACT");
   }
@@ -4733,10 +4911,10 @@ async function flushWireStdout() {
 
 // src/runner/control-channel.ts
 import { existsSync as existsSync4, readFileSync as readFileSync4, watch } from "node:fs";
-import { join as join4 } from "node:path";
+import { join as join5 } from "node:path";
 import { BACKGROUND_CONTEXT as BACKGROUND_CONTEXT5 } from "@earendil-works/chord/context";
 function startRunnerControlChannel(sessionDir, harness, onNotice) {
-  const controlFile = join4(sessionDir, "control.jsonl");
+  const controlFile = join5(sessionDir, "control.jsonl");
   let fileOffset = 0;
   let isClosed = false;
   let watcher = null;
@@ -4920,19 +5098,24 @@ async function main() {
     }
   );
   activeGraphSource.subscribe((snapshot) => output({ type: "runtime_graph_snapshot", snapshot }));
-  attachJsonlLineReader(process.stdin, async (line) => {
-    let cmd;
-    try {
-      cmd = parseRunnerCommand(line);
-    } catch (e) {
-      error(void 0, "parse", "INVALID_COMMAND");
-      return;
-    }
-    try {
-      await handleActiveSessionCommand(cmd, durable, modelRuntime, args, { success, error });
-    } catch (err) {
-      error(cmd.id, cmd.type ?? "unknown", err instanceof Error ? err.message : String(err));
-    }
+  let stdinQueue = Promise.resolve();
+  attachJsonlLineReader(process.stdin, (line) => {
+    stdinQueue = stdinQueue.then(async () => {
+      let cmd;
+      try {
+        cmd = parseRunnerCommand(line);
+      } catch (e) {
+        error(void 0, "parse", "INVALID_COMMAND");
+        return;
+      }
+      try {
+        await handleActiveSessionCommand(cmd, durable, modelRuntime, args, { success, error });
+      } catch (err) {
+        error(cmd.id, cmd.type ?? "unknown", err instanceof Error ? err.message : String(err));
+      }
+    }).catch((fatal) => {
+      console.error(`[Runner stdin] Unhandled command error: ${fatal}`);
+    });
   });
   output({ type: "ready", kind: "ready", pid: process.pid });
   sendToBridge({ ready: true, kind: "ready", pid: process.pid });

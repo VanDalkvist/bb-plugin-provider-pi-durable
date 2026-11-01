@@ -197,6 +197,35 @@
 - Use next time: Domain models must never truncate data to accommodate client UI or host DB constraints. Sanitization for client database limits (`threads.title <= 500`) belongs exclusively in the host adapter (`subthread-spawner.ts`). The domain kernel must preserve full, unclipped task strings (`task.trim()`). Presentation UI cards must never be declared as wire lifecycle events.
 - Evidence: `src/contracts/wire-lifecycle.ts`, `src/runner/subagent.ts`, `src/runner/subagent-delivery.ts`, `tests/wire-contract-purity.test.ts`, Cycle 99.
 
+## 2026-11-01 - Layer Boundary Firewall and Infallible Import Isolation (Cycle 100)
+- Context: Strict decoupling of Host (`src/host`), Kernel (`src/runner`), Domain (`src/runtime-graph`), and Contracts (`src/contracts`, `src/shared`).
+- Symptom: Host adapters imported private runner files (`runtime-graph-scope.ts`, `errors.ts`, `diagnostics.ts`), and `DurableEngine` leaked low-level FSM internals via `public readonly instance`.
+- Cause: In the absence of an automated boundary linter, developers and agents routinely took cross-layer shortcut imports during rapid iteration.
+- Use next time: Never rely on informal checklists for architectural boundaries. Always enforce layer isolation via an automated script (`scripts/verify-layer-boundaries.mjs`) hooked directly into `npm test`. Any import from `runner` in `host` or vice versa must instantly fail CI. Shared utilities belong in `src/shared/`, pure schemas in `src/contracts/`, and domain logic in domain directories.
+- Evidence: `scripts/verify-layer-boundaries.mjs`, `tests/layer-boundary-firewall.test.ts`, `src/shared/errors.ts`, `src/shared/extension-runner.ts`, Cycle 100.
+
+## 2026-11-01 - Subagent Lifecycle Invariants: Delivery Deadlock and Zombie Abort (Cycle 100)
+- Context: Background subagent courier delivery and abortion handling in `src/runner/subagent-courier.ts` and `runtime-controller.ts`.
+- Symptom: Subagent reports permanently stopped delivering when parent turn was busy or interrupted (`deliveryHold` deadlock), and aborted runs left background subagents alive in the OS, burning API quotas indefinitely.
+- Cause: `deliveryHold` had no reset mechanism or timeout in the courier task, and `controller.abort()` called `current.abort()` without `{ background: true }` and without cascading to child conversations in `SubagentsDoc`.
+- Use next time: Any hold or throttling state in an asynchronous event pipeline must have an automatic timeout watchdog and an explicit clear hook. Every cancellation command on a hierarchical agent must pass `{ background: true }` and cascade down the active conversation tree to guarantee zero orphan zombie processes.
+- Evidence: `src/runner/subagent-courier.ts`, `src/runner/runtime-controller.ts`, `tests/subagent-courier-lifecycle.test.ts`, `tests/subagent-cascading-abort.test.ts`, Cycle 100.
+
+## 2026-11-01 - SQLite WAL Database Forking: Atomic Snapshot vs Raw File Copies (Cycle 100)
+- Context: Session database forking in `src/host/thread-fork.ts`.
+- Symptom: Forking an active session with WAL mode produced torn pages (`SQLITE_CORRUPT`) or lock conflicts due to raw `copyFileSync` of `session.sqlite-shm` and `session.sqlite-wal`.
+- Cause: Raw filesystem copying is non-atomic and copying `.sqlite-shm` between instances violates the SQLite specification.
+- Use next time: Never copy active SQLite WAL or SHM files using filesystem commands. Always use SQLite's native `PRAGMA wal_checkpoint(TRUNCATE)` followed by `VACUUM INTO 'target.sqlite'`, producing an atomic, clean, single-file database snapshot with zero lock contention.
+- Evidence: `src/host/thread-fork.ts`, `tests/thread-fork-wal-integrity.test.ts`, Cycle 100.
+
+## 2026-11-01 - Test Execution Discipline: Bounded Timeouts and Child Process Cleanup (Cycle 100)
+- Context: Unit and integration testing of async processes, daemons, and bash commands.
+- Symptom: A test or tool execution hangs indefinitely for 15+ minutes when an unhandled event loop timer or unclosed stdio stream keeps Node.js alive.
+- Cause: Tests and bash commands launched without explicit timeouts, and spawned test processes left timers active without `unref()`.
+- Use next time: Every single test must specify a strict timeout (e.g. `{ timeout: 3000 }` in `node:test`). Every bash tool call must include `timeout: 30` or `timeout: 60`. In tests that spawn processes, always `unref()` timers, close stdio, and call `child.kill('SIGKILL')` in `finally` blocks to guarantee immediate exit upon completion or failure.
+- Evidence: `tests/runner-command-queue.test.ts`, `tests/session-storage-pid-safety.test.ts`, Cycle 100.
+
+
 
 
 

@@ -569,3 +569,42 @@
   - Версия `0.4.0` в `package.json` и `package-lock.json`.
   - `npm run build` пересобрал дистрибутивы: `dist/runner/index.js`, `dist/server.js`, `dist/app.js`, `dist/host.js`.
 
+### Sovereign Shield & Subagent Integrity (Cycle 100) — 2026-11-01
+
+- **Цель и статус:** Комплексная ликвидация 4 уязвимостей высшего приоритета P0 (вечный дэдлок курьера субагентов, зомби-субагенты при abort, порча SQLite WAL при форке, невалидированный SIGTERM по устаревшим PID), 9 дефектов P1 (тихий сбой спавна субтредов, unhandled policy ошибки, anchor lookup рассинхрон, гонки stdin и host event stream, recursion depth limit, неатомарный manifest, отрицательные дельты токенов) и 3 архитектурных дефектов P2 (спящая плагинная система GoF Strategy, протекающий фасад DurableEngine, утечки границ Host -> Runner). Статус: **PASS (VERIFIED)**.
+- **Устранённые дефекты и первоисточники:**
+  - *Layer Boundary Firewall (AP-010, AP-020, AP-025):* Внедрён автоматический линтер границ `scripts/verify-layer-boundaries.mjs`, блокирующий прямые импорты между Host и Runner. `runtime-graph-scope.ts` перенесён в чистую доменную область `src/runtime-graph/scope.ts`. Ошибки вынесены в `src/shared/errors.ts`, фабрики расширений — в `src/shared/extension-runner.ts`, а утилиты путей и версий — в `src/shared/agent-dir.ts` и `src/shared/version.ts`. `DurableEngine.#instance` инкапсулирован через приватное поле.
+  - *Permanent Courier Hold Deadlock (AP-012, AP-023, AP-047):* В `src/runner/subagent-courier.ts` ликвидирован бесконечный `deliveryHold`. Добавлен таймаут-сторож `holdTimeoutMs`, автоматический сброс флага через `clearDeliveryHold` и переход к фазе `next` для гарантированной повторной доставки отчётов из `outbox`.
+  - *Cascading Abort of Zombie Subagents (AP-047):* В `src/runner/runtime-controller.ts` и `src/runner/session-commands.ts` вызов `controller.abort()` переведён на нативный флаг `{ background: true }` и каскадный обход активных бесед из `SubagentsDoc`, что гарантирует немедленное прекращение всех фоновых вызовов инструментов и обращений к LLM.
+  - *Safe SQLite WAL Fork & Relational Rollback (AP-013, AP-034):* В `src/host/thread-fork.ts` неатомарное копирование файлов WAL/SHM заменено на нативную транзакционную команду SQLite `VACUUM INTO` с предварительным `PRAGMA wal_checkpoint(TRUNCATE)`. Файл `.sqlite-shm` больше никогда не копируется. Чекпоинт-откат каскадно очищает связанные таблицы `tasks` и `entries`.
+  - *OS Process Protection & PID Verification (AP-013, AP-047):* В `src/runner/session-storage.ts` внедрена функция `isVerifiedRunnerProcess`. Перед отправкой `SIGTERM` валидируется командная строка процесса через `ps`. Если PID переиспользован посторонним системным процессом ОС, сигнал не отправляется, а блокировка безопасно очищается.
+  - *Subagent Model Policy Fail-Fast & Recursion Guard (AP-012, AP-022, AP-048):* В `src/runner/subagent.ts` внедрено ограничение глубины рекурсии `depth <= 1` (запрет рекурсивного fork bomb из дочерних бесед) и строгий fail-fast на несовместимые/недоступные модели.
+  - *Background Conversation Lookup Alignment (AP-013, AP-035):* Устранено несоответствие `api.taskId` vs `anchorId` в `subagent.ts`. При реплее беседа находится по сохранённому `anchorTaskId` или `SubagentsDoc`, предотвращая дубликаты.
+  - *Sequential FIFO Stdin & Event Queues (AP-023, AP-034):* В `src/runner/index.ts` входящие команды stdin обёрнуты в Promise-очередь `stdinQueue`. В `src/host/runner-process.ts` обработка входящих событий упорядочена через `eventQueue`, предотвращая гонки между `agent_end` и `turn_end`.
+  - *Atomic Binding Manifest (AP-013, AP-034):* В `src/host/durable-binding-store.ts` запись `adapter-bindings.json` переведена на атомарный паттерн temp-file + `renameSync`. В `src/host/session-subagent-handler.ts` запуск субтредов снабжён обработчиком `.catch()`.
+  - *Non-Negative Token Arithmetic (AP-012, AP-013):* В `src/ui/runtime-graph/tree-builder.ts` исправлена формула `tokenDelta`: генерации трактуются как дискретные замеры шагов, полностью исключая отрицательные дельты токенов в UI.
+  - *GoF Strategy Activation (AP-010, AP-014):* Подсистема `src/runner/plugins/` (`DurablePluginRegistry`) встроена в Composition Root (`harness-setup.ts` и `runtime-loader.ts`). Добавлена поддержка передачи кастомных плагинов через `OpenDurableOptions.plugins`.
+- **TDD и доказательная база:**
+  - Новые тесты цикла:
+    * `tests/layer-boundary-firewall.test.ts`: проверка 0 нарушений границ Host <-> Runner.
+    * `tests/subagent-courier-lifecycle.test.ts`: проверка выхода из hold deadlock и clearDeliveryHold.
+    * `tests/subagent-cascading-abort.test.ts`: проверка каскадного abort({ background: true }).
+    * `tests/thread-fork-wal-integrity.test.ts`: проверка VACUUM INTO и отсутствия .sqlite-shm.
+    * `tests/session-storage-pid-safety.test.ts`: проверка защиты чужих PID от SIGTERM.
+    * `tests/subagent-policy-error-handling.test.ts`: проверка recursion depth guard и fail-fast.
+    * `tests/subagent-background-lookup.test.ts`: проверка детерминированного поиска по anchorTaskId.
+    * `tests/runner-command-queue.test.ts`: проверка строгой FIFO-очереди событий.
+    * `tests/binding-store-atomic.test.ts`: проверка атомарной записи без остаточных .tmp файлов.
+    * `tests/task-tokens-calculation.test.ts`: проверка неотрицательных дельт токенов.
+    * `tests/plugin-strategy-wiring.test.ts`: проверка полиморфной инициализации плагинов GoF Strategy.
+  - Полный сьют тестов: **613 тестов бэкенда/ядра pass + 117 тестов UI pass = 730 pass, 0 fail**.
+  - Контрактная безопасность: `npm run test:contracts` (0 type errors, negative contract guard pass).
+  - Ацикличность импортов: `node scripts/verify-import-graph.mjs` (165 файлов, 0 циклов).
+  - Фаервол слоёв: `node scripts/verify-layer-boundaries.mjs` (0 нарушений).
+- **Line Budgets (AP-019):**
+  - 100% файлов в `src/` строго < 250 LOC (максимальный файл: `src/host/session-registry.ts` — 231 LOC).
+- **Сборка (Build Receipt):**
+  - Версия `0.4.1` в `package.json` и `package-lock.json`.
+  - `npm run build` пересобрал дистрибутивы: `dist/runner/index.js`, `dist/server.js`, `dist/app.js`, `dist/host.js`.
+
+

@@ -98,6 +98,7 @@ export async function createCodingRegistry(
 		registry,
 		settingsManager,
 		cwd,
+		storageDir: cwd,
 		getSubagentPolicy,
 		prompt: promptOptions,
 		dynamicNamespaces,
