@@ -75,6 +75,8 @@ export function createHarnessSettings(
 	};
 }
 
+export type CodingRegistry = Registry & { pluginRegistry: DurablePluginRegistry };
+
 export async function createCodingRegistry(
 	settingsManager: SettingsManager,
 	cwd: string,
@@ -82,7 +84,7 @@ export async function createCodingRegistry(
 	promptOptions?: PromptOptions,
 	dynamicNamespaces?: DynamicCodemodeNamespaces,
 	customPlugins: DurablePlugin[] = [],
-): Promise<Registry> {
+): Promise<CodingRegistry> {
 	const registry = createRegistry();
 	const pluginRegistry = new DurablePluginRegistry();
 
@@ -107,7 +109,7 @@ export async function createCodingRegistry(
 	await pluginRegistry.initAll(ctx);
 	registry.install(createToolSearchExtension());
 	registry.install(createPiPrompt(settingsManager, cwd, promptOptions));
-	return registry;
+	return Object.assign(registry, { pluginRegistry });
 }
 
 export class ExecutionEnvs {

@@ -16,6 +16,9 @@ export const subagentsPlugin: DurablePlugin = {
 		ctx.registry.install(DefaultCourier);
 		ctx.registry.install(DefaultReporter);
 	},
+	teardown(): void {
+		// Clean lifecycle teardown hook for subagents plugin
+	},
 };
 
 export default subagentsPlugin;

@@ -115,7 +115,7 @@ export async function loadHarnessEnvironment(
 		return subagentPolicyHolder.getRecord();
 	};
 
-	const registry = await createCodingRegistry(
+	const codingRegistry = await createCodingRegistry(
 		settingsManager,
 		location.cwd,
 		getSubagentPolicy,
@@ -123,6 +123,7 @@ export async function loadHarnessEnvironment(
 		dynamicNamespaces,
 		options.plugins,
 	);
+	const registry = codingRegistry;
 
 	const pendingReports: unknown[] = [];
 	const report = (error: unknown) => pendingReports.push(error);
@@ -157,6 +158,13 @@ export async function loadHarnessEnvironment(
 	runnerRef = mounted.extensionRunner;
 
 	let harness: Harness | undefined;
+	const sessionCleanup = async () => {
+		await codingRegistry.pluginRegistry.teardownAll().catch((err) => {
+			console.warn("[RuntimeLoader] Plugin teardown error:", err);
+		});
+		await mounted.cleanup?.();
+	};
+
 	try {
 		harness = await Harness.open(
 			await openNodeSqliteStorage(location.database),
@@ -168,7 +176,7 @@ export async function loadHarnessEnvironment(
 	} catch (error) {
 		await Promise.allSettled([
 			harness?.close(runtimeContext),
-			mounted.cleanup?.(),
+			sessionCleanup(),
 		]);
 		throw error;
 	}
@@ -189,7 +197,7 @@ export async function loadHarnessEnvironment(
 		pendingReports,
 		getActiveModel,
 		setActiveModelRef: (ref) => { activeModelRef = ref; },
-		cleanup: mounted.cleanup,
+		cleanup: sessionCleanup,
 		extensionRunner: mounted.extensionRunner,
 		actionsDelegate,
 		dynamicSections,
