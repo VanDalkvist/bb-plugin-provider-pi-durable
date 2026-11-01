@@ -1,3 +1,4 @@
+export { DurableEngine, type DurableEngineOptions } from "./engine.ts";
 import { setupRunnerModels } from "./model-setup.ts";
 import { attachJsonlLineReader, serializeJsonLine } from "./jsonl.ts";
 import { openDurable } from "./runtime.ts";
