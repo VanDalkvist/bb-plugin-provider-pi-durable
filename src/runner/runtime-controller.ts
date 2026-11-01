@@ -11,6 +11,7 @@ import type {
 } from "@earendil-works/pi-durable";
 import type { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { agentOf, type DurableController, type DurableView, type Notice, runtimeContext } from "./runtime-types.ts";
+import { SubagentsDoc } from "./subagent-docs.ts";
 
 export interface ControllerContext {
  bindings: import("./runtime-types.ts").RuntimeBindingPort;
@@ -146,7 +147,19 @@ export function createDurableController(ctx: ControllerContext): DurableControll
 				}).catch(ctx.fail);
 			}),
 
-		abort: () => ctx.bindings.current.abort(runtimeContext).catch(ctx.fail),
+		abort: () =>
+			command(async () => {
+				await ctx.bindings.current.abort(runtimeContext, { background: true });
+				await ctx.bindings.current.commit(async (tx) => {
+					const doc = await tx.doc(SubagentsDoc, ctx.bindings.current.id);
+					for (const agent of Object.values(doc?.agents ?? {})) {
+						if (!agent.settled && agent.conversationId) {
+							const child = await ctx.opened.conversation(agent.conversationId, runtimeContext).catch(() => undefined);
+							await child?.abort(runtimeContext, { background: true }).catch(() => undefined);
+						}
+					}
+				}, runtimeContext).catch(() => undefined);
+			}),
 
 		cycleThinking: () =>
 			command(async () => {

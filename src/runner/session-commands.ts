@@ -77,7 +77,7 @@ export async function handleActiveSessionCommand(
 			if (targetId !== ROOT_CONVERSATION_ID) {
 				const conv = await durable.harness.conversation(targetId, BACKGROUND_CONTEXT);
 				if (conv) {
-					await conv.abort(BACKGROUND_CONTEXT);
+					await conv.abort(BACKGROUND_CONTEXT, { background: true });
 				}
 			} else {
 				await durable.controller.abort();
