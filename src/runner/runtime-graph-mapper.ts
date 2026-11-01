@@ -1,39 +1,23 @@
-import type { TaskGraph, TaskGraphNode, TaskRecord } from "@earendil-works/pi-durable";
-import type { RuntimeTaskNode, TaskOutcomeName } from "../runtime-graph/types.ts";
+import type { TaskGraphNode, TaskRecord } from "@earendil-works/pi-durable";
+import type { RuntimeTaskNode } from "../runtime-graph/types.ts";
 import { MAX_LABEL_LENGTH } from "../runtime-graph/schema.ts";
 import type { RuntimeGraphConversations } from "./runtime-graph-conversations.ts";
 import type { TaskNames } from "./task-labels.ts";
 import { taskLabel } from "./task-labels.ts";
 import type { RuntimeGraphReceiptsCollector } from "./runtime-graph-receipts.ts";
 import { extractLiveTokens, extractTerminalTokens } from "./task-tokens.ts";
+import {
+	mapTaskGraphNodeState,
+	type ExtractedTaskMeta,
+	type ViewSource,
+	type HarnessGraphSource,
+	type RuntimeGraphSourceOptions,
+} from "./runtime-graph-state.ts";
 
-export interface ViewSource {
-	current(): { tasks?: unknown } | undefined;
-	subscribe(listener: () => void): () => void;
-}
+export { extractTaskGraph, mapTaskGraphNodeState } from "./runtime-graph-state.ts";
+export type { ViewSource, HarnessGraphSource, RuntimeGraphSourceOptions, ExtractedTaskMeta };
 
-export interface HarnessGraphSource {
-	getTask?(id: unknown, context?: unknown): Promise<TaskRecord<unknown, unknown, unknown> | undefined>;
-	subscribeCommits?(listener: (publication: { readonly changes: readonly unknown[] }, context?: unknown) => void): () => void;
-}
-
-export interface RuntimeGraphSourceOptions {
-	readonly debounceMs?: number;
-	readonly maxDebounceMs?: number;
-	readonly clock?: () => number;
-	readonly receipts?: RuntimeGraphReceiptsCollector;
-	readonly harness?: HarnessGraphSource;
-}
-
-export interface ExtractedTaskMeta {
-	readonly model?: { readonly provider: string; readonly modelId: string };
-	readonly thinkingLevel?: string;
-	readonly modelLabel?: string;
-}
-
-export function extractTaskModelMeta(
-	node: TaskGraphNode, current: unknown, rootConvId: number,
-): ExtractedTaskMeta {
+export function extractTaskModelMeta(node: TaskGraphNode, current: unknown, rootConvId: number): ExtractedTaskMeta {
 	if (node.kind !== "pi.generation") return {};
 	const cp = (node as any).state?.checkpoint ?? (node as any).checkpoint;
 	let provider: string | undefined;
@@ -55,7 +39,7 @@ export function extractTaskModelMeta(
 			if (doc?.model?.provider) { provider = String(doc.model.provider); modelId = String(doc.model.modelId ?? doc.model.id); }
 			if (doc?.thinkingLevel !== undefined && doc?.thinkingLevel !== null) thinkingLevel = String(doc.thinkingLevel);
 		} else {
-			const doc = (current as any)?.conversation?.docs?.["bb.subagents"];
+			const doc = (current as any)?.conversation?.docs?.["durable.subagents"];
 			const sub = doc?.agents ? (Object.values(doc.agents).find((a: any) => Number(a?.conversationId) === convId) as any) : undefined;
 			if (sub?.actualModel?.provider) { provider = String(sub.actualModel.provider); modelId = String(sub.actualModel.modelId ?? sub.actualModel.id); }
 			if (sub?.thinkingLevel !== undefined && sub?.thinkingLevel !== null) thinkingLevel = String(sub.thinkingLevel);
@@ -70,12 +54,8 @@ export function extractTaskModelMeta(
 	return { model, thinkingLevel, modelLabel };
 }
 
-export function recordSubagentOwnership(
-	conversations: RuntimeGraphConversations,
-	current: unknown,
-	rootConvId: string | number,
-): void {
-	const doc = (current as any)?.conversation?.docs?.["bb.subagents"];
+export function recordSubagentOwnership(conversations: RuntimeGraphConversations, current: unknown, rootConvId: string | number): void {
+	const doc = (current as any)?.conversation?.docs?.["durable.subagents"];
 	if (!doc?.agents) return;
 	for (const a of Object.values(doc.agents) as any[]) {
 		if (a?.conversationId && a?.ownerTaskId) {
@@ -84,10 +64,8 @@ export function recordSubagentOwnership(
 	}
 }
 
-export function findSubagentMeta(
-	current: unknown, taskId: number,
-): { readonly name?: string; readonly task?: string } | undefined {
-	const doc = (current as any)?.conversation?.docs?.["bb.subagents"];
+export function findSubagentMeta(current: unknown, taskId: number): { readonly name?: string; readonly task?: string } | undefined {
+	const doc = (current as any)?.conversation?.docs?.["durable.subagents"];
 	if (!doc?.agents) return undefined;
 	for (const a of Object.values(doc.agents) as any[]) {
 		if (Number(a?.anchorTaskId) === taskId || Number(a?.ownerTaskId) === taskId) {
@@ -98,12 +76,8 @@ export function findSubagentMeta(
 }
 
 export function buildMappedNode(
-	node: TaskGraphNode,
-	current: unknown,
-	rootConvId: number,
-	names: TaskNames,
-	nativeStartedAt: Map<number, number>,
-	clock: () => number,
+	node: TaskGraphNode, current: unknown, rootConvId: number,
+	names: TaskNames, nativeStartedAt: Map<number, number>, clock: () => number,
 ): RuntimeTaskNode {
 	const id = Number(node.id);
 	const convId = Number(node.conversationId);
@@ -112,8 +86,8 @@ export function buildMappedNode(
 	const subMeta = findSubagentMeta(current, id);
 
 	let label = taskLabel(node, names, meta.modelLabel);
-	if (node.kind === "bb.subagent-anchor" && subMeta?.name) {
-		label = `bb.subagent-anchor · subagent: ${subMeta.name}`;
+	if (node.kind === "durable.subagent-anchor" && subMeta?.name) {
+		label = `durable.subagent-anchor · subagent: ${subMeta.name}`;
 	}
 	if (label.length > MAX_LABEL_LENGTH) label = label.slice(0, MAX_LABEL_LENGTH);
 
@@ -157,41 +131,4 @@ export function recordTerminalWithDetails(
 		startedAt: nativeStartedAt.get(id),
 		tokens: extractTerminalTokens(task, current, recentEntries),
 	});
-}
-
-export function extractTaskGraph(current: unknown): TaskGraph {
-	if (!current || typeof current !== "object") return { tasks: {} };
-	const obj = current as Record<string, unknown>;
-	if ("tasks" in obj && obj.tasks && typeof obj.tasks === "object") {
-		const inner = obj.tasks as Record<string, unknown>;
-		if ("tasks" in inner && inner.tasks && typeof inner.tasks === "object") {
-			return inner as TaskGraph;
-		}
-		return current as TaskGraph;
-	}
-	return { tasks: {} };
-}
-
-export function mapTaskGraphNodeState(state: TaskGraphNode["state"]): RuntimeTaskNode["state"] {
-	switch (state.status) {
-		case "pending":
-		case "running":
-			return { status: state.status, phase: state.phase };
-		case "waiting":
-			return {
-				status: "waiting",
-				phase: state.phase,
-				on: state.on ? state.on.map(Number) : [],
-				policy: state.policy,
-			};
-		case "sleeping":
-			return { status: "sleeping", phase: state.phase, until: state.until };
-		case "completing": {
-			const outcome =
-				typeof state.outcome === "object" && state.outcome !== null && "status" in (state.outcome as Record<string, unknown>)
-					? (state.outcome as { status: unknown }).status
-					: state.outcome;
-			return { status: "completing", outcome: (outcome as TaskOutcomeName) ?? "completed" };
-		}
-	}
 }

@@ -137,7 +137,7 @@ export class DurableBindingManager {
 			const stmt = db.prepare(`
 				SELECT r.content FROM documents d
 				JOIN ${revsTable} r ON d.id = r.document_id
-				WHERE d.kind IN ('bb.native-child-binding', '"bb.native-child-binding"') AND d.retired_at IS NULL
+				WHERE d.kind IN ('durable.binding', '"durable.binding"', 'bb.native-child-binding', '"bb.native-child-binding"') AND d.retired_at IS NULL
 				ORDER BY r.seq DESC
 			`);
 			const rows = stmt.all() as Array<{ content: string }>;
@@ -146,14 +146,15 @@ export class DurableBindingManager {
 			for (const row of rows) {
 				try {
 					const parsed = JSON.parse(row.content) as {
-						binding?: { bbThreadId?: string; conversationId?: string | number };
+						binding?: { threadId?: string; bbThreadId?: string; conversationId?: string | number };
 					};
 					const b = parsed?.binding;
-					if (b && typeof b.bbThreadId === "string" && b.conversationId !== undefined) {
+					const threadId = b?.threadId ?? b?.bbThreadId;
+					if (b && typeof threadId === "string" && b.conversationId !== undefined) {
 						const convStr = String(b.conversationId);
-						if (!seen.has(b.bbThreadId)) {
-							seen.add(b.bbThreadId);
-							results.push({ bbThreadId: b.bbThreadId, conversationId: convStr });
+						if (!seen.has(threadId)) {
+							seen.add(threadId);
+							results.push({ bbThreadId: threadId, conversationId: convStr });
 						}
 					}
 				} catch {

@@ -121,7 +121,7 @@ test("DurableBindingManager: reads offline bindings from real SDK-created SQLite
 		providerId: "pi-durable",
 		sessionId: "synthetic-session",
 		conversationId: ROOT_CONVERSATION_ID,
-		bbThreadId: "synthetic-thread",
+		threadId: "synthetic-thread",
 		parentThreadId: null,
 		createdAt: 1,
 	};
@@ -156,9 +156,9 @@ test("DurableBindingManager: reads offline bindings from real SDK-created SQLite
 		// Verify that SQLite documents table really has JSON-encoded kind
 		const db = new DatabaseSync(path, { readOnly: true });
 		try {
-			const rows = db.prepare("SELECT kind FROM documents WHERE kind LIKE '%native-child%'").all() as Array<{ kind: string }>;
+			const rows = db.prepare("SELECT kind FROM documents WHERE kind LIKE '%binding%'").all() as Array<{ kind: string }>;
 			assert.equal(rows.length, 1);
-			assert.equal(rows[0].kind, '"bb.native-child-binding"');
+			assert.equal(rows[0].kind, '"durable.binding"');
 		} finally {
 			db.close();
 		}

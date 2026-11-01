@@ -129,11 +129,11 @@ test("Cycle 83: Segment details maintains stable max-h-64 and balanced w-72 max-
 	assert.ok(inspector?.className.includes("max-w-[45%]"), "Inspector must use balanced max-w-[45%]");
 });
 
-test("Cycle 83: Mapper enriches bb.subagent-anchor with human-readable name and details", () => {
+test("Cycle 83: Mapper enriches durable.subagent-anchor with human-readable name and details", () => {
 	const current = {
 		conversation: {
 			docs: {
-				"bb.subagents": {
+				"durable.subagents": {
 					agents: {
 						worker1: {
 							name: "Independent Reviewer",
@@ -152,10 +152,10 @@ test("Cycle 83: Mapper enriches bb.subagent-anchor with human-readable name and 
 	assert.equal(meta?.name, "Independent Reviewer");
 	assert.equal(meta?.task, "Perform security and performance checks");
 
-	const node: any = { id: 466, kind: "bb.subagent-anchor", conversationId: 1, state: { status: "running" } };
+	const node: any = { id: 466, kind: "durable.subagent-anchor", conversationId: 1, state: { status: "running" } };
 	const mapped = buildMappedNode(node, current, 1, new TaskNames(), new Map(), () => 1000);
 
 	assert.equal(mapped.toolName, "subagent");
 	assert.equal(mapped.targetHint, "Independent Reviewer");
-	assert.equal(mapped.label, "bb.subagent-anchor · subagent: Independent Reviewer");
+	assert.equal(mapped.label, "durable.subagent-anchor · subagent: Independent Reviewer");
 });

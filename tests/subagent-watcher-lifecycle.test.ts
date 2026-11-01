@@ -13,10 +13,10 @@ function createMockHarness(existingBindings: Record<string, ConversationId> = {}
 	const harness: any = {
 		snapshot: async (docDef: any) => {
 			const kind = docDef?.definition?.kind ?? docDef?.kind;
-			if (kind === "bb.native-child-binding-index") {
+			if (kind === "durable.binding-index" || kind === "bb.native-child-binding-index") {
 				return { byThreadId: existingBindings, byIdentity: {} };
 			}
-			if (kind === "bb.subagents") {
+			if (kind === "durable.subagents" || kind === "bb.subagents") {
 				return { agents: {} };
 			}
 			return undefined;

@@ -6,20 +6,23 @@ import {
 	BACKGROUND,
 	courierFor,
 	reporterFor,
+	SubagentTasksExtension,
 } from "../src/runner/subagent-delivery.ts";
+import * as subagentDeliveryModule from "../src/runner/subagent-delivery.ts";
 import { createSubagentExtension } from "../src/runner/subagent.ts";
 import { Subagent } from "./fixtures/subagent-courier-delivery-support.ts";
 
 test("SubagentsDoc: defines initial state with empty agents", () => {
 	const initial = SubagentsDoc.definition.initial();
 	assert.deepEqual(initial, { agents: {} });
-	assert.equal(SubagentsDoc.definition.kind, "bb.subagents");
+	assert.equal(SubagentsDoc.definition.kind, "durable.subagents");
 	assert.equal(SubagentsDoc.definition.version, 1);
 	assert.equal(SubagentsDoc.definition.scope, "conversation");
 });
 
 test("Anchor: terminates with completed outcome and handles abort", async () => {
-	assert.equal(Anchor.definition.name, "bb.subagent-anchor");
+	assert.equal(Anchor.definition.name, "durable.subagent-anchor");
+	assert.equal(Anchor.name, "durable.subagent-anchor");
 	let committed: any;
 	const mockRuntime: any = {
 		commit: async (fn: any) => {
@@ -32,6 +35,23 @@ test("Anchor: terminates with completed outcome and handles abort", async () => 
 
 	const resAbort = await (Anchor.definition as any).abort({} as any, mockRuntime, {} as any);
 	assert.deepEqual(resAbort, { status: "terminal", outcome: { status: "aborted" } });
+});
+
+test("Subagent task names and extensions strictly use durable.* prefix and zero Legacy tokens", () => {
+	const courier = courierFor();
+	assert.equal(courier.definition.name, "durable.subagent-courier");
+	assert.equal(courier.name, "durable.subagent-courier");
+
+	const reporter = reporterFor(courier);
+	assert.equal(reporter.definition.name, "durable.subagent-reporter");
+	assert.equal(reporter.name, "durable.subagent-reporter");
+
+	assert.equal(SubagentTasksExtension.name, "durable.subagent-tasks");
+
+	// Zero Legacy* exports or tokens in delivery module
+	const exportNames = Object.keys(subagentDeliveryModule);
+	const legacyExports = exportNames.filter((name) => name.toLowerCase().includes("legacy"));
+	assert.deepEqual(legacyExports, [], "No Legacy* exports permitted in subagent-delivery");
 });
 
 test("Reporter: delivers task to child, formats response, and queues to outbox", async () => {

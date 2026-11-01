@@ -13,7 +13,7 @@ export const runnerCommandSchema = z.object({
 	streamingBehavior: z.enum(["steer", "followUp"]).optional(),
 	provider: z.string().optional(), modelId: z.string().optional(), instructions: z.string().optional(),
 	level: z.enum(["off", "minimal", "low", "medium", "high", "xhigh"]).optional(),
-	conversationId: conversationIdSchema.optional(), bbThreadId: z.string().optional(),
+	conversationId: conversationIdSchema.optional(), threadId: z.string().optional(),
 	parentThreadId: z.string().optional(), sessionId: z.string().optional(), policyRecord: z.unknown().optional(),
 	taskId: z.number().int().positive().optional(),
 }).passthrough();

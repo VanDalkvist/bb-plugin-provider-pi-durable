@@ -1,55 +1,38 @@
-import type { Context } from "@earendil-works/chord";
 import {
-	AssistantEntry, defineTask, type ConversationHandle, type ConversationId,
-	type Extension, type Task, type TaskRecord,
+	AssistantEntry, defineTask, type Extension,
 } from "@earendil-works/pi-durable";
 import { SubagentsDoc, extractAssistantText } from "./subagent-docs.ts";
 import { nativeChildTitle } from "../shared/child-title.ts";
+import type {
+	CourierTask, ReporterInput, ReporterState,
+	SubagentAdmission, SubagentTaskExtension,
+} from "./subagent-delivery-types.ts";
+import { asExtensionTask, courierFor, courierIsIdle } from "./subagent-courier.ts";
+
+export type * from "./subagent-delivery-types.ts";
 export { answerText } from "./subagent-docs.ts";
+export { courierFor, courierIsIdle } from "./subagent-courier.ts";
 
 export const BACKGROUND = { ownership: { kind: "conversation" }, background: true } as const;
-const GATHER_MS = 50;
-
-type CourierLiveness = { state: Pick<TaskRecord<null, { phase: string }, null>["state"], "status"> };
-export function courierIsIdle(active: CourierLiveness | undefined): boolean {
-	return active === undefined || active.state.status === "terminal";
-}
-
-export type SubagentAdmission = (child: ConversationHandle, requestId: string, context: Context) => Promise<void>;
-export type Admission = (conversation: ConversationHandle, requestId: string, context: Context) => Promise<void>;
-export type ReporterInput = { key: string; conversationId: ConversationId; task: string; requestId: string };
-export type ReporterState = { phase: "deliver" } | { phase: "report"; text: string };
-export type CourierState = { phase: "gather" | "next" | "send" | "hold" };
-
-export type CourierTask = Task<null, CourierState, null, object>;
-export type ReporterTask = Task<ReporterInput, ReporterState, null, object>;
-export type SubagentTaskExtension<I, S extends { phase: string }, R, H extends object = object> = Task<I, S, R, H> & Extension;
-
-function asExtensionTask<I, S extends { phase: string }, R, H extends object = object>(
-	task: Task<I, S, R, H>, extensionName: string,
-): SubagentTaskExtension<I, S, R, H> {
-	return Object.assign(task, { name: extensionName, tasks: [task] });
-}
 
 export const Anchor = asExtensionTask(
 	defineTask<null, { phase: "done" }, null>({
-		name: "bb.subagent-anchor", version: 1, initial: () => ({ phase: "done" }),
+		name: "durable.subagent-anchor", version: 1, initial: () => ({ phase: "done" }),
 		phases: { done: (_t, rt, ctx) => rt.commit(() => ({ status: "terminal", outcome: { status: "completed", result: null } }), ctx) },
 		abort: (_t, rt, ctx) => rt.commit(() => ({ status: "terminal", outcome: { status: "aborted" } }), ctx),
 	}),
-	"bb.subagent-anchor",
+	"durable.subagent-anchor",
 );
 
 export function reporterFor(courier: CourierTask, admit?: SubagentAdmission): SubagentTaskExtension<ReporterInput, ReporterState, null> {
 	const task = defineTask<ReporterInput, ReporterState, null>({
-		name: "bb.subagent-reporter", version: 1,
+		name: "durable.subagent-reporter", version: 1,
 		initial: () => ({ phase: "deliver" }),
 		phases: {
 			deliver: async (task, runtime, context) => {
 				const child = (await runtime.conversation(task.input.conversationId, context))!;
 				await admit?.(child, task.input.requestId, context);
-				const submission = await child.submit(
-					{ type: "input", content: task.input.task, requestId: task.input.requestId }, context);
+				const submission = await child.submit({ type: "input", content: task.input.task, requestId: task.input.requestId }, context);
 				const settled = await submission.wait(context);
 				return runtime.commit(async (tx) => {
 					const doc = await tx.doc(SubagentsDoc, runtime.conversationId);
@@ -69,111 +52,27 @@ export function reporterFor(courier: CourierTask, admit?: SubagentAdmission): Su
 					return { status: "running", checkpoint: { phase: "report", text } };
 				}, context);
 			},
-			report: async (task, runtime, context) =>
-				runtime.commit(async (tx) => {
-					const state = await tx.doc(SubagentsDoc, runtime.conversationId);
-					const reportId = String(task.id);
-					if (!(state.outbox ?? []).some((report) => report.id === reportId)) {
-						const name = state.agents[task.input.key]?.name ?? task.input.key;
-						state.outbox = [...(state.outbox ?? []), { id: reportId, name, text: task.state.checkpoint.text }];
-					}
-					const active = state.courier === undefined ? undefined : await tx.task(state.courier);
-					if (courierIsIdle(active)) state.courier = await tx.createTask(courier, null, BACKGROUND);
-					return { status: "terminal", outcome: { status: "completed", result: null } };
-				}, context),
-		},
-		abort: (_t, rt, ctx) => rt.commit(() => ({ status: "terminal", outcome: { status: "aborted" } }), ctx),
-	});
-	return asExtensionTask(task, "bb.subagent-reporter");
-}
-
-export function courierFor(admit?: Admission): SubagentTaskExtension<null, CourierState, null> {
-	const task = defineTask<null, CourierState, null>({
-		name: "bb.subagent-courier", version: 1,
-		initial: () => ({ phase: "gather" }),
-		phases: {
-			gather: (_task, runtime, context) => runtime.sleepUntil(runtime.now() + GATHER_MS, { phase: "next" }, context),
-			next: async (task, runtime, context) => runtime.commit(async (tx) => {
+			report: async (task, runtime, context) => runtime.commit(async (tx) => {
 				const state = await tx.doc(SubagentsDoc, runtime.conversationId);
-				if (state.deliveryHold !== undefined) return { status: "running", checkpoint: { phase: "hold" } };
-				if (state.sending === undefined) {
-					const reports = state.outbox ?? [];
-					if (reports.length === 0) {
-						if (state.courier === task.id) delete state.courier;
-						return { status: "terminal", outcome: { status: "completed", result: null } };
-					}
-					const batch = (state.batchNumber ?? 0) + 1;
-					state.batchNumber = batch;
-					state.outbox = [];
-					state.sending = { requestId: `subagent-batch:${task.id}:${batch}`, reports };
+				const reportId = String(task.id);
+				if (!(state.outbox ?? []).some((report) => report.id === reportId)) {
+					const name = state.agents[task.input.key]?.name ?? task.input.key;
+					state.outbox = [...(state.outbox ?? []), { id: reportId, name, text: task.state.checkpoint.text }];
 				}
-				return { status: "running", checkpoint: { phase: "send" } };
+				const active = state.courier === undefined ? undefined : await tx.task(state.courier);
+				if (courierIsIdle(active)) state.courier = await tx.createTask(courier, null, BACKGROUND);
+				return { status: "terminal", outcome: { status: "completed", result: null } };
 			}, context),
-			send: async (_task, runtime, context) => {
-				const state = await runtime.snapshot(SubagentsDoc, runtime.conversationId, context);
-				const sending = state?.sending;
-				if (sending === undefined) {
-					await runtime.commit(() => ({ status: "running", checkpoint: { phase: "next" } }), context);
-					return;
-				}
-				const parent = (await runtime.conversation(runtime.conversationId, context))!;
-				try {
-					await admit?.(parent, sending.requestId, context);
-				} catch (error) {
-					if (runtime.signal.aborted || context.abortSignal?.aborted) throw error;
-					const reason = error instanceof Error ? error.message : String(error);
-					await runtime.commit(async (tx) => {
-						const current = await tx.doc(SubagentsDoc, runtime.conversationId);
-						if (current.sending?.requestId === sending.requestId) {
-							current.deliveryHold = { kind: "admission", requestId: sending.requestId, reason };
-						}
-						return { status: "running", checkpoint: { phase: "hold" } };
-					}, context);
-					return;
-				}
-				const prompt = sending.reports.map((r) => r.text).join("\n\n---\n\n");
-				const content = `[Subagent Reports Available]:\n\n${prompt}`;
-				const submission = await parent.submit({
-					type: "input", content,
-					whenBusy: "followUp", requestId: sending.requestId,
-				}, context);
-				const settled = await submission.wait(context);
-				await runtime.commit(async (tx) => {
-					const current = await tx.doc(SubagentsDoc, runtime.conversationId);
-					if (current.sending?.requestId !== sending.requestId) return { status: "running", checkpoint: { phase: "next" } };
-					if (settled.status === "done") delete current.sending;
-					else current.deliveryHold = { kind: "uncertain", requestId: sending.requestId, reason: `Delivery outcome uncertain: ${settled.status}` };
-					return { status: "running", checkpoint: { phase: settled.status === "done" ? "next" : "hold" } };
-				}, context);
-			},
-			hold: async (_task, runtime, context) => {
-				const watch = await runtime.watchDoc(SubagentsDoc, runtime.conversationId, context);
-				if (watch === undefined || watch.value?.deliveryHold === undefined) {
-					await watch?.stop();
-					await runtime.commit(() => ({ status: "running", checkpoint: { phase: "next" } }), context);
-					return;
-				}
-				try {
-					await new Promise<void>((resolve, reject) => {
-						watch.start((v) => { if (v?.deliveryHold === undefined) resolve(); return Promise.resolve(); });
-						void watch.closed.then(() => reject(new Error("Courier hold watch ended")));
-					});
-				} finally {
-					await watch.stop();
-				}
-				await runtime.commit(() => ({ status: "running", checkpoint: { phase: "next" } }), context);
-			},
 		},
 		abort: (_t, rt, ctx) => rt.commit(() => ({ status: "terminal", outcome: { status: "aborted" } }), ctx),
 	});
-	return asExtensionTask(task, "bb.subagent-courier");
+	return asExtensionTask(task, "durable.subagent-reporter");
 }
 
 export const DefaultCourier = courierFor();
 export const DefaultReporter = reporterFor(DefaultCourier);
 
 export const SubagentTasksExtension: Extension = {
-	name: "bb.subagent-tasks",
+	name: "durable.subagent-tasks",
 	tasks: [Anchor, DefaultCourier, DefaultReporter],
 };
-

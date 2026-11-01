@@ -142,7 +142,7 @@ test("runtime-graph-live-metadata: generation node extracts native model and thi
 test("runtime-graph-live-metadata: subagent conversation maps logical owner to creator task", async () => {
 	const current: any = {
 		tasks: {}, session: { id: "s1" },
-		conversation: { id: 1, docs: { "bb.subagents": { agents: { agent_1: { conversationId: 55, ownerTaskId: 10 } } } } },
+		conversation: { id: 1, docs: { "durable.subagents": { agents: { agent_1: { conversationId: 55, ownerTaskId: 10 } } } } },
 	};
 	const viewSource = { current: () => current, subscribe: (_l: () => void) => () => {} };
 	const snapshots: any[] = [];

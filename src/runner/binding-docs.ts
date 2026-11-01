@@ -4,7 +4,7 @@ export interface StoredBinding {
 	readonly providerId: string;
 	readonly sessionId: string;
 	readonly conversationId: ConversationId;
-	readonly bbThreadId: string;
+	readonly threadId: string;
 	readonly parentThreadId: string | null;
 	readonly createdAt: number;
 }
@@ -19,7 +19,7 @@ export type BindingIndex = JsonObject & {
 };
 
 export const BindingDoc = defineDoc<BindingState>({
-	kind: "bb.native-child-binding",
+	kind: "durable.binding",
 	version: 2,
 	scope: "conversation",
 	checkpointWhen: () => false,
@@ -29,13 +29,13 @@ export const BindingDoc = defineDoc<BindingState>({
 });
 
 export const BindingIndexDoc = defineDoc<BindingIndex>({
-	kind: "bb.native-child-binding-index",
+	kind: "durable.binding-index",
 	version: 1,
 	scope: "session",
 	checkpointWhen: () => false,
 	initial: () => ({ byIdentity: {}, byThreadId: {} }),
 });
 
-export function identityKey(identity: { providerId: string; sessionId: string; bbThreadId: string }): string {
-	return JSON.stringify([identity.providerId, identity.sessionId, identity.bbThreadId]);
+export function identityKey(identity: { providerId: string; sessionId: string; threadId: string }): string {
+	return JSON.stringify([identity.providerId, identity.sessionId, identity.threadId]);
 }

@@ -5,13 +5,31 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { z } from "zod";
-import { Harness, createRegistry } from "@earendil-works/pi-durable";
+import { defineDoc, Harness, createRegistry } from "@earendil-works/pi-durable";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { createModels } from "@earendil-works/pi-ai";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
-import { BindingDoc } from "../src/runner/binding-docs.ts";
-import { SubagentsDoc } from "../src/runner/subagent-docs.ts";
 import { parseConversationId } from "../src/runner/conversation-id.ts";
+
+const Legacy13BindingDoc = defineDoc<{ binding: any }>({
+	kind: "bb.native-child-binding",
+	version: 2,
+	scope: "conversation",
+	checkpointWhen: () => false,
+	history: "latest",
+	fork: "initial",
+	initial: () => ({ binding: null }),
+});
+
+const Legacy13SubagentsDoc = defineDoc<{ outbox?: Array<{ id: string }> }>({
+	kind: "bb.subagents",
+	version: 1,
+	scope: "conversation",
+	checkpointWhen: () => false,
+	history: "latest",
+	fork: "initial",
+	initial: () => ({}),
+});
 
 const manifestSchema = z.object({
 	sourceVersion: z.literal("1.3.0"), rootId: z.number().int().positive(), childId: z.number().int().positive(),
@@ -37,8 +55,8 @@ test("actual 1.3 SQLite fixture opens/reopens in 1.4 preserving transcript IDs, 
 				const entries = await root.entries({}, 256, undefined, context);
 				assert.deepEqual(entries.items.map((entry) => entry.id).sort((a, b) => a - b), manifest.entryIds);
 				assert.equal(entries.items.length, 2, "no empty replacement session or duplicate replay");
-				assert.deepEqual((await harness.snapshot(BindingDoc, root.id, context))?.binding, manifest.binding);
-				assert.deepEqual((await harness.snapshot(SubagentsDoc, root.id, context))?.outbox?.map((report) => report.id), manifest.outboxIds);
+				assert.deepEqual((await harness.snapshot(Legacy13BindingDoc, root.id, context))?.binding, manifest.binding);
+				assert.deepEqual((await harness.snapshot(Legacy13SubagentsDoc, root.id, context))?.outbox?.map((report) => report.id), manifest.outboxIds);
 			} finally { await harness.close(context); await storage.close(context); }
 		}
 		assert.equal(createHash("sha256").update(await readFile(source)).digest("hex"), before, "golden synthetic fixture is never migrated in place");

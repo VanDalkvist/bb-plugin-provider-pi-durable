@@ -10,7 +10,7 @@ export type SubagentPolicyAckState = JsonObject & {
 };
 
 export const SubagentPolicyAckDoc = defineDoc<SubagentPolicyAckState>({
-	kind: "bb.subagent-policy-ack",
+	kind: "durable.subagent-policy-ack",
 	version: 1,
 	scope: "session",
 	checkpointWhen: () => false,

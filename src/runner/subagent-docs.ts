@@ -58,7 +58,7 @@ export type SubagentsState = {
 };
 
 export const SubagentsDoc = defineDoc<SubagentsState>({
-	kind: "bb.subagents",
+	kind: "durable.subagents",
 	version: 1,
 	scope: "conversation",
 	checkpointWhen: () => false,

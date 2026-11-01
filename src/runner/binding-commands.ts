@@ -2,6 +2,7 @@ import type { ConversationId } from "@earendil-works/pi-durable";
 import { BindingDoc, BindingIndexDoc, identityKey, type StoredBinding } from "./binding-docs.ts";
 import { runtimeContext, type OpenDurableResult } from "./runtime-types.ts";
 import type { CommandResponder, RunnerCommandPayload } from "../contracts/runner-command.ts";
+import { InvalidCommandPayloadError } from "./errors.ts";
 
 function toConversationId(id: unknown): ConversationId | undefined {
 	if (typeof id === "number" && Number.isInteger(id) && id > 0) {
@@ -22,23 +23,21 @@ export async function handleBindingCommand(
 	responder: CommandResponder,
 ): Promise<boolean> {
 	if (cmd.type === "register_binding") {
-		if (
-			typeof cmd.bbThreadId !== "string" ||
-			!cmd.bbThreadId.trim() ||
-			cmd.conversationId === undefined ||
-			cmd.conversationId === null
-		) {
-			responder.error(cmd.id, "register_binding", "Missing bbThreadId or conversationId");
-			return true;
-		}
-		const bbThreadId = cmd.bbThreadId.trim();
-		const convId = toConversationId(cmd.conversationId);
-		if (convId === undefined) {
-			responder.error(cmd.id, "register_binding", `Invalid conversationId: ${String(cmd.conversationId)}`);
-			return true;
-		}
-
 		try {
+			if (
+				typeof cmd.threadId !== "string" ||
+				!cmd.threadId.trim() ||
+				cmd.conversationId === undefined ||
+				cmd.conversationId === null
+			) {
+				throw new InvalidCommandPayloadError("register_binding", "Missing threadId or conversationId");
+			}
+			const threadId = cmd.threadId.trim();
+			const convId = toConversationId(cmd.conversationId);
+			if (convId === undefined) {
+				throw new InvalidCommandPayloadError("register_binding", `Invalid conversationId: ${String(cmd.conversationId)}`);
+			}
+
 			await durable.harness.commit(async (tx) => {
 				const index = await tx.doc(BindingIndexDoc);
 				const state = await tx.doc(BindingDoc, convId);
@@ -50,12 +49,12 @@ export async function handleBindingCommand(
 					providerId: "pi-durable",
 					sessionId,
 					conversationId: convId,
-					bbThreadId,
+					threadId,
 					parentThreadId,
 					createdAt: Date.now(),
 				};
 				state.binding = record;
-				index.byThreadId[bbThreadId] = convId;
+				index.byThreadId[threadId] = convId;
 				const key = identityKey(record);
 				index.byIdentity[key] = convId;
 			}, runtimeContext);

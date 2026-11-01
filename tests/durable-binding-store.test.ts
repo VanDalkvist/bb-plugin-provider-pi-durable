@@ -21,19 +21,19 @@ import { PiThreadSession } from "../src/host/session.ts";
 import type { SessionOptions } from "../src/host/types.ts";
 
 test("BindingDoc and BindingIndexDoc definitions and identityKey", () => {
-	assert.equal(BindingDoc.definition.kind, "bb.native-child-binding");
+	assert.equal(BindingDoc.definition.kind, "durable.binding");
 	assert.equal(BindingDoc.definition.version, 2);
 	assert.equal(BindingDoc.definition.scope, "conversation");
 	assert.equal(BindingDoc.definition.history, "latest");
 	assert.equal(BindingDoc.definition.fork, "initial");
 	assert.deepEqual(BindingDoc.definition.initial(), { binding: null });
 
-	assert.equal(BindingIndexDoc.definition.kind, "bb.native-child-binding-index");
+	assert.equal(BindingIndexDoc.definition.kind, "durable.binding-index");
 	assert.equal(BindingIndexDoc.definition.version, 1);
 	assert.equal(BindingIndexDoc.definition.scope, "session");
 	assert.deepEqual(BindingIndexDoc.definition.initial(), { byIdentity: {}, byThreadId: {} });
 
-	const key = identityKey({ providerId: "pi-durable", sessionId: "sess_1", bbThreadId: "thr_child" });
+	const key = identityKey({ providerId: "pi-durable", sessionId: "sess_1", threadId: "thr_child" });
 	assert.equal(key, JSON.stringify(["pi-durable", "sess_1", "thr_child"]));
 });
 
@@ -75,27 +75,38 @@ test("handleBindingCommand: validates register_binding and commits to durable do
 		},
 	};
 
-	// 1. Missing bbThreadId
+	// 1. Missing threadId
 	const r1 = await handleBindingCommand({ type: "register_binding", id: "1" }, mockDurable, responder);
 	assert.equal(r1, true);
 	assert.equal(errors.length, 1);
-	assert.equal(errors[0].msg, "Missing bbThreadId or conversationId");
+	assert.equal(errors[0].msg, "Missing threadId or conversationId");
+
+	// 1b. Reject obsolete bbThreadId without threadId (zero fallback)
+	const r1b = await handleBindingCommand(
+		{ type: "register_binding", id: "1b", bbThreadId: "thr_legacy", conversationId: 2 } as any,
+		mockDurable,
+		responder,
+	);
+	assert.equal(r1b, true);
+	assert.equal(errors.length, 2);
+	assert.equal(errors[1].msg, "Missing threadId or conversationId");
 
 	// 2. Invalid conversationId
 	const r2 = await handleBindingCommand(
-		{ type: "register_binding", id: "2", bbThreadId: "thr_sub_1", conversationId: -5 },
+		{ type: "register_binding", id: "2", threadId: "thr_sub_1", conversationId: -5 },
 		mockDurable,
 		responder,
 	);
 	assert.equal(r2, true);
-	assert.equal(errors.length, 2);
+	assert.equal(errors.length, 3);
+	assert.equal(errors[2].msg, "Invalid conversationId: -5");
 
 	// 3. Valid register_binding
 	const r3 = await handleBindingCommand(
 		{
 			type: "register_binding",
 			id: "3",
-			bbThreadId: "thr_sub_1",
+			threadId: "thr_sub_1",
 			conversationId: 2,
 			parentThreadId: "thr_parent_0",
 		},
@@ -107,9 +118,9 @@ test("handleBindingCommand: validates register_binding and commits to durable do
 	assert.deepEqual(successes[0], { id: "3", cmd: "register_binding", data: { registered: true } });
 
 	assert.equal(indexStore.byThreadId["thr_sub_1"], 2);
-	const expectedIdKey = identityKey({ providerId: "pi-durable", sessionId: "test-sess-1", bbThreadId: "thr_sub_1" });
+	const expectedIdKey = identityKey({ providerId: "pi-durable", sessionId: "test-sess-1", threadId: "thr_sub_1" });
 	assert.equal(indexStore.byIdentity[expectedIdKey], 2);
-	assert.equal(docStore[2].binding.bbThreadId, "thr_sub_1");
+	assert.equal(docStore[2].binding.threadId, "thr_sub_1");
 	assert.equal(docStore[2].binding.parentThreadId, "thr_parent_0");
 	assert.equal(docStore[2].binding.conversationId, 2);
 
@@ -119,7 +130,7 @@ test("handleBindingCommand: validates register_binding and commits to durable do
 	assert.equal(successes.length, 2);
 	const all = successes[1].data as { bindings: StoredBinding[] };
 	assert.equal(all.bindings.length, 1);
-	assert.equal(all.bindings[0].bbThreadId, "thr_sub_1");
+	assert.equal(all.bindings[0].threadId, "thr_sub_1");
 
 	// 5. Unknown command returns false
 	const r5 = await handleBindingCommand({ type: "prompt", id: "5" }, mockDurable, responder);
