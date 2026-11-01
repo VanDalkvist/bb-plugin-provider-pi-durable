@@ -29,7 +29,7 @@ function extractChildConversationId(event: AgentEvent): ConversationId | undefin
 }
 
 /**
- * Multiplexes native pi-durable conversation event streams into the BB event adapter.
+ * Multiplexes native pi-durable conversation event streams into the Durable event adapter.
  * Automatically discovers subagent conversations via tool execution details and
  * streams their inner reasoning and tool executions in-place under parent delegation cards.
  */
