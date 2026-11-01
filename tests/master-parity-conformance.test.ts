@@ -15,8 +15,8 @@ import { forkSessionDatabase } from "../src/host/thread-fork.ts";
 import { handleThreadStop, type BridgeRouterContext } from "../src/host/bridge-router.ts";
 import { SessionRegistry } from "../src/host/session-registry.ts";
 import type { PiThreadSession } from "../src/host/session.ts";
-import { BBEventAdapter } from "../src/runner/bridge/bb-event-adapter.ts";
-import type { BBToolExecutionUpdateEvent, BBWireEvent } from "../src/runner/bridge/contracts.ts";
+import { DurableEventAdapter } from "../src/runner/bridge/durable-event-adapter.ts";
+import type { ToolExecutionUpdateEvent, RunnerEvent } from "../src/runner/bridge/contracts.ts";
 import type { DurableView } from "../src/runner/runtime-types.ts";
 import { DynamicPromptSections, createPiPrompt } from "../src/runner/prompt.ts";
 import { adaptExtensionTool } from "../src/runner/extension-bridge.ts";
@@ -88,9 +88,9 @@ test("D-5, D-6, D-9: Tool fault integrity, diff metadata & trimStart output stre
         }>;
     };
     assert.equal(fileItem.changes[0]?.diff, "@@ -1 +1 @@", "D-6: diff metadata preserved");
-    const wireEvents: BBWireEvent[] = [];
-    new BBEventAdapter((evt) => wireEvents.push(evt)).handleEvent({ type: "tool_execution_update", toolCallId: "c2", toolName: "bash", output: { trimStart: 64, append: "out\n" } }, viewFixture({}));
-    assert.equal((wireEvents[0] as BBToolExecutionUpdateEvent).trimStart, 64, "D-9: trimStart forwarded on update");
+    const wireEvents: RunnerEvent[] = [];
+    new DurableEventAdapter((evt) => wireEvents.push(evt)).handleEvent({ type: "tool_execution_update", toolCallId: "c2", toolName: "bash", output: { trimStart: 64, append: "out\n" } }, viewFixture({}));
+    assert.equal((wireEvents[0] as ToolExecutionUpdateEvent).trimStart, 64, "D-9: trimStart forwarded on update");
 });
 
 test("D-7, D-8: Cumulative usage monotonicity & checkpoint boundary extraction", () => {

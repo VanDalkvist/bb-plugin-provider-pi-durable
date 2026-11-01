@@ -97,10 +97,10 @@ test("PiThreadSession completes child thread when subagent finishes", async () =
 	}
 });
 
-test("BBChildEventAdapter decorates all events with conversationId and emits agent_end on run_end", async () => {
-	const { BBChildEventAdapter } = await import("../src/runner/bridge/bb-child-event-adapter.ts");
+test("DurableChildEventAdapter decorates all events with conversationId and emits agent_end on run_end", async () => {
+	const { DurableChildEventAdapter } = await import("../src/runner/bridge/durable-child-event-adapter.ts");
 	const wireEvents: any[] = [];
-	const adapter = new BBChildEventAdapter((ev) => wireEvents.push(ev), "call_sub_1", 42);
+	const adapter = new DurableChildEventAdapter((ev) => wireEvents.push(ev), "call_sub_1", 42);
 
 	adapter.handleEvent({
 		type: "message_update",

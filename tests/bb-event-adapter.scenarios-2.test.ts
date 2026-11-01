@@ -1,15 +1,15 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { BBEventAdapter } from "../src/runner/bridge/bb-event-adapter.ts";
+import { DurableEventAdapter } from "../src/runner/bridge/durable-event-adapter.ts";
 import { DeltaTranslator } from "../src/host/delta-translator.ts";
 import type { DurableView } from "../src/runner/runtime-types.ts";
-import type { BBWireEvent } from "../src/runner/bridge/contracts.ts";
+import type { RunnerEvent } from "../src/runner/bridge/contracts.ts";
 import { viewFixture } from "./fixtures/durable.ts";
 import { publicDeltaFixture, wireFixture } from "./fixtures/wire.ts";
 
-test("BBEventAdapter streams initial text from text_start and initial thinking from thinking_start", () => {
-    const emitted: BBWireEvent[] = [];
-    const adapter = new BBEventAdapter((evt) => emitted.push(evt));
+test("DurableEventAdapter streams initial text from text_start and initial thinking from thinking_start", () => {
+    const emitted: RunnerEvent[] = [];
+    const adapter = new DurableEventAdapter((evt) => emitted.push(evt));
     const dummyView = viewFixture({});
     adapter.handleEvent({ type: "run_start", inputs: [] as any }, dummyView);
     adapter.handleEvent({ type: "turn_start" }, dummyView);

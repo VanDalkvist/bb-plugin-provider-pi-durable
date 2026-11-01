@@ -1,18 +1,18 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { BBEventAdapter } from "../src/runner/bridge/bb-event-adapter.ts";
+import { DurableEventAdapter } from "../src/runner/bridge/durable-event-adapter.ts";
 import { buildFinalAssistantMessage } from "../src/runner/bridge/assistant-message-builder.ts";
 import { resolveTurnSummary } from "../src/runner/bridge/turn-summary.ts";
 import { translateAgentEnd } from "../src/host/message-delta-translator.ts";
-import type { BBWireEvent } from "../src/runner/bridge/contracts.ts";
+import type { RunnerEvent } from "../src/runner/bridge/contracts.ts";
 import type { DurableView } from "../src/runner/runtime-types.ts";
 import type { AgentEvent } from "@earendil-works/pi-durable";
 import { viewFixture, nativeAssistantFixture, entryFixture } from "./fixtures/durable.ts";
 import { wireFixture } from "./fixtures/wire.ts";
 
-test("BBEventAdapter: message_end with error stopReason and empty content populates user-visible error text", () => {
-    const emitted: BBWireEvent[] = [];
-    const adapter = new BBEventAdapter((evt) => emitted.push(evt));
+test("DurableEventAdapter: message_end with error stopReason and empty content populates user-visible error text", () => {
+    const emitted: RunnerEvent[] = [];
+    const adapter = new DurableEventAdapter((evt) => emitted.push(evt));
     const errorEvent: AgentEvent = {
         type: "message_end",
         entry: {

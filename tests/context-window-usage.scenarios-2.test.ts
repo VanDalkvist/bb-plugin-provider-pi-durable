@@ -3,9 +3,9 @@ import assert from "node:assert/strict";
 import { RunnerProcess } from "../src/host/runner-process.ts";
 import { PiThreadSession } from "../src/host/session.ts";
 import { DeltaTranslator } from "../src/host/delta-translator.ts";
-import { BBEventAdapter } from "../src/runner/bridge/bb-event-adapter.ts";
+import { DurableEventAdapter } from "../src/runner/bridge/durable-event-adapter.ts";
 import type { DurableView } from "../src/runner/runtime-types.ts";
-import type { BBWireEvent } from "../src/runner/bridge/contracts.ts";
+import type { RunnerEvent } from "../src/runner/bridge/contracts.ts";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { viewFixture } from "./fixtures/durable.ts";
@@ -66,14 +66,14 @@ describe("Context Window Telemetry & Usage Synchronization (Cycle 57)", () => {
             session.runner.kill();
         }
     });
-    it("BBEventAdapter propagates contextWindow on turn_end and run_end when resolver is provided", () => {
-        const emitted: BBWireEvent[] = [];
+    it("DurableEventAdapter propagates contextWindow on turn_end and run_end when resolver is provided", () => {
+        const emitted: RunnerEvent[] = [];
         const contextWindowResolver = (provider?: string, modelId?: string) => {
             if (provider === "antigravity" && modelId === "gemini-3.8-flash")
                 return 1048576;
             return undefined;
         };
-        const adapter = new BBEventAdapter((evt) => emitted.push(evt), contextWindowResolver);
+        const adapter = new DurableEventAdapter((evt) => emitted.push(evt), contextWindowResolver);
         const mockView = viewFixture({
             conversation: {
                 docs: {

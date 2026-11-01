@@ -1,17 +1,17 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { threadDeltaSchema } from "@get-bb/plugin-sdk/provider-bridge";
-import { BBChildEventAdapter } from "../src/runner/bridge/bb-child-event-adapter.ts";
-import { BBEventAdapter } from "../src/runner/bridge/bb-event-adapter.ts";
-import type { BBWireEvent } from "../src/runner/bridge/contracts.ts";
+import { DurableChildEventAdapter } from "../src/runner/bridge/durable-child-event-adapter.ts";
+import { DurableEventAdapter } from "../src/runner/bridge/durable-event-adapter.ts";
+import type { RunnerEvent } from "../src/runner/bridge/contracts.ts";
 import { DeltaTranslator } from "../src/host/delta-translator.ts";
 import type { AgentEvent } from "@earendil-works/pi-durable";
 import { wireFixture } from "./fixtures/wire.ts";
 
 describe("Native Subagent In-Place Streaming (Cycle 80)", () => {
-    it("BBChildEventAdapter decorates child events with parentRef and prefixes toolCallId", () => {
-        const emitted: BBWireEvent[] = [];
-        const childAdapter = new BBChildEventAdapter((evt) => emitted.push(evt), "parent-call-123");
+    it("DurableChildEventAdapter decorates child events with parentRef and prefixes toolCallId", () => {
+        const emitted: RunnerEvent[] = [];
+        const childAdapter = new DurableChildEventAdapter((evt) => emitted.push(evt), "parent-call-123");
         // 1. Child thinking delta
         childAdapter.handleEvent({
             type: "message_update",
@@ -155,9 +155,9 @@ describe("Native Subagent In-Place Streaming (Cycle 80)", () => {
         assert.equal((delta.key as Record<string, unknown>).parentRef, "native-parent-call-456");
         assert.equal((delta.item as Record<string, unknown>).parentToolCallId, "native-parent-call-456");
     });
-    it("BBChildEventAdapter streams initial thinking and text from thinking_start and text_start", () => {
-        const emitted: BBWireEvent[] = [];
-        const childAdapter = new BBChildEventAdapter((evt) => emitted.push(evt), "parent-call-999");
+    it("DurableChildEventAdapter streams initial thinking and text from thinking_start and text_start", () => {
+        const emitted: RunnerEvent[] = [];
+        const childAdapter = new DurableChildEventAdapter((evt) => emitted.push(evt), "parent-call-999");
         childAdapter.handleEvent({
             type: "message_update",
             changes: [

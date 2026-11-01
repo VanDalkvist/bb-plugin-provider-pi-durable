@@ -4,7 +4,7 @@ import { threadDeltaSchema } from "@get-bb/plugin-sdk/provider-bridge";
 import { DeltaTranslator } from "../src/host/delta-translator.ts";
 import { SessionSubagentHandler } from "../src/host/session-subagent-handler.ts";
 import { wireFixture } from "./fixtures/wire.ts";
-import type { BBPlanStep } from "../src/contracts/wire-lifecycle.ts";
+import type { PlanStep } from "../src/contracts/wire-lifecycle.ts";
 import type { RuntimeGraphSnapshot } from "../src/runtime-graph/types.ts";
 
 function createMockSnapshot(): RuntimeGraphSnapshot {
@@ -43,7 +43,7 @@ function createMockSnapshot(): RuntimeGraphSnapshot {
 
 test("native-todo-sync-removal: tasks_snapshot produces zero thread deltas and no planSteps mutation", () => {
 	const translator = new DeltaTranslator();
-	const steps: BBPlanStep[] = [
+	const steps: PlanStep[] = [
 		{ step: "#1 assistant turn", status: "active" },
 		{ step: "  #2 bash: echo test", status: "completed" },
 	];

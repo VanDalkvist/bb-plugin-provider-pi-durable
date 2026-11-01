@@ -1,17 +1,16 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { BBChildEventAdapter } from "../src/runner/bridge/bb-child-event-adapter.ts";
+import { DurableChildEventAdapter } from "../src/runner/bridge/durable-child-event-adapter.ts";
 import { PiThreadSession } from "../src/host/session.ts";
 import { handleTurnStart } from "../src/host/bridge-router.ts";
 import { SessionRegistry } from "../src/host/session-registry.ts";
 import type { AgentEvent } from "@earendil-works/pi-durable";
-import type { BBWireEvent } from "../src/runner/bridge/contracts.ts";
-import type { RunnerEvent } from "../src/host/types.ts";
+import type { RunnerEvent } from "../src/runner/bridge/contracts.ts";
 import { sessionFixture } from "./fixtures/mirror.ts";
 
-test("BBChildEventAdapter: emits turn_start event with conversationId", () => {
-	const emitted: BBWireEvent[] = [];
-	const adapter = new BBChildEventAdapter((e) => emitted.push(e), "parent_call_1", 42);
+test("DurableChildEventAdapter: emits turn_start event with conversationId", () => {
+	const emitted: RunnerEvent[] = [];
+	const adapter = new DurableChildEventAdapter((e) => emitted.push(e), "parent_call_1", 42);
 
 	const turnStartEvent = {
 		type: "turn_start",

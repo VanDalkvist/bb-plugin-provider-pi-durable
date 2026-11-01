@@ -2,14 +2,13 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { threadDeltaSchema } from "@get-bb/plugin-sdk/provider-bridge";
 import { translateAgentEnd } from "../src/host/message-delta-translator.ts";
-import { BBEventAdapter } from "../src/runner/bridge/bb-event-adapter.ts";
+import { DurableEventAdapter } from "../src/runner/bridge/durable-event-adapter.ts";
 import type { DurableView } from "../src/runner/runtime-types.ts";
 import type {
-	BBWireEvent,
-	BBTurnEndEvent,
-	BBAgentEndEvent,
+	RunnerEvent,
+	TurnEndEvent,
+	AgentEndEvent,
 } from "../src/runner/bridge/contracts.ts";
-import type { RunnerEvent } from "../src/host/types.ts";
 import { viewFixture, nativeAssistantFixture, entryFixture } from "./fixtures/durable.ts";
 import { wireFixture } from "./fixtures/wire.ts";
 
@@ -79,9 +78,9 @@ test("threadDeltaSchema: validates session.ended delta strictly", () => {
 	assert.equal(parseResult.success, true, "session.ended must strictly conform to threadDeltaSchema");
 });
 
-test("BBEventAdapter: propagates stopReason 'aborted' into turn_end and agent_end wire events", () => {
-    const emitted: BBWireEvent[] = [];
-    const adapter = new BBEventAdapter((evt) => emitted.push(evt));
+test("DurableEventAdapter: propagates stopReason 'aborted' into turn_end and agent_end wire events", () => {
+    const emitted: RunnerEvent[] = [];
+    const adapter = new DurableEventAdapter((evt) => emitted.push(evt));
     const viewWithAbortedEntry = viewFixture({
         conversation: {
             entries: [
@@ -102,21 +101,21 @@ test("BBEventAdapter: propagates stopReason 'aborted' into turn_end and agent_en
     });
     adapter.handleEvent({ type: "turn_end" }, viewWithAbortedEntry);
     adapter.handleEvent({ type: "run_end", inputs: [] }, viewWithAbortedEntry);
-    const turnEnd = emitted.find((e): e is BBTurnEndEvent => e.type === "turn_end");
+    const turnEnd = emitted.find((e): e is TurnEndEvent => e.type === "turn_end");
     assert.ok(turnEnd, "turn_end wire event must be emitted");
     assert.equal(turnEnd.aborted, true, "turn_end must have aborted: true");
     assert.equal(turnEnd.stopReason, "aborted");
     assert.equal(turnEnd.message?.stopReason, "aborted");
-    const agentEnd = emitted.find((e): e is BBAgentEndEvent => e.type === "agent_end");
+    const agentEnd = emitted.find((e): e is AgentEndEvent => e.type === "agent_end");
     assert.ok(agentEnd, "agent_end wire event must be emitted");
     assert.equal(agentEnd.aborted, true, "agent_end must have aborted: true");
     assert.equal(agentEnd.stopReason, "aborted");
     assert.equal(agentEnd.messages[0]?.stopReason, "aborted");
 });
 
-test("BBEventAdapter: multi-turn isolation prevents aborted Turn 1 from contaminating completed Turn 2 (P1 fix)", () => {
-    const emitted: BBWireEvent[] = [];
-    const adapter = new BBEventAdapter((evt) => emitted.push(evt));
+test("DurableEventAdapter: multi-turn isolation prevents aborted Turn 1 from contaminating completed Turn 2 (P1 fix)", () => {
+    const emitted: RunnerEvent[] = [];
+    const adapter = new DurableEventAdapter((evt) => emitted.push(evt));
     // Multi-turn conversation: Turn 1 was aborted, Turn 2 finished normally with stopReason 'stop'
     const multiTurnView = viewFixture({
         conversation: {
@@ -150,7 +149,7 @@ test("BBEventAdapter: multi-turn isolation prevents aborted Turn 1 from contamin
         },
     });
     adapter.handleEvent({ type: "turn_end" }, multiTurnView);
-    const turnEnd = emitted.find((e): e is BBTurnEndEvent => e.type === "turn_end");
+    const turnEnd = emitted.find((e): e is TurnEndEvent => e.type === "turn_end");
     assert.ok(turnEnd, "turn_end wire event must be emitted");
     assert.equal(turnEnd.aborted, undefined, "Turn 2 must NOT be marked aborted");
     assert.equal(turnEnd.stopReason, undefined, "Turn 2 must NOT have aborted stopReason");

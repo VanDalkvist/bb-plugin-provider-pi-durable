@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { threadDeltaSchema } from "@get-bb/plugin-sdk/provider-bridge";
 import { runnerEventSchema, type RunnerEvent } from "../../src/contracts/runner-event.ts";
-import { assistantMessageSchema, type BBAssistantMessage } from "../../src/contracts/wire-message.ts";
+import { assistantMessageSchema, type AssistantMessage } from "../../src/contracts/wire-message.ts";
 
 export function publicDeltaFixture(value: unknown) { return threadDeltaSchema.parse(value); }
 export function publicDeltasFixture(value: unknown) { return z.array(threadDeltaSchema).parse(value); }
@@ -43,6 +43,6 @@ export function wireFixture<K extends Kind>(kind: K, overrides: Partial<Event<K>
  // Zod validated the entire packet; this assertion only preserves the generic discriminator correlation.
  return event as Event<K>;
 }
-export function assistantFixture(overrides: Partial<BBAssistantMessage> = {}): BBAssistantMessage {
+export function assistantFixture(overrides: Partial<AssistantMessage> = {}): AssistantMessage {
  return assistantMessageSchema.parse({ role: "assistant", content: [], ...overrides });
 }

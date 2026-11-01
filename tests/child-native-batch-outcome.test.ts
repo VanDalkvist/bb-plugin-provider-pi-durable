@@ -1,12 +1,12 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { BBChildEventAdapter } from "../src/runner/bridge/bb-child-event-adapter.ts";
+import { DurableChildEventAdapter } from "../src/runner/bridge/durable-child-event-adapter.ts";
 import type { AgentEvent } from "@earendil-works/pi-durable";
 
 describe("Child Native Batch Outcome Truth (Task 7)", () => {
 	it("run_end followed by submission unanswered with reason aborted emits wire aborted", () => {
 		const emitted: any[] = [];
-		const adapter = new BBChildEventAdapter((ev) => emitted.push(ev), "parent_call_1", "conv_1");
+		const adapter = new DurableChildEventAdapter((ev) => emitted.push(ev), "parent_call_1", "conv_1");
 
 		const batch: AgentEvent[] = [
 			{ type: "run_start" } as any,
@@ -27,7 +27,7 @@ describe("Child Native Batch Outcome Truth (Task 7)", () => {
 
 	it("run_end followed by submission unanswered with reason cancelled emits wire aborted", () => {
 		const emitted: any[] = [];
-		const adapter = new BBChildEventAdapter((ev) => emitted.push(ev), "parent_call_1", "conv_1");
+		const adapter = new DurableChildEventAdapter((ev) => emitted.push(ev), "parent_call_1", "conv_1");
 
 		const batch: AgentEvent[] = [
 			{ type: "run_start" } as any,
@@ -48,7 +48,7 @@ describe("Child Native Batch Outcome Truth (Task 7)", () => {
 
 	it("DONE input submission wins over intermediate recoverable tool task_failed", () => {
 		const emitted: any[] = [];
-		const adapter = new BBChildEventAdapter((ev) => emitted.push(ev), "parent_call_1", "conv_1");
+		const adapter = new DurableChildEventAdapter((ev) => emitted.push(ev), "parent_call_1", "conv_1");
 
 		const batch: AgentEvent[] = [
 			{ type: "run_start" } as any,
@@ -70,7 +70,7 @@ describe("Child Native Batch Outcome Truth (Task 7)", () => {
 
 	it("unanswered submission without abort reason emits stopReason error with details", () => {
 		const emitted: any[] = [];
-		const adapter = new BBChildEventAdapter((ev) => emitted.push(ev), "parent_call_1", "conv_1");
+		const adapter = new DurableChildEventAdapter((ev) => emitted.push(ev), "parent_call_1", "conv_1");
 
 		const batch: AgentEvent[] = [
 			{ type: "run_start" } as any,

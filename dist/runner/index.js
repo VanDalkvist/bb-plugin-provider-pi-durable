@@ -35,7 +35,7 @@ import {
   defineDoc
 } from "@earendil-works/pi-durable";
 var SubagentsDoc = defineDoc({
-  kind: "bb.subagents",
+  kind: "durable.subagents",
   version: 1,
   scope: "conversation",
   checkpointWhen: () => false,
@@ -60,7 +60,7 @@ async function answerText(api, answer, context) {
 // src/runner/subagent-delivery.ts
 import {
   AssistantEntry as AssistantEntry2,
-  defineTask
+  defineTask as defineTask2
 } from "@earendil-works/pi-durable";
 
 // src/shared/child-title.ts
@@ -81,8 +81,8 @@ function nativeChildTitle(name, role, model) {
   return parts.filter(Boolean).join(" \xB7 ");
 }
 
-// src/runner/subagent-delivery.ts
-var BACKGROUND = { ownership: { kind: "conversation" }, background: true };
+// src/runner/subagent-courier.ts
+import { defineTask } from "@earendil-works/pi-durable";
 var GATHER_MS = 50;
 function courierIsIdle(active) {
   return active === void 0 || active.state.status === "terminal";
@@ -90,72 +90,9 @@ function courierIsIdle(active) {
 function asExtensionTask(task, extensionName) {
   return Object.assign(task, { name: extensionName, tasks: [task] });
 }
-var Anchor = asExtensionTask(
-  defineTask({
-    name: "bb.subagent-anchor",
-    version: 1,
-    initial: () => ({ phase: "done" }),
-    phases: { done: (_t, rt, ctx) => rt.commit(() => ({ status: "terminal", outcome: { status: "completed", result: null } }), ctx) },
-    abort: (_t, rt, ctx) => rt.commit(() => ({ status: "terminal", outcome: { status: "aborted" } }), ctx)
-  }),
-  "bb.subagent-anchor"
-);
-function reporterFor(courier, admit) {
-  const task = defineTask({
-    name: "bb.subagent-reporter",
-    version: 1,
-    initial: () => ({ phase: "deliver" }),
-    phases: {
-      deliver: async (task2, runtime, context) => {
-        const child = await runtime.conversation(task2.input.conversationId, context);
-        await admit?.(child, task2.input.requestId, context);
-        const submission = await child.submit(
-          { type: "input", content: task2.input.task, requestId: task2.input.requestId },
-          context
-        );
-        const settled = await submission.wait(context);
-        return runtime.commit(async (tx) => {
-          const doc = await tx.doc(SubagentsDoc, runtime.conversationId);
-          doc.agents ??= {};
-          const record = doc.agents[task2.input.key] ?? {
-            name: nativeChildTitle(task2.input.task, "worker"),
-            conversationId: task2.input.conversationId,
-            requestId: task2.input.requestId,
-            task: task2.input.task,
-            role: "worker",
-            ownerTaskId: task2.id,
-            background: true
-          };
-          doc.agents[task2.input.key] = record;
-          let text = `Subagent ${record.name} failed: ${settled.status}`;
-          if (settled.status === "unanswered") text += ` (${settled.reason ?? "unknown"})`;
-          if (settled.status === "done" && settled.type === "input") {
-            text = `Subagent ${record.name} answered: ` + extractAssistantText(await tx.entry(AssistantEntry2, settled.answer));
-          }
-          record.report = text;
-          record.settled = true;
-          return { status: "running", checkpoint: { phase: "report", text } };
-        }, context);
-      },
-      report: async (task2, runtime, context) => runtime.commit(async (tx) => {
-        const state = await tx.doc(SubagentsDoc, runtime.conversationId);
-        const reportId = String(task2.id);
-        if (!(state.outbox ?? []).some((report) => report.id === reportId)) {
-          const name = state.agents[task2.input.key]?.name ?? task2.input.key;
-          state.outbox = [...state.outbox ?? [], { id: reportId, name, text: task2.state.checkpoint.text }];
-        }
-        const active = state.courier === void 0 ? void 0 : await tx.task(state.courier);
-        if (courierIsIdle(active)) state.courier = await tx.createTask(courier, null, BACKGROUND);
-        return { status: "terminal", outcome: { status: "completed", result: null } };
-      }, context)
-    },
-    abort: (_t, rt, ctx) => rt.commit(() => ({ status: "terminal", outcome: { status: "aborted" } }), ctx)
-  });
-  return asExtensionTask(task, "bb.subagent-reporter");
-}
 function courierFor(admit) {
   const task = defineTask({
-    name: "bb.subagent-courier",
+    name: "durable.subagent-courier",
     version: 1,
     initial: () => ({ phase: "gather" }),
     phases: {
@@ -202,12 +139,7 @@ function courierFor(admit) {
         const content = `[Subagent Reports Available]:
 
 ${prompt}`;
-        const submission = await parent.submit({
-          type: "input",
-          content,
-          whenBusy: "followUp",
-          requestId: sending.requestId
-        }, context);
+        const submission = await parent.submit({ type: "input", content, whenBusy: "followUp", requestId: sending.requestId }, context);
         const settled = await submission.wait(context);
         await runtime.commit(async (tx) => {
           const current = await tx.doc(SubagentsDoc, runtime.conversationId);
@@ -240,7 +172,70 @@ ${prompt}`;
     },
     abort: (_t, rt, ctx) => rt.commit(() => ({ status: "terminal", outcome: { status: "aborted" } }), ctx)
   });
-  return asExtensionTask(task, "bb.subagent-courier");
+  return asExtensionTask(task, "durable.subagent-courier");
+}
+
+// src/runner/subagent-delivery.ts
+var BACKGROUND = { ownership: { kind: "conversation" }, background: true };
+var Anchor = asExtensionTask(
+  defineTask2({
+    name: "durable.subagent-anchor",
+    version: 1,
+    initial: () => ({ phase: "done" }),
+    phases: { done: (_t, rt, ctx) => rt.commit(() => ({ status: "terminal", outcome: { status: "completed", result: null } }), ctx) },
+    abort: (_t, rt, ctx) => rt.commit(() => ({ status: "terminal", outcome: { status: "aborted" } }), ctx)
+  }),
+  "durable.subagent-anchor"
+);
+function reporterFor(courier, admit) {
+  const task = defineTask2({
+    name: "durable.subagent-reporter",
+    version: 1,
+    initial: () => ({ phase: "deliver" }),
+    phases: {
+      deliver: async (task2, runtime, context) => {
+        const child = await runtime.conversation(task2.input.conversationId, context);
+        await admit?.(child, task2.input.requestId, context);
+        const submission = await child.submit({ type: "input", content: task2.input.task, requestId: task2.input.requestId }, context);
+        const settled = await submission.wait(context);
+        return runtime.commit(async (tx) => {
+          const doc = await tx.doc(SubagentsDoc, runtime.conversationId);
+          doc.agents ??= {};
+          const record = doc.agents[task2.input.key] ?? {
+            name: nativeChildTitle(task2.input.task, "worker"),
+            conversationId: task2.input.conversationId,
+            requestId: task2.input.requestId,
+            task: task2.input.task,
+            role: "worker",
+            ownerTaskId: task2.id,
+            background: true
+          };
+          doc.agents[task2.input.key] = record;
+          let text = `Subagent ${record.name} failed: ${settled.status}`;
+          if (settled.status === "unanswered") text += ` (${settled.reason ?? "unknown"})`;
+          if (settled.status === "done" && settled.type === "input") {
+            text = `Subagent ${record.name} answered: ` + extractAssistantText(await tx.entry(AssistantEntry2, settled.answer));
+          }
+          record.report = text;
+          record.settled = true;
+          return { status: "running", checkpoint: { phase: "report", text } };
+        }, context);
+      },
+      report: async (task2, runtime, context) => runtime.commit(async (tx) => {
+        const state = await tx.doc(SubagentsDoc, runtime.conversationId);
+        const reportId = String(task2.id);
+        if (!(state.outbox ?? []).some((report) => report.id === reportId)) {
+          const name = state.agents[task2.input.key]?.name ?? task2.input.key;
+          state.outbox = [...state.outbox ?? [], { id: reportId, name, text: task2.state.checkpoint.text }];
+        }
+        const active = state.courier === void 0 ? void 0 : await tx.task(state.courier);
+        if (courierIsIdle(active)) state.courier = await tx.createTask(courier, null, BACKGROUND);
+        return { status: "terminal", outcome: { status: "completed", result: null } };
+      }, context)
+    },
+    abort: (_t, rt, ctx) => rt.commit(() => ({ status: "terminal", outcome: { status: "aborted" } }), ctx)
+  });
+  return asExtensionTask(task, "durable.subagent-reporter");
 }
 var DefaultCourier = courierFor();
 var DefaultReporter = reporterFor(DefaultCourier);
@@ -1944,7 +1939,7 @@ function createSubagentPolicyHolder(options) {
 
 // src/runner/subagent-policy-ack.ts
 var SubagentPolicyAckDoc = defineDoc2({
-  kind: "bb.subagent-policy-ack",
+  kind: "durable.subagent-policy-ack",
   version: 1,
   scope: "session",
   checkpointWhen: () => false,
@@ -2802,8 +2797,8 @@ function resolveChildRunOutcome(inputs, submissions, lastTaskError) {
   return { status: "completed" };
 }
 
-// src/runner/bridge/bb-child-event-adapter.ts
-var BBChildEventAdapter = class {
+// src/runner/bridge/durable-child-event-adapter.ts
+var DurableChildEventAdapter = class {
   output;
   parentRef;
   conversationId;
@@ -3007,8 +3002,8 @@ function resolveToolCallArgs(callId, current) {
   return {};
 }
 
-// src/runner/bridge/bb-event-adapter.ts
-var BBEventAdapter = class {
+// src/runner/bridge/durable-event-adapter.ts
+var DurableEventAdapter = class {
   output;
   resolveContextWindow;
   submissions = /* @__PURE__ */ new Map();
@@ -3036,7 +3031,7 @@ var BBEventAdapter = class {
     return String(parentToolCallId);
   }
   createChildAdapter(parentCallId, conversationId) {
-    return new BBChildEventAdapter(this.output, parentCallId, conversationId);
+    return new DurableChildEventAdapter(this.output, parentCallId, conversationId);
   }
   emitTerminal(type, current, inputs) {
     this.closeThinkingIfNeeded();
@@ -3210,7 +3205,7 @@ import { BACKGROUND_CONTEXT as BACKGROUND_CONTEXT3 } from "@earendil-works/chord
 // src/runner/binding-docs.ts
 import { defineDoc as defineDoc3 } from "@earendil-works/pi-durable";
 var BindingDoc = defineDoc3({
-  kind: "bb.native-child-binding",
+  kind: "durable.binding",
   version: 2,
   scope: "conversation",
   checkpointWhen: () => false,
@@ -3219,15 +3214,37 @@ var BindingDoc = defineDoc3({
   initial: () => ({ binding: null })
 });
 var BindingIndexDoc = defineDoc3({
-  kind: "bb.native-child-binding-index",
+  kind: "durable.binding-index",
   version: 1,
   scope: "session",
   checkpointWhen: () => false,
   initial: () => ({ byIdentity: {}, byThreadId: {} })
 });
 function identityKey(identity) {
-  return JSON.stringify([identity.providerId, identity.sessionId, identity.bbThreadId]);
+  return JSON.stringify([identity.providerId, identity.sessionId, identity.threadId]);
 }
+
+// src/runner/errors.ts
+var DurableHarnessError = class extends Error {
+  code;
+  constructor(message, code, cause) {
+    super(message, { cause });
+    this.name = new.target.name;
+    this.code = code;
+  }
+};
+var DurableCommandError = class extends DurableHarnessError {
+  constructor(message, cause, code = "COMMAND_ERROR") {
+    super(message, code, cause);
+  }
+};
+var InvalidCommandPayloadError = class extends DurableCommandError {
+  command;
+  constructor(command, message, cause) {
+    super(message ?? `Invalid payload for command: ${command}`, cause, "INVALID_COMMAND_PAYLOAD");
+    this.command = command;
+  }
+};
 
 // src/runner/binding-commands.ts
 function toConversationId(id) {
@@ -3244,17 +3261,15 @@ function toConversationId(id) {
 }
 async function handleBindingCommand(cmd, durable, responder) {
   if (cmd.type === "register_binding") {
-    if (typeof cmd.bbThreadId !== "string" || !cmd.bbThreadId.trim() || cmd.conversationId === void 0 || cmd.conversationId === null) {
-      responder.error(cmd.id, "register_binding", "Missing bbThreadId or conversationId");
-      return true;
-    }
-    const bbThreadId = cmd.bbThreadId.trim();
-    const convId = toConversationId(cmd.conversationId);
-    if (convId === void 0) {
-      responder.error(cmd.id, "register_binding", `Invalid conversationId: ${String(cmd.conversationId)}`);
-      return true;
-    }
     try {
+      if (typeof cmd.threadId !== "string" || !cmd.threadId.trim() || cmd.conversationId === void 0 || cmd.conversationId === null) {
+        throw new InvalidCommandPayloadError("register_binding", "Missing threadId or conversationId");
+      }
+      const threadId = cmd.threadId.trim();
+      const convId = toConversationId(cmd.conversationId);
+      if (convId === void 0) {
+        throw new InvalidCommandPayloadError("register_binding", `Invalid conversationId: ${String(cmd.conversationId)}`);
+      }
       await durable.harness.commit(async (tx) => {
         const index = await tx.doc(BindingIndexDoc);
         const state = await tx.doc(BindingDoc, convId);
@@ -3264,12 +3279,12 @@ async function handleBindingCommand(cmd, durable, responder) {
           providerId: "pi-durable",
           sessionId,
           conversationId: convId,
-          bbThreadId,
+          threadId,
           parentThreadId,
           createdAt: Date.now()
         };
         state.binding = record;
-        index.byThreadId[bbThreadId] = convId;
+        index.byThreadId[threadId] = convId;
         const key = identityKey(record);
         index.byIdentity[key] = convId;
       }, runtimeContext);
@@ -3553,7 +3568,7 @@ var runnerCommandSchema = z3.object({
   instructions: z3.string().optional(),
   level: z3.enum(["off", "minimal", "low", "medium", "high", "xhigh"]).optional(),
   conversationId: conversationIdSchema.optional(),
-  bbThreadId: z3.string().optional(),
+  threadId: z3.string().optional(),
   parentThreadId: z3.string().optional(),
   sessionId: z3.string().optional(),
   policyRecord: z3.unknown().optional(),
@@ -3772,187 +3787,6 @@ async function startSubagentWatcher(harness, adapter, getCurrentView, options) {
       attached.clear();
     }
   };
-}
-
-// src/runner/task-labels.ts
-var MAX_NAME = 48;
-var MAX_TARGET_HINT = 128;
-var KIND_NAMES = {
-  "pi.generation": "assistant turn",
-  "pi.compaction": "compacting context"
-};
-var ARG_KEYS = ["command", "task", "path", "file_path", "pattern", "query", "url", "prompt"];
-function clip(text, max = MAX_NAME) {
-  const oneLine = text.replace(/\s+/g, " ").trim();
-  return oneLine.length <= max ? oneLine : `${oneLine.slice(0, max - 1)}\u2026`;
-}
-function sanitizeTargetHint(raw, max = MAX_TARGET_HINT) {
-  let s = raw.replace(/\s+/g, " ").trim();
-  s = s.replace(/bearer\s+[a-zA-Z0-9_\-\.]+/gi, "Bearer [redacted]");
-  s = s.replace(/(ghp|gho|ghu|ghs|ghr|sec)_[a-zA-Z0-9]+/g, "[redacted]");
-  s = s.replace(/(api[_-]?key|token|secret|password|passwd|auth)\s*[:=]\s*[^\s&]+/gi, "$1=[redacted]");
-  return clip(s, max);
-}
-function argumentHint(args2) {
-  if (typeof args2 !== "object" || args2 === null) return void 0;
-  const record = args2;
-  for (const key of ARG_KEYS) {
-    const value = record[key];
-    if (typeof value === "string" && value.trim() !== "") return sanitizeTargetHint(value);
-  }
-  return void 0;
-}
-function liveOf(view) {
-  const raw = view?.conversation?.docs?.["pi.live"];
-  return typeof raw === "object" && raw !== null ? raw : {};
-}
-function isNested(slot) {
-  return "parentCallId" in slot;
-}
-var TaskNames = class {
-  names = /* @__PURE__ */ new Map();
-  details = /* @__PURE__ */ new Map();
-  learn(view) {
-    const live = liveOf(view);
-    for (const slot of [...live.tools ?? [], ...live.nestedTools ?? []]) {
-      if (slot.taskId === void 0) continue;
-      const key = String(slot.taskId);
-      if (this.names.has(key)) continue;
-      const args2 = isNested(slot) ? slot.arguments : resolveToolCallArgs(slot.callId, view);
-      const hint = argumentHint(args2);
-      const toolName = slot.name ? clip(slot.name, MAX_NAME) : void 0;
-      const preview = clip(hint === void 0 ? slot.name : `${slot.name}: ${hint}`, MAX_NAME);
-      this.names.set(key, preview);
-      this.details.set(key, { toolName, targetHint: hint, preview });
-    }
-  }
-  get(taskId) {
-    return this.names.get(taskId);
-  }
-  getDetails(taskId) {
-    return this.details.get(taskId);
-  }
-};
-function taskLabel(node, names, modelLabel) {
-  const state = node.state;
-  const call = names?.get(String(node.id));
-  const plain = node.kind === "pi.generation" && modelLabel ? modelLabel : KIND_NAMES[node.kind];
-  const kind = call ?? plain ?? (node.kind.startsWith("pi.") ? node.kind.slice(3) : node.kind);
-  if (state.status === "waiting") return `${kind} \xB7 waiting on ${state.on.length}`;
-  if (state.status === "completing") {
-    const outcome = typeof state.outcome === "object" && state.outcome !== null && "status" in state.outcome ? state.outcome.status : state.outcome;
-    return `${kind} \xB7 completing (${String(outcome ?? "completed")})`;
-  }
-  return call !== void 0 || plain !== void 0 ? kind : `${kind} \xB7 ${state.phase}`;
-}
-
-// src/runner/task-graph-bridge.ts
-var INDENT = "  ";
-function statusOf(node) {
-  const state = node.state;
-  if (state.status === "running") return "active";
-  if (state.status === "completing") return state.outcome === "completed" ? "completed" : "failed";
-  return "pending";
-}
-var ownersMap = /* @__PURE__ */ new WeakMap();
-function taskSteps(graph, names, knownSteps, knownOwners) {
-  const nodes = graph?.tasks ?? {};
-  const known = knownSteps ?? /* @__PURE__ */ new Map();
-  const owners = knownOwners ?? (knownSteps !== void 0 ? ownersMap.get(knownSteps) ?? /* @__PURE__ */ new Map() : /* @__PURE__ */ new Map());
-  if (knownSteps !== void 0 && !ownersMap.has(knownSteps)) {
-    ownersMap.set(knownSteps, owners);
-  }
-  for (const key of Object.keys(nodes)) {
-    const owner = nodes[key]?.owner;
-    owners.set(key, owner === void 0 ? void 0 : String(owner));
-  }
-  if (Object.keys(nodes).length === 0) {
-    for (const step of known.values()) {
-      if (step.status === "active" || step.status === "pending") {
-        step.status = "completed";
-      }
-    }
-  }
-  const allKeys = Array.from(/* @__PURE__ */ new Set([...known.keys(), ...Object.keys(nodes)])).sort((a, b) => Number(a) - Number(b));
-  const children = /* @__PURE__ */ new Map();
-  for (const key of allKeys) {
-    const owner = owners.get(key);
-    if (owner === void 0) continue;
-    const siblings = children.get(owner);
-    if (siblings === void 0) children.set(owner, [key]);
-    else siblings.push(key);
-  }
-  const allKeysSet = new Set(allKeys);
-  const steps = [];
-  const walk = (key, depth) => {
-    const node = nodes[key];
-    if (node !== void 0) {
-      const step = {
-        step: INDENT.repeat(depth) + `#${key} ${taskLabel(node, names)}`,
-        status: statusOf(node)
-      };
-      known.set(key, step);
-      steps.push(step);
-    } else {
-      const existing = known.get(key);
-      if (existing !== void 0) {
-        if (existing.status !== "failed") {
-          existing.status = "completed";
-        }
-        steps.push(existing);
-      }
-    }
-    for (const child of children.get(key) ?? []) walk(child, depth + 1);
-  };
-  for (const key of allKeys) {
-    const owner = owners.get(key);
-    if (owner === void 0 || !allKeysSet.has(owner)) walk(key, 0);
-  }
-  return steps;
-}
-var DEFAULT_TASK_GRAPH_DEBOUNCE_MS = 50;
-function startTaskGraphBridge(view, output2, debounceMs = DEFAULT_TASK_GRAPH_DEBOUNCE_MS) {
-  const names = new TaskNames();
-  const knownSteps = /* @__PURE__ */ new Map();
-  let published = "";
-  let timer;
-  let isUnsubscribed = false;
-  const publish = () => {
-    timer = void 0;
-    if (isUnsubscribed) return;
-    const current = view.current();
-    names.learn(current);
-    const graph = current?.tasks ?? { tasks: {} };
-    const steps = taskSteps(graph, names, knownSteps);
-    const encoded = JSON.stringify(steps);
-    if (steps.length === 0 || encoded === published) return;
-    published = encoded;
-    output2({ type: "tasks_snapshot", steps });
-  };
-  const schedule = () => {
-    if (isUnsubscribed) return;
-    if (timer !== void 0) {
-      clearTimeout(timer);
-      timer = void 0;
-    }
-    if (debounceMs <= 0) {
-      publish();
-      return;
-    }
-    timer = setTimeout(publish, debounceMs);
-  };
-  const unsubscribeView = view.subscribe(schedule);
-  schedule();
-  const unsubscribe = () => {
-    if (isUnsubscribed) return;
-    isUnsubscribed = true;
-    if (timer !== void 0) {
-      clearTimeout(timer);
-      timer = void 0;
-    }
-    unsubscribeView();
-  };
-  return { unsubscribe };
 }
 
 // src/runtime-graph/schema.ts
@@ -4341,6 +4175,112 @@ var RuntimeGraphConversations = class {
   }
 };
 
+// src/runner/task-labels.ts
+var MAX_NAME = 48;
+var MAX_TARGET_HINT = 128;
+var KIND_NAMES = {
+  "pi.generation": "assistant turn",
+  "pi.compaction": "compacting context"
+};
+var ARG_KEYS = ["command", "task", "path", "file_path", "pattern", "query", "url", "prompt"];
+function clip(text, max = MAX_NAME) {
+  const oneLine = text.replace(/\s+/g, " ").trim();
+  return oneLine.length <= max ? oneLine : `${oneLine.slice(0, max - 1)}\u2026`;
+}
+function sanitizeTargetHint(raw, max = MAX_TARGET_HINT) {
+  let s = raw.replace(/\s+/g, " ").trim();
+  s = s.replace(/bearer\s+[a-zA-Z0-9_\-\.]+/gi, "Bearer [redacted]");
+  s = s.replace(/(ghp|gho|ghu|ghs|ghr|sec)_[a-zA-Z0-9]+/g, "[redacted]");
+  s = s.replace(/(api[_-]?key|token|secret|password|passwd|auth)\s*[:=]\s*[^\s&]+/gi, "$1=[redacted]");
+  return clip(s, max);
+}
+function argumentHint(args2) {
+  if (typeof args2 !== "object" || args2 === null) return void 0;
+  const record = args2;
+  for (const key of ARG_KEYS) {
+    const value = record[key];
+    if (typeof value === "string" && value.trim() !== "") return sanitizeTargetHint(value);
+  }
+  return void 0;
+}
+function liveOf(view) {
+  const raw = view?.conversation?.docs?.["pi.live"];
+  return typeof raw === "object" && raw !== null ? raw : {};
+}
+function isNested(slot) {
+  return "parentCallId" in slot;
+}
+var TaskNames = class {
+  names = /* @__PURE__ */ new Map();
+  details = /* @__PURE__ */ new Map();
+  learn(view) {
+    const live = liveOf(view);
+    for (const slot of [...live.tools ?? [], ...live.nestedTools ?? []]) {
+      if (slot.taskId === void 0) continue;
+      const key = String(slot.taskId);
+      if (this.names.has(key)) continue;
+      const args2 = isNested(slot) ? slot.arguments : resolveToolCallArgs(slot.callId, view);
+      const hint = argumentHint(args2);
+      const toolName = slot.name ? clip(slot.name, MAX_NAME) : void 0;
+      const preview = clip(hint === void 0 ? slot.name : `${slot.name}: ${hint}`, MAX_NAME);
+      this.names.set(key, preview);
+      this.details.set(key, { toolName, targetHint: hint, preview });
+    }
+  }
+  get(taskId) {
+    return this.names.get(taskId);
+  }
+  getDetails(taskId) {
+    return this.details.get(taskId);
+  }
+};
+function taskLabel(node, names, modelLabel) {
+  const state = node.state;
+  const call = names?.get(String(node.id));
+  const plain = node.kind === "pi.generation" && modelLabel ? modelLabel : KIND_NAMES[node.kind];
+  const kind = call ?? plain ?? (node.kind.startsWith("pi.") ? node.kind.slice(3) : node.kind);
+  if (state.status === "waiting") return `${kind} \xB7 waiting on ${state.on.length}`;
+  if (state.status === "completing") {
+    const outcome = typeof state.outcome === "object" && state.outcome !== null && "status" in state.outcome ? state.outcome.status : state.outcome;
+    return `${kind} \xB7 completing (${String(outcome ?? "completed")})`;
+  }
+  return call !== void 0 || plain !== void 0 ? kind : `${kind} \xB7 ${state.phase}`;
+}
+
+// src/runner/runtime-graph-state.ts
+function extractTaskGraph(current) {
+  if (!current || typeof current !== "object") return { tasks: {} };
+  const obj = current;
+  if ("tasks" in obj && obj.tasks && typeof obj.tasks === "object") {
+    const inner = obj.tasks;
+    if ("tasks" in inner && inner.tasks && typeof inner.tasks === "object") {
+      return inner;
+    }
+    return current;
+  }
+  return { tasks: {} };
+}
+function mapTaskGraphNodeState(state) {
+  switch (state.status) {
+    case "pending":
+    case "running":
+      return { status: state.status, phase: state.phase };
+    case "waiting":
+      return {
+        status: "waiting",
+        phase: state.phase,
+        on: state.on ? state.on.map(Number) : [],
+        policy: state.policy
+      };
+    case "sleeping":
+      return { status: "sleeping", phase: state.phase, until: state.until };
+    case "completing": {
+      const outcome = typeof state.outcome === "object" && state.outcome !== null && "status" in state.outcome ? state.outcome.status : state.outcome;
+      return { status: "completing", outcome: outcome ?? "completed" };
+    }
+  }
+}
+
 // src/runner/runtime-graph-mapper.ts
 function extractTaskModelMeta(node, current, rootConvId) {
   if (node.kind !== "pi.generation") return {};
@@ -4365,7 +4305,7 @@ function extractTaskModelMeta(node, current, rootConvId) {
       }
       if (doc?.thinkingLevel !== void 0 && doc?.thinkingLevel !== null) thinkingLevel = String(doc.thinkingLevel);
     } else {
-      const doc = current?.conversation?.docs?.["bb.subagents"];
+      const doc = current?.conversation?.docs?.["durable.subagents"];
       const sub = doc?.agents ? Object.values(doc.agents).find((a) => Number(a?.conversationId) === convId) : void 0;
       if (sub?.actualModel?.provider) {
         provider = String(sub.actualModel.provider);
@@ -4380,7 +4320,7 @@ function extractTaskModelMeta(node, current, rootConvId) {
   return { model, thinkingLevel, modelLabel };
 }
 function recordSubagentOwnership(conversations, current, rootConvId) {
-  const doc = current?.conversation?.docs?.["bb.subagents"];
+  const doc = current?.conversation?.docs?.["durable.subagents"];
   if (!doc?.agents) return;
   for (const a of Object.values(doc.agents)) {
     if (a?.conversationId && a?.ownerTaskId) {
@@ -4389,7 +4329,7 @@ function recordSubagentOwnership(conversations, current, rootConvId) {
   }
 }
 function findSubagentMeta(current, taskId) {
-  const doc = current?.conversation?.docs?.["bb.subagents"];
+  const doc = current?.conversation?.docs?.["durable.subagents"];
   if (!doc?.agents) return void 0;
   for (const a of Object.values(doc.agents)) {
     if (Number(a?.anchorTaskId) === taskId || Number(a?.ownerTaskId) === taskId) {
@@ -4405,8 +4345,8 @@ function buildMappedNode(node, current, rootConvId, names, nativeStartedAt, cloc
   const callDetails = names.getDetails(String(id));
   const subMeta = findSubagentMeta(current, id);
   let label = taskLabel(node, names, meta.modelLabel);
-  if (node.kind === "bb.subagent-anchor" && subMeta?.name) {
-    label = `bb.subagent-anchor \xB7 subagent: ${subMeta.name}`;
+  if (node.kind === "durable.subagent-anchor" && subMeta?.name) {
+    label = `durable.subagent-anchor \xB7 subagent: ${subMeta.name}`;
   }
   if (label.length > MAX_LABEL_LENGTH) label = label.slice(0, MAX_LABEL_LENGTH);
   const startedAt = node.startedAt !== void 0 && node.startedAt !== null ? Number(node.startedAt) : nativeStartedAt.get(id);
@@ -4448,38 +4388,6 @@ function recordTerminalWithDetails(receipts, task, names, nativeStartedAt, curre
     startedAt: nativeStartedAt.get(id),
     tokens: extractTerminalTokens(task, current, recentEntries)
   });
-}
-function extractTaskGraph(current) {
-  if (!current || typeof current !== "object") return { tasks: {} };
-  const obj = current;
-  if ("tasks" in obj && obj.tasks && typeof obj.tasks === "object") {
-    const inner = obj.tasks;
-    if ("tasks" in inner && inner.tasks && typeof inner.tasks === "object") {
-      return inner;
-    }
-    return current;
-  }
-  return { tasks: {} };
-}
-function mapTaskGraphNodeState(state) {
-  switch (state.status) {
-    case "pending":
-    case "running":
-      return { status: state.status, phase: state.phase };
-    case "waiting":
-      return {
-        status: "waiting",
-        phase: state.phase,
-        on: state.on ? state.on.map(Number) : [],
-        policy: state.policy
-      };
-    case "sleeping":
-      return { status: "sleeping", phase: state.phase, until: state.until };
-    case "completing": {
-      const outcome = typeof state.outcome === "object" && state.outcome !== null && "status" in state.outcome ? state.outcome.status : state.outcome;
-      return { status: "completing", outcome: outcome ?? "completed" };
-    }
-  }
 }
 
 // src/runner/runtime-graph-source.ts
@@ -4817,7 +4725,6 @@ async function main() {
   await setupRunnerStdoutGuard();
   let activeDurable = null;
   let activeWatcher = null;
-  let activeTaskBridge = null;
   let activeGraphSource = null;
   let activeControlChannel = null;
   let isTerminating = false;
@@ -4833,11 +4740,6 @@ async function main() {
       activeGraphSource?.teardown();
     } catch (err) {
       console.warn(`[Runner] Error tearing down graph source on ${signalOrReason}: ${err instanceof Error ? err.message : String(err)}`);
-    }
-    try {
-      activeTaskBridge?.unsubscribe();
-    } catch (err) {
-      console.warn(`[Runner] Error unsubscribing task graph bridge on ${signalOrReason}: ${err instanceof Error ? err.message : String(err)}`);
     }
     try {
       activeWatcher?.close();
@@ -4917,7 +4819,7 @@ async function main() {
   });
   activeDurable = durable;
   activeControlChannel = startRunnerControlChannel(durable.view.current().session.directory, durable.harness);
-  const adapter = new BBEventAdapter(
+  const adapter = new DurableEventAdapter(
     (evt) => output(evt),
     (provider, modelId) => {
       const p = provider ?? args.provider;
@@ -4928,7 +4830,6 @@ async function main() {
   const watcher = await startSubagentWatcher(durable.harness, adapter, () => durable.view.current());
   activeWatcher = watcher;
   durable.watcher = watcher;
-  activeTaskBridge = startTaskGraphBridge(durable.view, output);
   activeGraphSource = new RuntimeGraphSource(
     durable.view,
     {

@@ -2,15 +2,14 @@ import { setupRunnerModels } from "./model-setup.ts";
 import { attachJsonlLineReader, serializeJsonLine } from "./jsonl.ts";
 import { openDurable } from "./runtime.ts";
 import type { OpenDurableOptions, OpenDurableResult } from "./runtime-types.ts";
-import { BBEventAdapter } from "./bridge/bb-event-adapter.ts";
-import type { BBWireEvent } from "./bridge/contracts.ts";
+import { DurableEventAdapter } from "./bridge/durable-event-adapter.ts";
+import type { RunnerEvent } from "./bridge/contracts.ts";
 import { parseCliArgs } from "./cli-args.ts";
 import { handleActiveSessionCommand } from "./session-commands.ts";
 import { parseRunnerCommand, type RunnerCommandPayload } from "../contracts/runner-command.ts";
 import { getPiDurableVersion } from "./version.ts";
 import { createBridgeSender, initBridgeInboundChannel } from "./bridge-channel.ts";
 import { startSubagentWatcher, type SubagentWatcherController } from "./subagent-watcher.ts";
-import { startTaskGraphBridge, type TaskGraphBridgeController } from "./task-graph-bridge.ts";
 import { RuntimeGraphSource } from "./runtime-graph-source.ts";
 import { ROOT_CONVERSATION_ID } from "@earendil-works/pi-durable";
 import { setupRunnerStdoutGuard, writeWireStdout, flushWireStdout } from "./stdout-guard.ts";
@@ -37,7 +36,6 @@ async function main() {
 
 	let activeDurable: OpenDurableResult | null = null;
 	let activeWatcher: SubagentWatcherController | null = null;
-	let activeTaskBridge: TaskGraphBridgeController | null = null;
 	let activeGraphSource: RuntimeGraphSource | null = null;
 	let activeControlChannel: ControlChannelController | null = null;
 	let isTerminating = false;
@@ -50,9 +48,6 @@ async function main() {
 		}
 		try { activeGraphSource?.teardown(); } catch (err) {
 			console.warn(`[Runner] Error tearing down graph source on ${signalOrReason}: ${err instanceof Error ? err.message : String(err)}`);
-		}
-		try { activeTaskBridge?.unsubscribe(); } catch (err) {
-			console.warn(`[Runner] Error unsubscribing task graph bridge on ${signalOrReason}: ${err instanceof Error ? err.message : String(err)}`);
 		}
 		try { activeWatcher?.close(); } catch (err) {
 			console.warn(`[Runner] Error closing subagent watcher on ${signalOrReason}: ${err instanceof Error ? err.message : String(err)}`);
@@ -133,8 +128,8 @@ async function main() {
 	activeControlChannel = startRunnerControlChannel(durable.view.current().session.directory, durable.harness);
 
 	// Setup native Pi Durable event stream adapter with subagent multiplexing
-	const adapter = new BBEventAdapter(
-		(evt: BBWireEvent) => output(evt),
+	const adapter = new DurableEventAdapter(
+		(evt: RunnerEvent) => output(evt),
 		(provider, modelId) => {
 			const p = provider ?? args.provider;
 			const m = modelId ?? args.model;
@@ -143,7 +138,6 @@ async function main() {
 	);
 	const watcher = await startSubagentWatcher(durable.harness, adapter, () => durable.view.current());
 	activeWatcher = watcher; durable.watcher = watcher;
-	activeTaskBridge = startTaskGraphBridge(durable.view, output);
 	activeGraphSource = new RuntimeGraphSource(
 		durable.view,
 		{

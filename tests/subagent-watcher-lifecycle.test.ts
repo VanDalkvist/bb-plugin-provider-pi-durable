@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { startSubagentWatcher, type SubagentWatcherController } from "../src/runner/subagent-watcher.ts";
-import { BBEventAdapter } from "../src/runner/bridge/bb-event-adapter.ts";
+import { DurableEventAdapter } from "../src/runner/bridge/durable-event-adapter.ts";
 import type { AgentEvent, ConversationId, Harness } from "@earendil-works/pi-durable";
 import { BindingIndexDoc } from "../src/runner/binding-docs.ts";
 import { SubagentsDoc } from "../src/runner/subagent-docs.ts";
@@ -51,7 +51,7 @@ function createMockHarness(existingBindings: Record<string, ConversationId> = {}
 test("startSubagentWatcher: bootstraps existing subagent conversations on initialization", async () => {
 	const { harness, watchEvents } = createMockHarness({ thr_child_1: 21848 as ConversationId });
 	const emitted: any[] = [];
-	const adapter = new BBEventAdapter((evt) => emitted.push(evt));
+	const adapter = new DurableEventAdapter((evt) => emitted.push(evt));
 
 	const watcher = await startSubagentWatcher(
 		harness,
@@ -72,7 +72,7 @@ test("startSubagentWatcher: bootstraps existing subagent conversations on initia
 test("startSubagentWatcher: ensureAttached attaches on resume without duplicate streams", async () => {
 	const { harness, watchEvents } = createMockHarness();
 	const emitted: any[] = [];
-	const adapter = new BBEventAdapter((evt) => emitted.push(evt));
+	const adapter = new DurableEventAdapter((evt) => emitted.push(evt));
 
 	const watcher = await startSubagentWatcher(
 		harness,

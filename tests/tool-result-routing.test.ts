@@ -1,12 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { BBEventAdapter } from "../src/runner/bridge/bb-event-adapter.ts";
-import { BBChildEventAdapter } from "../src/runner/bridge/bb-child-event-adapter.ts";
+import { DurableEventAdapter } from "../src/runner/bridge/durable-event-adapter.ts";
+import { DurableChildEventAdapter } from "../src/runner/bridge/durable-child-event-adapter.ts";
 import { extractCanonicalToolDetails } from "../src/runner/bridge/native-tool-result.ts";
 
-test("Slice 3: BBEventAdapter routes nested tool end cleanly with projector", () => {
+test("Slice 3: DurableEventAdapter routes nested tool end cleanly with projector", () => {
 	const wireEvents: any[] = [];
-	const adapter = new BBEventAdapter((ev) => wireEvents.push(ev));
+	const adapter = new DurableEventAdapter((ev) => wireEvents.push(ev));
 
 	adapter.handleEvent({
 		type: "tool_execution_start",
@@ -40,10 +40,10 @@ test("Slice 3: BBEventAdapter routes nested tool end cleanly with projector", ()
 	assert.equal(endWire.result, "file content");
 });
 
-test("Remediation P1 RED: BBChildEventAdapter seeds snapshot with PREFIXED keys and resets on run_start", () => {
+test("Remediation P1 RED: DurableChildEventAdapter seeds snapshot with PREFIXED keys and resets on run_start", () => {
 	const wireEvents: any[] = [];
 	const parentRef = "parent-subagent-call";
-	const childAdapter = new BBChildEventAdapter((ev) => wireEvents.push(ev), parentRef, 88);
+	const childAdapter = new DurableChildEventAdapter((ev) => wireEvents.push(ev), parentRef, 88);
 
 	// 1. Initial snapshot arrives with unprefixed child tool slots
 	childAdapter.handleEvent({
@@ -86,9 +86,9 @@ test("Remediation P1 RED: BBChildEventAdapter seeds snapshot with PREFIXED keys 
 	assert.equal(secondUpdate?.partialResult, "fresh", "run_start in child adapter must clear previous output buffer");
 });
 
-test("Remediation P1 RED: BBEventAdapter clears scoped projection state on run_end", () => {
+test("Remediation P1 RED: DurableEventAdapter clears scoped projection state on run_end", () => {
 	const wireEvents: any[] = [];
-	const adapter = new BBEventAdapter((ev) => wireEvents.push(ev));
+	const adapter = new DurableEventAdapter((ev) => wireEvents.push(ev));
 
 	const dummyView = { conversation: { entries: [] } } as any;
 
@@ -123,9 +123,9 @@ test("Remediation P1 RED: BBEventAdapter clears scoped projection state on run_e
 	);
 });
 
-test("Slice 3: BBChildEventAdapter prefixes toolCallId and preserves conversationId", () => {
+test("Slice 3: DurableChildEventAdapter prefixes toolCallId and preserves conversationId", () => {
 	const wireEvents: any[] = [];
-	const childAdapter = new BBChildEventAdapter(
+	const childAdapter = new DurableChildEventAdapter(
 		(ev) => wireEvents.push(ev),
 		"parent-subagent-call",
 		77,

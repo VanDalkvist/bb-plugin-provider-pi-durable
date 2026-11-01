@@ -1,6 +1,6 @@
 import type {
-	BBToolExecutionEndEvent,
-	BBToolExecutionUpdateEvent,
+	ToolExecutionEndEvent,
+	ToolExecutionUpdateEvent,
 } from "./contracts.ts";
 import {
 	decodeNativeToolEnd,
@@ -21,7 +21,7 @@ function buildTerminalError(
 	decoded: Extract<NativeDecodedOutcome, { isError: true }>,
 	canonicalDetails: unknown,
 	parentRef?: string,
-): BBToolExecutionEndEvent {
+): ToolExecutionEndEvent {
 	return {
 		type: "tool_execution_end",
 		toolCallId: event.toolCallId,
@@ -39,7 +39,7 @@ function buildTerminalSuccess(
 	scoped: { output?: string; details?: unknown },
 	canonicalDetails: unknown,
 	parentRef?: string,
-): BBToolExecutionEndEvent {
+): ToolExecutionEndEvent {
 	const details = canonicalDetails !== undefined ? canonicalDetails : scoped.details;
 	const result = presentToolResult({
 		toolName: event.toolName,
@@ -66,7 +66,7 @@ export class ToolEventProjector {
 	public projectToolUpdate(
 		event: NativeToolUpdateEvent,
 		parentRef?: string,
-	): BBToolExecutionUpdateEvent | undefined {
+	): ToolExecutionUpdateEvent | undefined {
 		let partialResult: string | undefined;
 		if (event.output) {
 			partialResult = this.progressState.applyOutputUpdate(event.toolCallId, event.output);
@@ -98,7 +98,7 @@ export class ToolEventProjector {
 	public projectToolEnd(
 		event: NativeToolEndEvent,
 		parentRef?: string,
-	): BBToolExecutionEndEvent {
+	): ToolExecutionEndEvent {
 		const decoded = decodeNativeToolEnd(event);
 		const scoped = this.progressState.take(event.toolCallId);
 		const canonicalDetails = extractCanonicalToolDetails(event);

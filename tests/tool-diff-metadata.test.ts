@@ -1,18 +1,18 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { threadDeltaSchema } from "@get-bb/plugin-sdk/provider-bridge";
-import { BBEventAdapter } from "../src/runner/bridge/bb-event-adapter.ts";
+import { DurableEventAdapter } from "../src/runner/bridge/durable-event-adapter.ts";
 import {
 	translateToolStart,
 	translateToolEnd,
 } from "../src/host/tool-delta-translator.ts";
 import type { DurableView } from "../src/runner/runtime-types.ts";
-import type { BBWireEvent, BBToolExecutionEndEvent } from "../src/runner/bridge/contracts.ts";
+import type { RunnerEvent, ToolExecutionEndEvent } from "../src/runner/bridge/contracts.ts";
 import { viewFixture } from "./fixtures/durable.ts";
 
-test("BBEventAdapter: tool_execution_end forwards canonical details from model[0].details (D-6)", () => {
-    const emitted: BBWireEvent[] = [];
-    const adapter = new BBEventAdapter((evt) => emitted.push(evt));
+test("DurableEventAdapter: tool_execution_end forwards canonical details from model[0].details (D-6)", () => {
+    const emitted: RunnerEvent[] = [];
+    const adapter = new DurableEventAdapter((evt) => emitted.push(evt));
     const dummyView = viewFixture({});
     const diffDetails = { diff: "@@ -1 +1 @@\n-a\n+b\n", patch: "patch string" };
     adapter.handleEvent({
@@ -33,13 +33,13 @@ test("BBEventAdapter: tool_execution_end forwards canonical details from model[0
         } as any,
     }, dummyView);
     assert.equal(emitted.length, 1);
-    const endEvt = emitted[0] as BBToolExecutionEndEvent;
+    const endEvt = emitted[0] as ToolExecutionEndEvent;
     assert.deepEqual(endEvt.details, diffDetails);
 });
 
-test("BBEventAdapter: nested tool_execution_end forwards canonical details from result.details", () => {
-    const emitted: BBWireEvent[] = [];
-    const adapter = new BBEventAdapter((evt) => emitted.push(evt));
+test("DurableEventAdapter: nested tool_execution_end forwards canonical details from result.details", () => {
+    const emitted: RunnerEvent[] = [];
+    const adapter = new DurableEventAdapter((evt) => emitted.push(evt));
     const dummyView = viewFixture({});
     const diffDetails = { diff: "@@ -1 +1 @@\n-x\n+y\n", patch: "nested patch" };
     adapter.handleEvent({
@@ -55,7 +55,7 @@ test("BBEventAdapter: nested tool_execution_end forwards canonical details from 
         },
     } as any, dummyView);
     assert.equal(emitted.length, 1);
-    const endEvt = emitted[0] as BBToolExecutionEndEvent;
+    const endEvt = emitted[0] as ToolExecutionEndEvent;
     assert.deepEqual(endEvt.details, diffDetails);
     assert.equal(endEvt.isError, false);
 });

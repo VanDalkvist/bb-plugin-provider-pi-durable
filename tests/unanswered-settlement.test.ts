@@ -1,13 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { BBEventAdapter } from "../src/runner/bridge/bb-event-adapter.ts";
+import { DurableEventAdapter } from "../src/runner/bridge/durable-event-adapter.ts";
 import { translateAgentEnd } from "../src/host/message-delta-translator.ts";
 import type { DurableView } from "../src/runner/runtime-types.ts";
 import { entryFixture, nativeAssistantFixture, viewFixture } from "./fixtures/durable.ts";
 
 test("Issue #23 reproduction: unanswered input submission with toolUse progress must produce failed turn boundary", () => {
     const outputEvents: any[] = [];
-    const adapter = new BBEventAdapter((evt) => outputEvents.push(evt), () => 128000);
+    const adapter = new DurableEventAdapter((evt) => outputEvents.push(evt), () => 128000);
     const currentView: DurableView = viewFixture({
         conversation: {
             entries: [
@@ -64,7 +64,7 @@ test("Issue #23 reproduction: unanswered input submission with toolUse progress 
 
 test("Regression check: done submission with toolUse must complete normally", () => {
     const outputEvents: any[] = [];
-    const adapter = new BBEventAdapter((evt) => outputEvents.push(evt), () => 128000);
+    const adapter = new DurableEventAdapter((evt) => outputEvents.push(evt), () => 128000);
     const currentView: DurableView = viewFixture({
         conversation: {
             entries: [
@@ -113,7 +113,7 @@ test("Regression check: done submission with toolUse must complete normally", ()
 
 test("Regression check: unanswered with reason aborted must produce interrupted status", () => {
     const outputEvents: any[] = [];
-    const adapter = new BBEventAdapter((evt) => outputEvents.push(evt), () => 128000);
+    const adapter = new DurableEventAdapter((evt) => outputEvents.push(evt), () => 128000);
     const currentView: DurableView = viewFixture({
         conversation: {
             entries: [

@@ -25,14 +25,14 @@ import { createCodemodeExtension } from "@earendil-works/pi-durable/codemode";
 import { CodemodeSandbox } from "@earendil-works/pi-codemode";
 import { captureNativeToolEnds } from "./native-tool-events.fixture.ts";
 import { DeltaTranslator } from "../src/host/delta-translator.ts";
-import { BBEventAdapter } from "../src/runner/bridge/bb-event-adapter.ts";
-import type { BBWireEvent } from "../src/runner/bridge/contracts.ts";
+import { DurableEventAdapter } from "../src/runner/bridge/durable-event-adapter.ts";
+import type { RunnerEvent } from "../src/runner/bridge/contracts.ts";
 import { wireFixture } from "./fixtures/wire.ts";
 
 test("Slice 4: Harness native events project to schema-valid BB deltas", async () => {
 	const { leafEnd, badleafEnd, batchEnd } = await captureNativeToolEnds();
-	const emitted: BBWireEvent[] = [];
-	const adapter = new BBEventAdapter((evt) => emitted.push(evt));
+	const emitted: RunnerEvent[] = [];
+	const adapter = new DurableEventAdapter((evt) => emitted.push(evt));
 
 	adapter.handleEvent({ type: "tool_execution_start", toolCallId: leafEnd.toolCallId, toolName: "leaf", args: {} } as any, null as any);
 	adapter.handleEvent(leafEnd as any, null as any);
@@ -97,8 +97,8 @@ test("Slice 4: Real Harness + CodemodeSandbox full matrix (write, edit, bash suc
 	}, ctx);
 
 	const root = await harness.root(ctx, { agent: { model: { provider: "faux", modelId: "faux-1" } } });
-	const emittedWire: BBWireEvent[] = [];
-	const adapter = new BBEventAdapter((evt) => emittedWire.push(evt));
+	const emittedWire: RunnerEvent[] = [];
+	const adapter = new DurableEventAdapter((evt) => emittedWire.push(evt));
 
 	const stream = await watchEvents(harness, root.id, ctx);
 	stream.start(async (batch: readonly AgentEvent[]) => {

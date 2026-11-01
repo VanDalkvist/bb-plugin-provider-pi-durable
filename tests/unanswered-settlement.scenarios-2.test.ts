@@ -1,13 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { BBEventAdapter } from "../src/runner/bridge/bb-event-adapter.ts";
+import { DurableEventAdapter } from "../src/runner/bridge/durable-event-adapter.ts";
 import { translateAgentEnd } from "../src/host/message-delta-translator.ts";
 import type { DurableView } from "../src/runner/runtime-types.ts";
 import { entryFixture, nativeAssistantFixture, viewFixture } from "./fixtures/durable.ts";
 
 test("Regression check: delayed old settlement does not contaminate newer input", () => {
     const outputEvents: any[] = [];
-    const adapter = new BBEventAdapter((evt) => outputEvents.push(evt), () => 128000);
+    const adapter = new DurableEventAdapter((evt) => outputEvents.push(evt), () => 128000);
     // Pre-record an old aborted submission for input 5
     adapter.handleEvent({
         type: "submission",

@@ -7,8 +7,8 @@ import {
 	watchEvents as defaultWatchEvents,
 } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import type { BBEventAdapter } from "./bridge/bb-event-adapter.ts";
-import type { BBChildEventAdapter } from "./bridge/bb-child-event-adapter.ts";
+import type { DurableEventAdapter } from "./bridge/durable-event-adapter.ts";
+import type { DurableChildEventAdapter } from "./bridge/durable-child-event-adapter.ts";
 import type { DurableView, SubagentWatcherController } from "./runtime-types.ts";
 import { extractCanonicalToolDetails } from "./bridge/native-tool-result.ts";
 import { BindingIndexDoc } from "./binding-docs.ts";
@@ -35,7 +35,7 @@ function extractChildConversationId(event: AgentEvent): ConversationId | undefin
  */
 export async function startSubagentWatcher(
 	harness: Harness,
-	adapter: BBEventAdapter,
+	adapter: DurableEventAdapter,
 	getCurrentView: () => DurableView,
 	options?: SubagentWatcherOptions,
 ): Promise<SubagentWatcherController> {
@@ -48,7 +48,7 @@ export async function startSubagentWatcher(
 		attached.add(conversationId);
 
 		const isChild = parentCallId !== undefined;
-		const childAdapter: BBChildEventAdapter | undefined = isChild
+		const childAdapter: DurableChildEventAdapter | undefined = isChild
 			? adapter.createChildAdapter(parentCallId, conversationId)
 			: undefined;
 

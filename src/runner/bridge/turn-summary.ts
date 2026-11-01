@@ -4,7 +4,7 @@ import {
 	isConversationEntryRecord,
 	type AgentDocument,
 	type ConversationEntryRecord,
-	type BBAssistantMessage,
+	type AssistantMessage,
 	type CumulativeUsageMetrics,
 } from "./contracts.ts";
 import {
@@ -13,7 +13,7 @@ import {
 } from "./assistant-message-builder.ts";
 
 export interface TurnSummaryResult {
-	finalMsg: BBAssistantMessage;
+	finalMsg: AssistantMessage;
 	cw?: number;
 	cumulativeUsage?: CumulativeUsageMetrics;
 	isAborted: boolean;
@@ -56,7 +56,7 @@ export function resolveTurnSummary(
 	current: DurableView,
 	currentText: string,
 	currentThinking: string,
-	lastAssistantMessage?: BBAssistantMessage,
+	lastAssistantMessage?: AssistantMessage,
 	resolveContextWindow?: (provider?: string, modelId?: string) => number | undefined,
 	fault?: SubmissionFault,
 ): TurnSummaryResult {

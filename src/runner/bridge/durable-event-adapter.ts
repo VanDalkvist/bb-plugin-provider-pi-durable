@@ -1,38 +1,38 @@
 import type { AgentEvent, SnapshotEvent } from "@earendil-works/pi-durable";
 import type { DurableView } from "../runtime-types.ts";
-import type { BBWireEvent, BBAssistantMessage, BBAssistantMessageUsage } from "./contracts.ts";
+import type { RunnerEvent, AssistantMessage, AssistantMessageUsage } from "./contracts.ts";
 import { resolveTurnSummary, findSubmissionFault } from "./turn-summary.ts";
 import { ToolEventProjector } from "./tool-result-extractor.ts";
-import { BBChildEventAdapter } from "./bb-child-event-adapter.ts";
+import { DurableChildEventAdapter } from "./durable-child-event-adapter.ts";
 
 export { resolveToolCallArgs } from "./tool-args-resolver.ts";
 
 interface RawAssistantEntryMessage {
 	role?: string;
-	content?: BBAssistantMessage["content"];
-	stopReason?: BBAssistantMessage["stopReason"];
-	usage?: BBAssistantMessageUsage;
+	content?: AssistantMessage["content"];
+	stopReason?: AssistantMessage["stopReason"];
+	usage?: AssistantMessageUsage;
 	[key: string]: unknown;
 }
 
 /**
- * Transforms native @earendil-works/pi-durable AgentEvents into BB Wire JSONL events.
+ * Transforms native @earendil-works/pi-durable AgentEvents into canonical RunnerEvent stream.
  * Relies directly on the first-party transactional watchEvents stream.
  */
-export class BBEventAdapter {
-	private readonly output: (event: BBWireEvent) => void;
+export class DurableEventAdapter {
+	private readonly output: (event: RunnerEvent) => void;
 	private readonly resolveContextWindow?: (provider?: string, modelId?: string) => number | undefined;
 	private readonly submissions = new Map<string | number, { status: string; reason?: string; detail?: string }>();
 	private readonly activeToolNames = new Map<string | number, string>();
 	private readonly toolProjector = new ToolEventProjector();
 	private lastTaskError?: string;
-	private lastAssistantMessage?: BBAssistantMessage;
+	private lastAssistantMessage?: AssistantMessage;
 	private lastCheckpointId?: string;
 	private currentText = "";
 	private currentThinking = "";
 	private isInThinking = false;
 
-	constructor(output: (event: BBWireEvent) => void, resolveContextWindow?: (p?: string, m?: string) => number | undefined) {
+	constructor(output: (event: RunnerEvent) => void, resolveContextWindow?: (p?: string, m?: string) => number | undefined) {
 		this.output = output;
 		this.resolveContextWindow = resolveContextWindow;
 	}
@@ -50,8 +50,8 @@ export class BBEventAdapter {
 		return String(parentToolCallId);
 	}
 
-	public createChildAdapter(parentCallId: string, conversationId?: string | number): BBChildEventAdapter {
-		return new BBChildEventAdapter(this.output, parentCallId, conversationId);
+	public createChildAdapter(parentCallId: string, conversationId?: string | number): DurableChildEventAdapter {
+		return new DurableChildEventAdapter(this.output, parentCallId, conversationId);
 	}
 
 	private emitTerminal(type: "turn_end" | "agent_end", current: DurableView, inputs?: readonly (string | number)[]): void {

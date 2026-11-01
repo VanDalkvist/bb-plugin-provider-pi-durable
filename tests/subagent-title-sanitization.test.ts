@@ -1,9 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { nativeChildTitle } from "../src/shared/child-title.ts";
-import { BBChildEventAdapter } from "../src/runner/bridge/bb-child-event-adapter.ts";
+import { DurableChildEventAdapter } from "../src/runner/bridge/durable-child-event-adapter.ts";
 import { buildSpawnArgs } from "../src/host/subthread-spawner.ts";
-import type { BBWireEvent } from "../src/runner/bridge/contracts.ts";
+import type { RunnerEvent } from "../src/runner/bridge/contracts.ts";
 import type { AgentEvent } from "@earendil-works/pi-durable";
 
 test("nativeChildTitle: strips control characters and collapses whitespace", () => {
@@ -67,9 +67,9 @@ test("buildSpawnArgs: sanitizes title using nativeChildTitle", () => {
 	}
 });
 
-test("BBChildEventAdapter message_end flush: flushes unsent tail chunk without duplicating existing text", () => {
-	const emitted: BBWireEvent[] = [];
-	const adapter = new BBChildEventAdapter((ev) => emitted.push(ev), "parent_call_1", 42);
+test("DurableChildEventAdapter message_end flush: flushes unsent tail chunk without duplicating existing text", () => {
+	const emitted: RunnerEvent[] = [];
+	const adapter = new DurableChildEventAdapter((ev) => emitted.push(ev), "parent_call_1", 42);
 
 	// 1. Partial streaming via message_update text_delta
 	adapter.handleEvent({
@@ -149,9 +149,9 @@ test("BBChildEventAdapter message_end flush: flushes unsent tail chunk without d
 	assert.deepEqual(allDeltas, ["Hello ", "world! Done.", "All tokens streamed."]);
 });
 
-test("BBChildEventAdapter message_end flush: flushes entire text when no deltas were streamed", () => {
-	const emitted: BBWireEvent[] = [];
-	const adapter = new BBChildEventAdapter((ev) => emitted.push(ev), "parent_call_2", 99);
+test("DurableChildEventAdapter message_end flush: flushes entire text when no deltas were streamed", () => {
+	const emitted: RunnerEvent[] = [];
+	const adapter = new DurableChildEventAdapter((ev) => emitted.push(ev), "parent_call_2", 99);
 
 	const unstreamedEntry = {
 		id: 201,

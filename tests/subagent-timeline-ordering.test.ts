@@ -2,9 +2,9 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { translateToolStart, translateToolUpdate, buildToolItemShape } from "../src/host/tool-delta-translator.ts";
 import { DeltaTranslator } from "../src/host/delta-translator.ts";
-import { BBChildEventAdapter } from "../src/runner/bridge/bb-child-event-adapter.ts";
+import { DurableChildEventAdapter } from "../src/runner/bridge/durable-child-event-adapter.ts";
 import type { AgentEvent } from "@earendil-works/pi-durable";
-import type { BBWireEvent } from "../src/runner/bridge/contracts.ts";
+import type { RunnerEvent } from "../src/runner/bridge/contracts.ts";
 import { publicDeltaFixture, wireFixture } from "./fixtures/wire.ts";
 
 test("Subagent delegation item carries task in label and summary", () => {
@@ -26,9 +26,9 @@ test("Subagent delegation item carries task in label and summary", () => {
     assert.equal(delta.item?.summary, task);
 });
 
-test("BBChildEventAdapter does NOT duplicate user task prompt into card stream", () => {
-	const wireEvents: BBWireEvent[] = [];
-	const adapter = new BBChildEventAdapter((ev) => wireEvents.push(ev), "call_sub_1");
+test("DurableChildEventAdapter does NOT duplicate user task prompt into card stream", () => {
+	const wireEvents: RunnerEvent[] = [];
+	const adapter = new DurableChildEventAdapter((ev) => wireEvents.push(ev), "call_sub_1");
 
 	// Initial prompt submitted to child conversation
 	const inputEvent: AgentEvent = {

@@ -1,22 +1,22 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { threadDeltaSchema } from "@get-bb/plugin-sdk/provider-bridge";
-import { BBEventAdapter } from "../src/runner/bridge/bb-event-adapter.ts";
+import { DurableEventAdapter } from "../src/runner/bridge/durable-event-adapter.ts";
 import { translateAgentEnd } from "../src/host/message-delta-translator.ts";
 import { DeltaTranslator } from "../src/host/delta-translator.ts";
 import type { DurableView } from "../src/runner/runtime-types.ts";
 import type {
-	BBWireEvent,
-	BBTurnEndEvent,
-	BBAgentEndEvent,
+	RunnerEvent,
+	TurnEndEvent,
+	AgentEndEvent,
 } from "../src/runner/bridge/contracts.ts";
 import type { AgentEvent } from "@earendil-works/pi-durable";
 import { viewFixture, entryFixture, nativeAssistantFixture } from "./fixtures/durable.ts";
 import { wireFixture } from "./fixtures/wire.ts";
 
-test("BBEventAdapter: turn_end and run_end extract providerCheckpointId from conversation tail entry", () => {
-    const emitted: BBWireEvent[] = [];
-    const adapter = new BBEventAdapter((evt) => emitted.push(evt));
+test("DurableEventAdapter: turn_end and run_end extract providerCheckpointId from conversation tail entry", () => {
+    const emitted: RunnerEvent[] = [];
+    const adapter = new DurableEventAdapter((evt) => emitted.push(evt));
     const viewWithEntries = viewFixture({
         conversation: {
             entries: [
@@ -32,17 +32,17 @@ test("BBEventAdapter: turn_end and run_end extract providerCheckpointId from con
     });
     adapter.handleEvent({ type: "turn_end" }, viewWithEntries);
     adapter.handleEvent({ type: "run_end", inputs: [] }, viewWithEntries);
-    const turnEnd = emitted.find((e): e is BBTurnEndEvent => e.type === "turn_end");
-    const agentEnd = emitted.find((e): e is BBAgentEndEvent => e.type === "agent_end");
+    const turnEnd = emitted.find((e): e is TurnEndEvent => e.type === "turn_end");
+    const agentEnd = emitted.find((e): e is AgentEndEvent => e.type === "agent_end");
     assert.ok(turnEnd, "turn_end must be emitted");
     assert.equal(turnEnd.providerCheckpointId, "102", "turn_end must reflect tail entry ID");
     assert.ok(agentEnd, "agent_end must be emitted");
     assert.equal(agentEnd.providerCheckpointId, "102", "agent_end must reflect tail entry ID");
 });
 
-test("BBEventAdapter: snapshot initializes lastCheckpointId across entries and view shapes", () => {
-    const emitted: BBWireEvent[] = [];
-    const adapter = new BBEventAdapter((evt) => emitted.push(evt));
+test("DurableEventAdapter: snapshot initializes lastCheckpointId across entries and view shapes", () => {
+    const emitted: RunnerEvent[] = [];
+    const adapter = new DurableEventAdapter((evt) => emitted.push(evt));
     const emptyView = viewFixture({ conversation: { entries: [], docs: {} } });
     // 1. Snapshot with entries array
     const snapshotWithEntries = {
@@ -57,7 +57,7 @@ test("BBEventAdapter: snapshot initializes lastCheckpointId across entries and v
     adapter.handleEvent(snapshotWithEntries, emptyView);
     // Subsequent turn_end without view entries should still use the snapshot checkpoint
     adapter.handleEvent({ type: "turn_end" }, emptyView);
-    const turnEnd1 = emitted.find((e): e is BBTurnEndEvent => e.type === "turn_end");
+    const turnEnd1 = emitted.find((e): e is TurnEndEvent => e.type === "turn_end");
     assert.ok(turnEnd1);
     assert.equal(turnEnd1.providerCheckpointId, "502", "Snapshot entries tail should initialize checkpoint");
     // 2. Snapshot with nested view.conversation.entries
@@ -78,14 +78,14 @@ test("BBEventAdapter: snapshot initializes lastCheckpointId across entries and v
     } as unknown as AgentEvent;
     adapter.handleEvent(snapshotWithView, emptyView);
     adapter.handleEvent({ type: "turn_end" }, emptyView);
-    const turnEnd2 = emitted.find((e): e is BBTurnEndEvent => e.type === "turn_end");
+    const turnEnd2 = emitted.find((e): e is TurnEndEvent => e.type === "turn_end");
     assert.ok(turnEnd2);
     assert.equal(turnEnd2.providerCheckpointId, "777", "Snapshot view.conversation.entries should initialize checkpoint");
 });
 
-test("BBEventAdapter: auto_retry_start and auto_retry_end wire event translations", () => {
-    const emitted: BBWireEvent[] = [];
-    const adapter = new BBEventAdapter((evt) => emitted.push(evt));
+test("DurableEventAdapter: auto_retry_start and auto_retry_end wire event translations", () => {
+    const emitted: RunnerEvent[] = [];
+    const adapter = new DurableEventAdapter((evt) => emitted.push(evt));
     const dummyView = viewFixture({ conversation: { entries: [], docs: {} } });
     adapter.handleEvent({
         type: "auto_retry_start",

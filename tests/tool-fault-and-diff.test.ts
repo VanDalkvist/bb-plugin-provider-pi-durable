@@ -1,18 +1,18 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { threadDeltaSchema } from "@get-bb/plugin-sdk/provider-bridge";
-import { BBEventAdapter } from "../src/runner/bridge/bb-event-adapter.ts";
+import { DurableEventAdapter } from "../src/runner/bridge/durable-event-adapter.ts";
 import {
 	translateToolStart,
 	translateToolEnd,
 } from "../src/host/tool-delta-translator.ts";
 import type { DurableView } from "../src/runner/runtime-types.ts";
-import type { BBWireEvent, BBToolExecutionEndEvent, BBToolExecutionUpdateEvent } from "../src/runner/bridge/contracts.ts";
+import type { RunnerEvent, ToolExecutionEndEvent, ToolExecutionUpdateEvent } from "../src/runner/bridge/contracts.ts";
 import { viewFixture } from "./fixtures/durable.ts";
 
-test("BBEventAdapter: tool_execution_end with missing entry and result emits isError: true with fault result (D-5)", () => {
-    const emitted: BBWireEvent[] = [];
-    const adapter = new BBEventAdapter((evt) => emitted.push(evt));
+test("DurableEventAdapter: tool_execution_end with missing entry and result emits isError: true with fault result (D-5)", () => {
+    const emitted: RunnerEvent[] = [];
+    const adapter = new DurableEventAdapter((evt) => emitted.push(evt));
     const dummyView = viewFixture({});
     adapter.handleEvent({
         type: "tool_execution_end",
@@ -20,7 +20,7 @@ test("BBEventAdapter: tool_execution_end with missing entry and result emits isE
         toolName: "bash",
     } as any, dummyView);
     assert.equal(emitted.length, 1);
-    const endEvt = emitted[0] as BBToolExecutionEndEvent;
+    const endEvt = emitted[0] as ToolExecutionEndEvent;
     assert.equal(endEvt.type, "tool_execution_end");
     assert.equal(endEvt.toolCallId, "call_fault_1");
     assert.equal(endEvt.toolName, "bash");
@@ -28,9 +28,9 @@ test("BBEventAdapter: tool_execution_end with missing entry and result emits isE
     assert.match(endEvt.result, /without generating an entry record or nested result/i);
 });
 
-test("BBEventAdapter: tool_execution_end with valid entry and isError: false emits clean result", () => {
-    const emitted: BBWireEvent[] = [];
-    const adapter = new BBEventAdapter((evt) => emitted.push(evt));
+test("DurableEventAdapter: tool_execution_end with valid entry and isError: false emits clean result", () => {
+    const emitted: RunnerEvent[] = [];
+    const adapter = new DurableEventAdapter((evt) => emitted.push(evt));
     const dummyView = viewFixture({});
     adapter.handleEvent({
         type: "tool_execution_end",
@@ -50,16 +50,16 @@ test("BBEventAdapter: tool_execution_end with valid entry and isError: false emi
         } as any,
     }, dummyView);
     assert.equal(emitted.length, 1);
-    const endEvt = emitted[0] as BBToolExecutionEndEvent;
+    const endEvt = emitted[0] as ToolExecutionEndEvent;
     assert.equal(endEvt.type, "tool_execution_end");
     assert.equal(endEvt.toolCallId, "call_read_1");
     assert.equal(endEvt.result, "file content lines");
     assert.equal(endEvt.isError, false);
 });
 
-test("BBEventAdapter: tool_execution_end with explicit error preserves isError: true", () => {
-    const emitted: BBWireEvent[] = [];
-    const adapter = new BBEventAdapter((evt) => emitted.push(evt));
+test("DurableEventAdapter: tool_execution_end with explicit error preserves isError: true", () => {
+    const emitted: RunnerEvent[] = [];
+    const adapter = new DurableEventAdapter((evt) => emitted.push(evt));
     const dummyView = viewFixture({});
     adapter.handleEvent({
         type: "tool_execution_end",
@@ -79,15 +79,15 @@ test("BBEventAdapter: tool_execution_end with explicit error preserves isError: 
         } as any,
     }, dummyView);
     assert.equal(emitted.length, 1);
-    const endEvt = emitted[0] as BBToolExecutionEndEvent;
+    const endEvt = emitted[0] as ToolExecutionEndEvent;
     assert.equal(endEvt.type, "tool_execution_end");
     assert.equal(endEvt.result, "command failed with code 1");
     assert.equal(endEvt.isError, true);
 });
 
-test("BBEventAdapter: tool_execution_update forwards trimStart when present (D-9)", () => {
-    const emitted: BBWireEvent[] = [];
-    const adapter = new BBEventAdapter((evt) => emitted.push(evt));
+test("DurableEventAdapter: tool_execution_update forwards trimStart when present (D-9)", () => {
+    const emitted: RunnerEvent[] = [];
+    const adapter = new DurableEventAdapter((evt) => emitted.push(evt));
     const dummyView = viewFixture({});
     adapter.handleEvent({
         type: "tool_execution_update",
@@ -99,7 +99,7 @@ test("BBEventAdapter: tool_execution_update forwards trimStart when present (D-9
         },
     }, dummyView);
     assert.equal(emitted.length, 1);
-    const updateEvt = emitted[0] as BBToolExecutionUpdateEvent;
+    const updateEvt = emitted[0] as ToolExecutionUpdateEvent;
     assert.equal(updateEvt.type, "tool_execution_update");
     assert.equal(updateEvt.toolCallId, "call_stream_1");
     assert.equal(updateEvt.toolName, "bash");

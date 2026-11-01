@@ -1,10 +1,10 @@
-import type { AssistantMessage } from "@earendil-works/pi-ai";
+import type { AssistantMessage as PiAssistantMessage } from "@earendil-works/pi-ai";
 import type { DurableView } from "../runtime-types.ts";
 import {
 	isUsageDocument,
 	isConversationEntryRecord,
-	type BBAssistantMessage,
-	type BBAssistantMessageUsage,
+	type AssistantMessage,
+	type AssistantMessageUsage,
 	type ConversationEntryRecord,
 	type CumulativeUsageMetrics,
 	type UsageDocument,
@@ -102,22 +102,22 @@ export function buildFinalAssistantMessage(
 	current: DurableView,
 	lastGenerationText: string,
 	lastThinkingText: string,
-): BBAssistantMessage {
+): AssistantMessage {
 	const entries = current.conversation.entries ?? [];
 	const lastAssistantEntry = [...entries].reverse().find(
 		(e): e is ConversationEntryRecord => isConversationEntryRecord(e) && e.kind === "pi.assistant",
 	);
-	const lastAssistantMsg = lastAssistantEntry?.model?.[0] as AssistantMessage | undefined;
+	const lastAssistantMsg = lastAssistantEntry?.model?.[0] as PiAssistantMessage | undefined;
 
 	if (lastAssistantMsg) {
 		const rawErr = (lastAssistantMsg as { errorMessage?: unknown }).errorMessage;
 		const errorMessage = typeof rawErr === "string" ? rawErr : undefined;
 		const stopReason = typeof lastAssistantMsg.stopReason === "string"
-			? (lastAssistantMsg.stopReason as BBAssistantMessage["stopReason"])
+			? (lastAssistantMsg.stopReason as AssistantMessage["stopReason"])
 			: (errorMessage ? "error" : "stop");
 
 		let content = Array.isArray(lastAssistantMsg.content)
-			? (lastAssistantMsg.content as unknown as BBAssistantMessage["content"])
+			? (lastAssistantMsg.content as unknown as AssistantMessage["content"])
 			: [{ type: "text" as const, text: lastGenerationText }];
 
 		if (content.length === 0 && (stopReason === "error" || errorMessage)) {
@@ -125,7 +125,7 @@ export function buildFinalAssistantMessage(
 		}
 
 		const usage = (typeof lastAssistantMsg.usage === "object" && lastAssistantMsg.usage !== null)
-			? (lastAssistantMsg.usage as BBAssistantMessageUsage)
+			? (lastAssistantMsg.usage as AssistantMessageUsage)
 			: undefined;
 
 		return {
@@ -137,7 +137,7 @@ export function buildFinalAssistantMessage(
 		};
 	}
 
-	const finalContent: BBAssistantMessage["content"] = [];
+	const finalContent: AssistantMessage["content"] = [];
 	if (lastThinkingText) {
 		finalContent.push({ type: "thinking", thinking: lastThinkingText });
 	}

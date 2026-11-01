@@ -4,9 +4,9 @@ import { threadDeltaSchema } from "@get-bb/plugin-sdk/provider-bridge";
 import type { AgentEvent } from "@earendil-works/pi-durable";
 import type { DurableView } from "../src/runner/runtime-types.ts";
 import { extractCumulativeUsage } from "../src/runner/bridge/assistant-message-builder.ts";
-import { BBEventAdapter } from "../src/runner/bridge/bb-event-adapter.ts";
+import { DurableEventAdapter } from "../src/runner/bridge/durable-event-adapter.ts";
 import { translateAgentEndUsage } from "../src/host/message-delta-translator.ts";
-import type { BBWireEvent, CumulativeUsageMetrics } from "../src/runner/bridge/contracts.ts";
+import type { RunnerEvent, CumulativeUsageMetrics } from "../src/runner/bridge/contracts.ts";
 import { jsonFixture, viewFixture } from "./fixtures/durable.ts";
 import { createMockView } from "./fixtures/cumulative-usage-support.ts";
 
@@ -46,7 +46,7 @@ describe("Cumulative Token Usage Monotonicity & pi.usage Sync (Cycle 70, D-7)", 
         assert.equal(cumulative.cachedInputTokens, 50);
         assert.equal(cumulative.cacheWriteInputTokens, 10);
     });
-    it("BBEventAdapter emits cumulativeUsage on turn_end and run_end", () => {
+    it("DurableEventAdapter emits cumulativeUsage on turn_end and run_end", () => {
         const usageDoc = {
             models: {
                 "test/model": {
@@ -59,11 +59,11 @@ describe("Cumulative Token Usage Monotonicity & pi.usage Sync (Cycle 70, D-7)", 
             },
         };
         const view = createMockView(usageDoc);
-        const events: BBWireEvent[] = [];
-        const adapter = new BBEventAdapter((evt) => events.push(evt));
+        const events: RunnerEvent[] = [];
+        const adapter = new DurableEventAdapter((evt) => events.push(evt));
         adapter.handleEvent({ type: "turn_end" } as AgentEvent, view);
         assert.equal(events.length, 1);
-        const turnEnd = events[0] as Extract<BBWireEvent, {
+        const turnEnd = events[0] as Extract<RunnerEvent, {
             type: "turn_end";
         }>;
         assert.equal(turnEnd.type, "turn_end");
@@ -76,7 +76,7 @@ describe("Cumulative Token Usage Monotonicity & pi.usage Sync (Cycle 70, D-7)", 
         });
         adapter.handleEvent({ type: "run_end", inputs: [] } as unknown as AgentEvent, view);
         assert.equal(events.length, 2);
-        const agentEnd = events[1] as Extract<BBWireEvent, {
+        const agentEnd = events[1] as Extract<RunnerEvent, {
             type: "agent_end";
         }>;
         assert.equal(agentEnd.type, "agent_end");

@@ -4,9 +4,9 @@ import { threadDeltaSchema } from "@get-bb/plugin-sdk/provider-bridge";
 import type { AgentEvent } from "@earendil-works/pi-durable";
 import type { DurableView } from "../src/runner/runtime-types.ts";
 import { extractCumulativeUsage } from "../src/runner/bridge/assistant-message-builder.ts";
-import { BBEventAdapter } from "../src/runner/bridge/bb-event-adapter.ts";
+import { DurableEventAdapter } from "../src/runner/bridge/durable-event-adapter.ts";
 import { translateAgentEndUsage } from "../src/host/message-delta-translator.ts";
-import type { BBWireEvent, CumulativeUsageMetrics } from "../src/runner/bridge/contracts.ts";
+import type { RunnerEvent, CumulativeUsageMetrics } from "../src/runner/bridge/contracts.ts";
 import { jsonFixture, viewFixture } from "./fixtures/durable.ts";
 import { createMockView } from "./fixtures/cumulative-usage-support.ts";
 

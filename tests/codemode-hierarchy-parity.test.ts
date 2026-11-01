@@ -1,18 +1,18 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { DeltaTranslator } from "../src/host/delta-translator.ts";
-import { BBEventAdapter } from "../src/runner/bridge/bb-event-adapter.ts";
-import { BBChildEventAdapter } from "../src/runner/bridge/bb-child-event-adapter.ts";
+import { DurableEventAdapter } from "../src/runner/bridge/durable-event-adapter.ts";
+import { DurableChildEventAdapter } from "../src/runner/bridge/durable-child-event-adapter.ts";
 import type { AgentEvent } from "@earendil-works/pi-durable";
 import type { DurableView } from "../src/runner/runtime-types.ts";
-import type { BBWireEvent } from "../src/runner/bridge/contracts.ts";
+import type { RunnerEvent } from "../src/runner/bridge/contracts.ts";
 import { viewFixture } from "./fixtures/durable.ts";
 import { publicDeltaFixture, wireFixture } from "./fixtures/wire.ts";
 
 describe("Codemode Hierarchy and Delegation Parity (Cycle 103)", () => {
-    it("BBEventAdapter: suppresses parentRef when nested tools execute inside codemode", () => {
-        const wireEvents: BBWireEvent[] = [];
-        const adapter = new BBEventAdapter((evt) => wireEvents.push(evt));
+    it("DurableEventAdapter: suppresses parentRef when nested tools execute inside codemode", () => {
+        const wireEvents: RunnerEvent[] = [];
+        const adapter = new DurableEventAdapter((evt) => wireEvents.push(evt));
         const dummyView = viewFixture({});
         adapter.handleEvent({ type: "run_start", inputs: [] }, dummyView);
         // 1. Codemode tool starts at root level
@@ -91,8 +91,8 @@ describe("Codemode Hierarchy and Delegation Parity (Cycle 103)", () => {
         assert.equal((childDelta.item as Record<string, unknown>).parentToolCallId, undefined, "Delta item must not carry parentToolCallId pointing to codemode");
     });
     it("Subagent delegation parity: subagent delegations strictly retain Bot presentation and child parentRef", () => {
-        const emitted: BBWireEvent[] = [];
-        const childAdapter = new BBChildEventAdapter((evt) => emitted.push(evt), "call_subagent_99");
+        const emitted: RunnerEvent[] = [];
+        const childAdapter = new DurableChildEventAdapter((evt) => emitted.push(evt), "call_subagent_99");
         childAdapter.handleEvent({
             type: "tool_execution_start",
             toolCallId: "call_nested_tool",

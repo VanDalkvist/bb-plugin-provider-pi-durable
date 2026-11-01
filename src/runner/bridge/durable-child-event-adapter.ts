@@ -1,11 +1,11 @@
 import type { AgentEvent } from "@earendil-works/pi-durable";
 import type { DurableView } from "../runtime-types.ts";
-import type { BBWireEvent } from "./contracts.ts";
+import type { RunnerEvent } from "./contracts.ts";
 import { ToolEventProjector } from "./tool-result-extractor.ts";
 import { resolveChildRunOutcome } from "./child-run-outcome.ts";
 
-export class BBChildEventAdapter {
-	private readonly output: (event: BBWireEvent) => void;
+export class DurableChildEventAdapter {
+	private readonly output: (event: RunnerEvent) => void;
 	private readonly parentRef: string;
 	private readonly conversationId?: string | number;
 	private readonly toolProjector = new ToolEventProjector();
@@ -15,7 +15,7 @@ export class BBChildEventAdapter {
 	private currentThinking = "";
 	private isInThinking = false;
 
-	constructor(output: (event: BBWireEvent) => void, parentRef: string, conversationId?: string | number) {
+	constructor(output: (event: RunnerEvent) => void, parentRef: string, conversationId?: string | number) {
 		this.output = output;
 		this.parentRef = parentRef;
 		this.conversationId = conversationId;
