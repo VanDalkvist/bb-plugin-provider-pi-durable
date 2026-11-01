@@ -6,6 +6,7 @@ import { DatabaseSync } from "node:sqlite";
 import { getBbDataDir } from "./paths.ts";
 import { nativeChildTitle } from "../shared/child-title.ts";
 import { formatSubagentMirrorPrompt } from "../shared/subagent-envelope.ts";
+import { formatModelCliArg } from "../shared/model-ref.ts";
 
 const execFileAsync = promisify(execFile);
 
@@ -125,7 +126,7 @@ export function buildSpawnArgs(args: SubthreadSpawnArgs): string[] {
 	}
 
 	if (args.actualModel?.provider && args.actualModel?.modelId) {
-		cliArgs.push("--model", `${args.actualModel.provider}/${args.actualModel.modelId}`);
+		cliArgs.push("--model", formatModelCliArg(args.actualModel));
 	}
 	if (args.thinkingLevel) {
 		const level = args.thinkingLevel === "off" ? "none" : args.thinkingLevel;

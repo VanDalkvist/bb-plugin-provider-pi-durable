@@ -1,6 +1,7 @@
 import { ROOT_CONVERSATION_ID } from "@earendil-works/pi-durable";
 import { parseProviderThreadId } from "./composite-id.ts";
 import { SessionIdentityMismatchError } from "./session-errors.ts";
+import { normalizeModelReference } from "../shared/model-ref.ts";
 
 export interface ChildTurnSessionLike {
 	options?: { threadId?: string; model?: { provider: string; id: string }; thinkingLevel?: string };
@@ -90,13 +91,10 @@ export function parseModelRef(raw: unknown): { provider: string; modelId: string
 	if (typeof raw === "string" && raw.trim()) {
 		const slash = raw.indexOf("/");
 		if (slash !== -1) {
-			return { provider: raw.slice(0, slash), modelId: raw.slice(slash + 1) };
+			return normalizeModelReference({ provider: raw.slice(0, slash), modelId: raw.slice(slash + 1) });
 		}
 	} else if (typeof raw === "object" && raw !== null) {
-		const m = raw as { provider?: unknown; id?: unknown; modelId?: unknown };
-		const p = typeof m.provider === "string" ? m.provider : undefined;
-		const id = typeof m.id === "string" ? m.id : (typeof m.modelId === "string" ? m.modelId : undefined);
-		if (p && id) return { provider: p, modelId: id };
+		return normalizeModelReference(raw);
 	}
 	return undefined;
 }
@@ -134,19 +132,20 @@ export async function validateChildTurn(
 	}
 
 	const reqModel = parseModelRef(params.options?.model);
+	const normalizedActual = normalizeModelReference(actualModel);
 	if (reqModel) {
-		if (!actualModel) {
+		if (!normalizedActual) {
 			return {
 				valid: false,
 				code: -32602,
 				message: "CHILD_MODEL_POLICY_LOCKED: Could not resolve subagent child thread model to validate requested model override",
 			};
 		}
-		if (reqModel.provider !== actualModel.provider || reqModel.modelId !== actualModel.modelId) {
+		if (reqModel.provider !== normalizedActual.provider || reqModel.modelId !== normalizedActual.modelId) {
 			return {
 				valid: false,
 				code: -32602,
-				message: `CHILD_MODEL_POLICY_LOCKED: Subagent child thread model (${actualModel.provider}/${actualModel.modelId}) cannot be overridden with (${reqModel.provider}/${reqModel.modelId})`,
+				message: `CHILD_MODEL_POLICY_LOCKED: Subagent child thread model (${normalizedActual.provider}/${normalizedActual.modelId}) cannot be overridden with (${reqModel.provider}/${reqModel.modelId})`,
 			};
 		}
 	}
