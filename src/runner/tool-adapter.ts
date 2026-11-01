@@ -52,11 +52,11 @@ export function adaptExtensionTool(
 	getExtensionRunner?: () => ExtensionRunner | undefined,
 ): ToolRegistration {
 	const exposure = toolDef.exposure as string | undefined;
-	const isDeferred = exposure === "deferred" || exposure === "codemode-deferred";
+	const isDeferred = exposure === "deferred" || exposure === "codemode";
 	const callers =
 		exposure === "model-only"
 			? (["model"] as const)
-			: exposure === "codemode" || exposure === "codemode-deferred"
+			: exposure === "codemode"
 				? (["tools"] as const)
 				: exposure === "hidden"
 					? ([] as const)
@@ -76,8 +76,9 @@ export function adaptExtensionTool(
 					structuredOutputSchema: toolDef.outputSchema as import("typebox").TSchema,
 				}
 			: {}),
-		async execute(args, api) {
+		async execute(args, api, runtimeContext) {
 			const runner = getExtensionRunner?.();
+			const abortSignal = (runtimeContext as { abortSignal?: AbortSignal } | undefined)?.abortSignal;
 			if (runner?.hasHandlers("tool_call")) {
 				const hookResult = await runner.emitToolCall({
 					type: "tool_call",
@@ -118,7 +119,7 @@ export function adaptExtensionTool(
 				const result = await toolDef.execute(
 					api.callId,
 					args,
-					undefined,
+					abortSignal,
 					(update) => {
 						if (update?.content && hasOutput(api)) {
 							const textChunks = update.content
