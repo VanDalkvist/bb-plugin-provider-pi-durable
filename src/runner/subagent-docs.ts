@@ -40,6 +40,7 @@ export type PendingSubagentReport = {
 export type SubagentBatchPayload = {
 	requestId: string;
 	reports: PendingSubagentReport[];
+	attempt?: number;
 };
 
 export type DeliveryHoldState = {

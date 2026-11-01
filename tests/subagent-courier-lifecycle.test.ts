@@ -83,6 +83,11 @@ test("Courier: recovers from uncertain delivery via hold watchdog instead of dea
 	);
 	assert.equal(resNext2.status, "running");
 	assert.equal(resNext2.checkpoint.phase, "send");
+	assert.equal(
+		docStore.sending.requestId,
+		"subagent-batch:courier_1:1:r1",
+		"Retried batch must rotate requestId to bypass cached unanswered submission",
+	);
 });
 
 test("clearDeliveryHold: explicitly removes hold from document", () => {

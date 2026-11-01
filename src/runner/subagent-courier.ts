@@ -39,6 +39,11 @@ export function courierFor(admit?: Admission, holdTimeoutMs = DEFAULT_HOLD_TIMEO
 					state.batchNumber = batch;
 					state.outbox = [];
 					state.sending = { requestId: `subagent-batch:${task.id}:${batch}`, reports };
+				} else {
+					const attempt = (state.sending.attempt ?? 0) + 1;
+					state.sending.attempt = attempt;
+					const batch = state.batchNumber ?? 1;
+					state.sending.requestId = `subagent-batch:${task.id}:${batch}:r${attempt}`;
 				}
 				return { status: "running", checkpoint: { phase: "send" } };
 			}, context),
