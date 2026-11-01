@@ -1,14 +1,8 @@
 import { createRequire as __createRequire } from "node:module";
 const require = __createRequire(import.meta.url);
 
-// src/runner/model-setup.ts
-import {
-  DefaultResourceLoader,
-  ModelRuntime,
-  SettingsManager,
-  getAgentDir,
-  resolveModelScopeWithDiagnostics
-} from "@earendil-works/pi-coding-agent";
+// src/runner/runtime.ts
+import { resolveModelScopeWithDiagnostics } from "@earendil-works/pi-coding-agent";
 
 // src/runner/harness-setup.ts
 import {
@@ -62,24 +56,6 @@ import {
   AssistantEntry as AssistantEntry2,
   defineTask as defineTask2
 } from "@earendil-works/pi-durable";
-
-// src/shared/child-title.ts
-function nativeChildTitle(name, role, model) {
-  const part = (value, limit) => Array.from(
-    value.replace(/[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u2028-\u202e\u2066-\u2069]/gu, " ").replace(/\s+/gu, " ").trim()
-  ).slice(0, limit).join("");
-  const parts = [part(name, 180)];
-  if (role) {
-    const r = part(role, 24);
-    if (r) parts.push(r);
-  }
-  const modelLabel = [model?.provider, model?.modelId].filter(Boolean).join("/");
-  if (modelLabel) {
-    const m = part(modelLabel, 40);
-    if (m) parts.push(m);
-  }
-  return parts.filter(Boolean).join(" \xB7 ");
-}
 
 // src/runner/subagent-courier.ts
 import { defineTask } from "@earendil-works/pi-durable";
@@ -202,7 +178,7 @@ function reporterFor(courier, admit) {
           const doc = await tx.doc(SubagentsDoc, runtime.conversationId);
           doc.agents ??= {};
           const record = doc.agents[task2.input.key] ?? {
-            name: nativeChildTitle(task2.input.task, "worker"),
+            name: task2.input.task.trim(),
             conversationId: task2.input.conversationId,
             requestId: task2.input.requestId,
             task: task2.input.task,
@@ -399,7 +375,7 @@ function createSubagentExtension(getPolicy) {
                 childId = created.id;
               }
               const record = {
-                name: nativeChildTitle(args2.task, "worker"),
+                name: args2.task.trim(),
                 conversationId: childId,
                 requestId,
                 task: args2.task,
@@ -769,119 +745,13 @@ async function findInitialAgentModel(settingsManager, modelRuntime, cli) {
   return {};
 }
 
-// src/runner/model-setup.ts
-async function setupRunnerModels(cwd, args2) {
-  const agentDir = getAgentDir();
-  const settingsManager = SettingsManager.create(cwd, agentDir);
-  const modelRuntime = await ModelRuntime.create();
-  const resourceLoader = new DefaultResourceLoader({ cwd, agentDir, settingsManager });
-  await resourceLoader.reload();
-  const extensionsResult = resourceLoader.getExtensions();
-  for (const { name, config } of extensionsResult.runtime.pendingProviderRegistrations) {
-    try {
-      modelRuntime.registerProvider(name, config);
-    } catch (err) {
-      const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
-      if (!msg.includes("already registered") && !msg.includes("duplicate")) {
-        console.warn(`[ModelSetup] Failed to register provider ${name}: ${err instanceof Error ? err.message : String(err)}`);
-      }
-    }
-  }
-  for (const { provider } of extensionsResult.runtime.pendingNativeProviderRegistrations) {
-    try {
-      modelRuntime.registerNativeProvider(provider);
-    } catch (err) {
-      const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
-      if (!msg.includes("already registered") && !msg.includes("duplicate")) {
-        console.warn(`[ModelSetup] Failed to register native provider ${provider?.id}: ${err instanceof Error ? err.message : String(err)}`);
-      }
-    }
-  }
-  for (const { definition } of extensionsResult.runtime.pendingVirtualModelRegistrations) {
-    try {
-      modelRuntime.registerVirtualModel(definition);
-    } catch (err) {
-      const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
-      if (!msg.includes("already registered") && !msg.includes("duplicate")) {
-        console.warn(`[ModelSetup] Failed to register virtual model ${definition?.id}: ${err instanceof Error ? err.message : String(err)}`);
-      }
-    }
-  }
-  const availableModels = modelRuntime.getAvailableSnapshot();
-  const enabledPatterns = settingsManager.getEnabledModels();
-  const scopedScope = enabledPatterns && enabledPatterns.length > 0 ? await resolveModelScopeWithDiagnostics(enabledPatterns, modelRuntime) : void 0;
-  const scopedModelList = scopedScope && scopedScope.scopedModels.length > 0 ? scopedScope.scopedModels.map((sm) => sm.model) : availableModels;
-  const scopedModelIds = scopedModelList.map((m) => `${m.provider}/${m.id}`);
-  const initialAgent = await findInitialAgentModel(
-    settingsManager,
-    modelRuntime,
-    args2.model ? { provider: args2.provider, model: args2.model, thinking: args2.thinking } : void 0
-  );
-  const defaultModel = initialAgent.model ? modelRuntime.getModel(initialAgent.model.provider, initialAgent.model.modelId) ?? scopedModelList[0] : scopedModelList[0];
-  const defaultModelId = defaultModel ? `${defaultModel.provider}/${defaultModel.id}` : void 0;
-  const defaultThinkingLevel = initialAgent.thinkingLevel ?? "off";
-  const modelScope = {
-    scopedModelIds,
-    defaultModelId
-  };
-  return {
-    settingsManager,
-    modelRuntime,
-    scopedModelList,
-    defaultModel,
-    defaultThinkingLevel,
-    modelScope
-  };
-}
-
-// src/runner/jsonl.ts
-import { StringDecoder } from "node:string_decoder";
-function serializeJsonLine(value) {
-  return `${JSON.stringify(value)}
-`;
-}
-function attachJsonlLineReader(stream, onLine) {
-  const decoder = new StringDecoder("utf8");
-  let buffer = "";
-  const emitLine = (line) => {
-    onLine(line.endsWith("\r") ? line.slice(0, -1) : line);
-  };
-  const onData = (chunk) => {
-    buffer += typeof chunk === "string" ? chunk : decoder.write(chunk);
-    while (true) {
-      const newlineIndex = buffer.indexOf("\n");
-      if (newlineIndex === -1) {
-        return;
-      }
-      emitLine(buffer.slice(0, newlineIndex));
-      buffer = buffer.slice(newlineIndex + 1);
-    }
-  };
-  const onEnd = () => {
-    buffer += decoder.end();
-    if (buffer.length > 0) {
-      emitLine(buffer);
-      buffer = "";
-    }
-  };
-  stream.on("data", onData);
-  stream.on("end", onEnd);
-  return () => {
-    stream.off("data", onData);
-    stream.off("end", onEnd);
-  };
-}
-
-// src/runner/runtime.ts
-import { resolveModelScopeWithDiagnostics as resolveModelScopeWithDiagnostics2 } from "@earendil-works/pi-coding-agent";
-
 // src/runner/session-storage.ts
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import lockfile from "proper-lockfile";
-function getAgentDir2() {
+function getAgentDir() {
   const override = process.env.PI_AGENT_DIR;
   if (override && override.trim().length > 0) return resolve(override.trim());
   return join(homedir(), ".pi", "agent");
@@ -986,7 +856,7 @@ async function acquireSessionLock(directory, cwd, id) {
 }
 async function selectSession(cwdInput, continueSession, targetSession) {
   const cwd = await realpath(resolve(cwdInput));
-  const root = join(getAgentDir2(), "experimental", "durable-sessions", createHash("sha256").update(cwd).digest("hex").slice(0, 24));
+  const root = join(getAgentDir(), "experimental", "durable-sessions", createHash("sha256").update(cwd).digest("hex").slice(0, 24));
   await mkdir(root, { recursive: true });
   let directory;
   let created = false;
@@ -1348,9 +1218,9 @@ async function closeRuntimeResources(operations) {
 
 // src/runner/runtime-loader.ts
 import {
-  DefaultResourceLoader as DefaultResourceLoader2,
-  ModelRuntime as ModelRuntime2,
-  SettingsManager as SettingsManager2,
+  DefaultResourceLoader,
+  ModelRuntime,
+  SettingsManager,
   initTheme
 } from "@earendil-works/pi-coding-agent";
 
@@ -2030,16 +1900,16 @@ async function loadHarnessEnvironment(location, options, envs) {
   } catch (err) {
     console.warn(`[RuntimeLoader] Theme initialization warning: ${err instanceof Error ? err.message : String(err)}`);
   }
-  const modelRuntime = await ModelRuntime2.create();
-  const settingsManager = SettingsManager2.create(location.cwd);
+  const modelRuntime = await ModelRuntime.create();
+  const settingsManager = SettingsManager.create(location.cwd);
   const extEnv = process.env.PI_ADDITIONAL_EXTENSIONS;
   const extPaths = [
     ...options.cli?.extensions ?? (options.cli?.extension ? [options.cli.extension] : []),
     ...extEnv ? extEnv.split(",").map((s) => s.trim()).filter(Boolean) : []
   ];
-  const resourceLoader = new DefaultResourceLoader2({
+  const resourceLoader = new DefaultResourceLoader({
     cwd: location.cwd,
-    agentDir: getAgentDir2(),
+    agentDir: getAgentDir(),
     settingsManager,
     extensionFactories: createStandardExtensionFactories(),
     additionalSkillPaths: options.cli?.skills,
@@ -2200,7 +2070,7 @@ async function openDurable(options = {}) {
     const summaries = await loadSummaries(harness, root.id);
     const conversation = await root.viewState(runtimeContext);
     const enabled = settingsManager.getEnabledModels();
-    const scoped = enabled?.length ? await resolveModelScopeWithDiagnostics2(enabled, modelRuntime) : void 0;
+    const scoped = enabled?.length ? await resolveModelScopeWithDiagnostics(enabled, modelRuntime) : void 0;
     const scopedList = scoped?.scopedModels?.length ? scoped.scopedModels.map((sm) => sm.model) : modelRuntime.getAvailableSnapshot();
     const models = () => scopedList.map((m) => ({ provider: m.provider, modelId: m.id, name: m.name, contextWindow: m.contextWindow }));
     let state = {
@@ -3199,6 +3069,161 @@ var DurableEventAdapter = class {
     }
   }
 };
+
+// src/runner/engine.ts
+var DurableEngine = class _DurableEngine {
+  instance;
+  sessionDir;
+  eventListeners = /* @__PURE__ */ new Set();
+  eventAdapter;
+  constructor(instance, sessionDir) {
+    this.instance = instance;
+    this.sessionDir = sessionDir;
+    this.eventAdapter = new DurableEventAdapter((event) => {
+      for (const listener of this.eventListeners) {
+        listener(event);
+      }
+    });
+  }
+  static async open(options = {}) {
+    const sessionDir = options.sessionDir ?? options.session ?? process.cwd();
+    const instance = await openDurable({
+      cwd: options.cwd ?? process.cwd(),
+      sessionDir,
+      session: options.session,
+      continueSession: options.continueSession,
+      cli: {
+        extensions: options.extensions,
+        noGlobalExtensions: options.noGlobalExtensions
+      }
+    });
+    return new _DurableEngine(instance, sessionDir);
+  }
+  async prompt(content, options) {
+    await this.instance.controller.submit(content, options?.deliverAs ?? "followUp");
+  }
+  events(callback) {
+    this.eventListeners.add(callback);
+    return () => this.eventListeners.delete(callback);
+  }
+  async abort() {
+    await this.instance.controller.abort();
+  }
+  async close() {
+    this.eventListeners.clear();
+    await this.instance.close();
+  }
+};
+
+// src/runner/model-setup.ts
+import {
+  DefaultResourceLoader as DefaultResourceLoader2,
+  ModelRuntime as ModelRuntime2,
+  SettingsManager as SettingsManager2,
+  getAgentDir as getAgentDir2,
+  resolveModelScopeWithDiagnostics as resolveModelScopeWithDiagnostics2
+} from "@earendil-works/pi-coding-agent";
+async function setupRunnerModels(cwd, args2) {
+  const agentDir = getAgentDir2();
+  const settingsManager = SettingsManager2.create(cwd, agentDir);
+  const modelRuntime = await ModelRuntime2.create();
+  const resourceLoader = new DefaultResourceLoader2({ cwd, agentDir, settingsManager });
+  await resourceLoader.reload();
+  const extensionsResult = resourceLoader.getExtensions();
+  for (const { name, config } of extensionsResult.runtime.pendingProviderRegistrations) {
+    try {
+      modelRuntime.registerProvider(name, config);
+    } catch (err) {
+      const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
+      if (!msg.includes("already registered") && !msg.includes("duplicate")) {
+        console.warn(`[ModelSetup] Failed to register provider ${name}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+  }
+  for (const { provider } of extensionsResult.runtime.pendingNativeProviderRegistrations) {
+    try {
+      modelRuntime.registerNativeProvider(provider);
+    } catch (err) {
+      const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
+      if (!msg.includes("already registered") && !msg.includes("duplicate")) {
+        console.warn(`[ModelSetup] Failed to register native provider ${provider?.id}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+  }
+  for (const { definition } of extensionsResult.runtime.pendingVirtualModelRegistrations) {
+    try {
+      modelRuntime.registerVirtualModel(definition);
+    } catch (err) {
+      const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
+      if (!msg.includes("already registered") && !msg.includes("duplicate")) {
+        console.warn(`[ModelSetup] Failed to register virtual model ${definition?.id}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+  }
+  const availableModels = modelRuntime.getAvailableSnapshot();
+  const enabledPatterns = settingsManager.getEnabledModels();
+  const scopedScope = enabledPatterns && enabledPatterns.length > 0 ? await resolveModelScopeWithDiagnostics2(enabledPatterns, modelRuntime) : void 0;
+  const scopedModelList = scopedScope && scopedScope.scopedModels.length > 0 ? scopedScope.scopedModels.map((sm) => sm.model) : availableModels;
+  const scopedModelIds = scopedModelList.map((m) => `${m.provider}/${m.id}`);
+  const initialAgent = await findInitialAgentModel(
+    settingsManager,
+    modelRuntime,
+    args2.model ? { provider: args2.provider, model: args2.model, thinking: args2.thinking } : void 0
+  );
+  const defaultModel = initialAgent.model ? modelRuntime.getModel(initialAgent.model.provider, initialAgent.model.modelId) ?? scopedModelList[0] : scopedModelList[0];
+  const defaultModelId = defaultModel ? `${defaultModel.provider}/${defaultModel.id}` : void 0;
+  const defaultThinkingLevel = initialAgent.thinkingLevel ?? "off";
+  const modelScope = {
+    scopedModelIds,
+    defaultModelId
+  };
+  return {
+    settingsManager,
+    modelRuntime,
+    scopedModelList,
+    defaultModel,
+    defaultThinkingLevel,
+    modelScope
+  };
+}
+
+// src/runner/jsonl.ts
+import { StringDecoder } from "node:string_decoder";
+function serializeJsonLine(value) {
+  return `${JSON.stringify(value)}
+`;
+}
+function attachJsonlLineReader(stream, onLine) {
+  const decoder = new StringDecoder("utf8");
+  let buffer = "";
+  const emitLine = (line) => {
+    onLine(line.endsWith("\r") ? line.slice(0, -1) : line);
+  };
+  const onData = (chunk) => {
+    buffer += typeof chunk === "string" ? chunk : decoder.write(chunk);
+    while (true) {
+      const newlineIndex = buffer.indexOf("\n");
+      if (newlineIndex === -1) {
+        return;
+      }
+      emitLine(buffer.slice(0, newlineIndex));
+      buffer = buffer.slice(newlineIndex + 1);
+    }
+  };
+  const onEnd = () => {
+    buffer += decoder.end();
+    if (buffer.length > 0) {
+      emitLine(buffer);
+      buffer = "";
+    }
+  };
+  stream.on("data", onData);
+  stream.on("end", onEnd);
+  return () => {
+    stream.off("data", onData);
+    stream.off("end", onEnd);
+  };
+}
 
 // src/runner/cli-args.ts
 function parseCliArgs(argv2) {
@@ -4903,4 +4928,7 @@ main().catch((err) => {
   console.error(`Runner fatal error: ${err instanceof Error ? err.stack : err}`);
   process.exit(1);
 });
+export {
+  DurableEngine
+};
 //# sourceMappingURL=index.js.map
