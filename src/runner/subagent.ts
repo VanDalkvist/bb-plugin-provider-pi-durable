@@ -12,6 +12,7 @@ import { Anchor, BACKGROUND, DefaultReporter, answerText } from "./subagent-deli
 import { buildTechnicalWorkerRole } from "./subagent-role.ts";
 import { resolveSubagentModelConfiguration } from "../policy/resolver.ts";
 import type { SubagentPolicyRecord } from "../policy/types.ts";
+import { normalizeModelReference } from "../shared/model-ref.ts";
 
 export function createSubagentExtension(
 	getPolicy: () => SubagentPolicyRecord,
@@ -72,9 +73,7 @@ export function createSubagentExtension(
 						const resolved = resolveSubagentModelConfiguration(
 							policySnapshot,
 							{
-								model: parentAgent?.model
-									? { provider: parentAgent.model.provider, modelId: parentAgent.model.modelId }
-									: undefined,
+								model: normalizeModelReference(parentAgent?.model),
 								thinkingLevel: parentAgent?.thinkingLevel ?? "off",
 							},
 							availableModels,

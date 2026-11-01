@@ -1,5 +1,6 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { getSupportedThinkingLevels } from "@earendil-works/pi-ai/models";
+import { normalizeModelReference } from "../shared/model-ref.ts";
 import type {
   ResolvedChildConfiguration,
   SubagentModelReference,
@@ -40,15 +41,16 @@ export function resolveSubagentModelConfiguration(
   availableModels: readonly Model<Api>[]
 ): ResolvedChildConfiguration {
   if (record.policy.mode === "inherit") {
-    if (!parentContext.model?.provider || !parentContext.model?.modelId) {
+    const parentModel = normalizeModelReference(parentContext.model);
+    if (!parentModel) {
       throw new SubagentPolicyInvalidError(
         "Parent model is required for inherit mode"
       );
     }
     return {
       model: {
-        provider: parentContext.model.provider,
-        modelId: parentContext.model.modelId,
+        provider: parentModel.provider,
+        modelId: parentModel.modelId,
       },
       thinkingLevel: mapBbReasoningToNativeThinking(parentContext.thinkingLevel),
       source: "parent_inherited",
@@ -57,13 +59,19 @@ export function resolveSubagentModelConfiguration(
   }
 
   const targetProfile = record.policy.configuredProfile;
-  const foundModel = availableModels.find(
-    (m) =>
-      m.provider === targetProfile.model.provider &&
-      m.id === targetProfile.model.modelId
-  );
+  const targetModel = normalizeModelReference(targetProfile.model);
+  const foundModel = targetModel
+    ? availableModels.find((m) => {
+        const availableNorm = normalizeModelReference(m, m.provider);
+        return (
+          availableNorm &&
+          availableNorm.provider === targetModel.provider &&
+          availableNorm.modelId === targetModel.modelId
+        );
+      })
+    : undefined;
 
-  if (!foundModel) {
+  if (!foundModel || !targetModel) {
     throw new SubagentModelUnavailableError(
       `Configured subagent model "${targetProfile.model.provider}/${targetProfile.model.modelId}" is unavailable or unauthenticated. Update the subagent model in Settings → Installed plugins → Pi Durable → Subagents.`
     );
@@ -72,14 +80,14 @@ export function resolveSubagentModelConfiguration(
   const supportedLevels = getSupportedThinkingLevels(foundModel);
   if (!supportedLevels.includes(targetProfile.thinkingLevel)) {
     throw new SubagentPolicyInvalidError(
-      `Thinking level "${targetProfile.thinkingLevel}" is not supported by model "${targetProfile.model.provider}/${targetProfile.model.modelId}". Supported levels: ${supportedLevels.join(", ")}.`
+      `Thinking level "${targetProfile.thinkingLevel}" is not supported by model "${targetModel.provider}/${targetModel.modelId}". Supported levels: ${supportedLevels.join(", ")}.`
     );
   }
 
   return {
     model: {
-      provider: targetProfile.model.provider,
-      modelId: targetProfile.model.modelId,
+      provider: targetModel.provider,
+      modelId: targetModel.modelId,
     },
     thinkingLevel: targetProfile.thinkingLevel,
     source: "user_configured",
