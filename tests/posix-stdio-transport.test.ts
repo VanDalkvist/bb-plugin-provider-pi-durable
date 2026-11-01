@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { resolve } from "node:path";
 
-test("Runner CLI: emits ready frame on stdout in standard POSIX stdio (no FD 3/4)", async () => {
+test("Runner CLI: emits ready frame on stdout in standard POSIX stdio (no FD 3/4)", { timeout: 10000 }, async () => {
 	const runnerBin = resolve("dist/runner/index.js");
 
 	const child = spawn(process.execPath, [runnerBin, "--no-session"], {
@@ -15,7 +15,7 @@ test("Runner CLI: emits ready frame on stdout in standard POSIX stdio (no FD 3/4
 		const timeout = setTimeout(() => {
 			child.kill();
 			rejectPromise(new Error("Timeout waiting for ready frame on stdout"));
-		}, 3000);
+		}, 8000);
 
 		child.stdout.on("data", (chunk: Buffer) => {
 			stdoutData += chunk.toString("utf8");

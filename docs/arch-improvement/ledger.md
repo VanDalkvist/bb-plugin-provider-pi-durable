@@ -607,4 +607,37 @@
   - Версия `0.4.1` в `package.json` и `package-lock.json`.
   - `npm run build` пересобрал дистрибутивы: `dist/runner/index.js`, `dist/server.js`, `dist/app.js`, `dist/host.js`.
 
+### Sovereign Subagents & Anti-Fragile Lifecycle (Cycle 101) — 2026-11-01
+
+- **Цель и статус:** Комплексная ликвидация 3 критических блокирующих дефектов P0, 6 дефектов P1 и 1 дефекта утечки памяти P2 (BL-01..BL-10), выявленных независимым аудитом thr_nzuzxj3a5u. Восстановление гарантированного запуска нативных субагентов в Beyond Boundaries, исключение деструктивного SIGTERM и дэдлоков курьера при сохранении 100% изоляции границ слоёв (Ports & Adapters). Статус: **PASS (VERIFIED)**.
+- **Устранённые дефекты и первоисточники:**
+  - *BL-01 (P0, AP-012, AP-013, AP-048):* В `src/policy/resolver.ts` и `src/runner/subagent.ts` внедрён канонический нормализатор `normalizeModelReference`. Устранена жесткая зависимость от `parentAgent.model.modelId`: поддерживаются оба формата (`{ provider, id }` и `{ provider, modelId }`), предотвращая краш `SubagentPolicyInvalidError("Parent model is required for inherit mode")`.
+  - *BL-02 (P0, AP-012, AP-048):* В `src/host/subthread-spawner.ts` флаг `--model` форматируется через `formatModelCliArg`, предотвращая дублирование префикса провайдера (`--model antigravity/antigravity/...`), приводившее к падению `resolveCliModel` при запуске дочернего раннера в Beyond Boundaries.
+  - *BL-03 (P0, AP-010, AP-034):* В `src/runner/session-storage.ts` полностью исключён вызов `process.kill(owner.pid, "SIGTERM")`. При конфликте блокировки живого раннера (`isAlive && isRunner`) раннер не пытается убить родительский процесс, а безопасно выбрасывает `DurableStorageError` с кодом `SESSION_ALREADY_OPEN` (fail-closed).
+  - *BL-04 (P1, AP-035, AP-047):* В `src/runner/subagent-courier.ts` и `src/runner/subagent-docs.ts` внедрена ротация `requestId` на повторных попытках доставки (`:r1`, `:r2`). Если предыдущий сабмишн завершился со статусом `unanswered`, курьер не зацикливается на кешированном ответе Pi Durable, а отправляет свежий сабмишн.
+  - *BL-05 (P1, AP-012, AP-048):* В `src/policy/resolver.ts` сопоставление моделей в режиме `configured` нормализует идентификаторы модели из профиля и каталога, предотвращая ложные исключения `SubagentModelUnavailableError`.
+  - *BL-06 (P1, AP-012, AP-022):* В `src/host/session-subagent-handler.ts` при сбое спавна дочернего треда отправляется явное предупреждение `item.open` в поток событий родительского треда вместо молчаливого проглатывания ошибки.
+  - *BL-07 (P1, AP-012, AP-048):* В `src/host/child-turn-guard.ts` валидация модели первого хода дочернего треда нормализует обе стороны (`reqModel` и `actualModel`), исключая ложные реджекты `-32602 CHILD_MODEL_POLICY_LOCKED`.
+  - *BL-08 (P1, AP-010, AP-047):* В `src/host/session-registry.ts` остановка родительского треда через `stop(threadId)` вызывает каскадный аборт сессии `await session.abort({ background: true })`, гарантируя гашение всех дочерних процессов субагентов.
+  - *BL-09 (P1, AP-012, AP-059):* В `src/host/diagnostics.ts` проверка доступности дефолтной модели перенесена после перезагрузки расширений и учитывает включённые модели провайдеров (`antigravity`), обеспечивая чистый вердикт `HEALTHY` в `doctor.mjs`.
+  - *BL-10 (P2, AP-023):* В `src/runner/task-labels.ts` и `src/runner/runtime-graph-source.ts` внедрены скользящие окна с ограничением емкости карт (512 для TaskNames, 256 для nativeStartedAt) с FIFO-вытеснением старейших записей для предотвращения утечек памяти в долгоживущих сессиях.
+- **TDD и доказательная база:**
+  - Новые тесты цикла:
+    * `tests/model-ref-normalization.test.ts`: проверка парсинга `{ provider, id }`, `{ provider, modelId }` и стрипинга префиксов.
+    * `tests/red-subagent-model-resolution.test.ts`: проверка наследования модели родителя в inherit-режиме и нормализации префиксов в configured-режиме.
+    * `tests/subthread-spawner-model-args.test.ts`: проверка генерации чистого аргумента `--model` без дублирования префиксов.
+    * `tests/session-stop-cascading-abort.test.ts`: проверка вызова `session.abort({ background: true })` при остановке родительского треда.
+    * `tests/diagnostics-init-order.test.ts`: проверка FIFO-ограничения емкости кэша `TaskNames`.
+  - Полный сьют тестов: **623 теста бэкенда/ядра pass + 117 тестов UI pass = 740 pass, 0 fail**.
+  - Контрактная безопасность: `npm run test:contracts` (0 type errors, negative contract guard pass).
+  - Ацикличность импортов: `node scripts/verify-import-graph.mjs` (166 файлов, 0 циклов).
+  - Фаервол слоёв: `node scripts/verify-layer-boundaries.mjs` (0 нарушений).
+  - Проверка здоровья: `npm run doctor` (PASSED / Healthy).
+- **Line Budgets (AP-019):**
+  - 100% файлов в `src/` строго < 250 LOC (максимальный файл: `src/host/session-registry.ts` — 239 LOC).
+- **Сборка (Build Receipt):**
+  - Версия `0.4.2` в `package.json` и `package-lock.json`.
+  - `npm run build` пересобрал дистрибутивы: `dist/runner/index.js`, `dist/server.js`, `dist/app.js`, `dist/host.js`.
+
+
 

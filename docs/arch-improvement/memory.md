@@ -225,6 +225,28 @@
 - Use next time: Every single test must specify a strict timeout (e.g. `{ timeout: 3000 }` in `node:test`). Every bash tool call must include `timeout: 30` or `timeout: 60`. In tests that spawn processes, always `unref()` timers, close stdio, and call `child.kill('SIGKILL')` in `finally` blocks to guarantee immediate exit upon completion or failure.
 - Evidence: `tests/runner-command-queue.test.ts`, `tests/session-storage-pid-safety.test.ts`, Cycle 100.
 
+## 2026-11-01 - Canonical Model Reference Normalization Across Layer Boundaries (Cycle 101)
+- Context: Passing and resolving model references across Runner (`pi-ai`, `pi-durable`), Host (Beyond Boundaries), and CLI arguments.
+- Symptom: Subagents deterministically crashed on launch in `inherit` mode with `SubagentPolicyInvalidError`, in `configured` mode with `SubagentModelUnavailableError`, and spawned child threads failed with `--model antigravity/antigravity/...`.
+- Cause: Model references existed in multiple incompatible shapes (`{ provider, id }`, `{ provider, modelId }`, `provider/modelId`), and string concatenations naively prepended `${provider}/` to IDs that already included the provider.
+- Use next time: Never format or compare model references via raw string operations or layer-specific properties. All model references must pass through a pure domain normalizer (`src/shared/model-ref.ts`) that extracts clean `provider` and `modelId` (stripping redundant provider prefixes) and produces canonical CLI strings via `formatModelCliArg`.
+- Evidence: `src/shared/model-ref.ts`, `src/policy/resolver.ts`, `src/host/subthread-spawner.ts`, `tests/model-ref-normalization.test.ts`, Cycle 101.
+
+## 2026-11-01 - Concurrency Locks: Fail-Closed Protection Over Destructive Process Killing (Cycle 101)
+- Context: Lockfile contention and session ownership in `src/runner/session-storage.ts`.
+- Symptom: When a subthread or concurrent command erroneously opened the same session directory, it sent `SIGTERM` to the holding PID, killing the live parent agent process.
+- Cause: Legacy lock takeover logic assumed any holding process on a busy lockfile was an orphan and aggressively terminated it.
+- Use next time: Never send `SIGTERM` or `SIGKILL` to another verified live process from application lock handling. Live process contention must fail closed (`SESSION_ALREADY_OPEN`) with clear diagnostic information, allowing the host or user to manage session lifetimes cleanly. Force-unlocking is strictly reserved for dead processes (`!isProcessAlive(pid)`).
+- Evidence: `src/runner/session-storage.ts`, `tests/session-storage-pid-safety.test.ts`, Cycle 101.
+
+## 2026-11-01 - Submission Retries and Cache Invalidation in Pi Durable Courier (Cycle 101)
+- Context: Delivering batched subagent reports from outbox to parent conversation in `src/runner/subagent-courier.ts`.
+- Symptom: If parent conversation was busy or interrupted, the courier entered a permanent 5-second infinite loop without ever delivering reports.
+- Cause: Pi Durable caches submissions by `requestId`. Re-submitting with the identical `requestId` returned the cached terminal `unanswered` submission immediately, re-triggering `deliveryHold` indefinitely.
+- Use next time: Whenever retrying a submission or command through an idempotency-protecting substrate, retry attempts must rotate the `requestId` suffix (e.g. `...:r1`, `...:r2`) so the underlying engine treats it as a fresh attempt while preserving batch identity.
+- Evidence: `src/runner/subagent-courier.ts`, `src/runner/subagent-docs.ts`, `tests/subagent-courier-lifecycle.test.ts`, Cycle 101.
+
+
 
 
 

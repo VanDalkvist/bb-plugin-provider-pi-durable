@@ -188,6 +188,11 @@ var DurableHarnessError = class extends Error {
     this.code = code;
   }
 };
+var DurableStorageError = class extends DurableHarnessError {
+  constructor(message, cause, code = "STORAGE_ERROR") {
+    super(message, code, cause);
+  }
+};
 var DurableCommandError = class extends DurableHarnessError {
   constructor(message, cause, code = "COMMAND_ERROR") {
     super(message, code, cause);
@@ -369,6 +374,11 @@ function courierFor(admit, holdTimeoutMs = DEFAULT_HOLD_TIMEOUT_MS) {
           state.batchNumber = batch;
           state.outbox = [];
           state.sending = { requestId: `subagent-batch:${task2.id}:${batch}`, reports };
+        } else {
+          const attempt = (state.sending.attempt ?? 0) + 1;
+          state.sending.attempt = attempt;
+          const batch = state.batchNumber ?? 1;
+          state.sending.requestId = `subagent-batch:${task2.id}:${batch}:r${attempt}`;
         }
         return { status: "running", checkpoint: { phase: "send" } };
       }, context),
@@ -522,6 +532,18 @@ function buildTechnicalWorkerRole() {
 // src/policy/resolver.ts
 import { getSupportedThinkingLevels } from "@earendil-works/pi-ai/models";
 
+// src/shared/model-ref.ts
+function normalizeModelReference(raw, defaultProvider) {
+  if (!raw || typeof raw !== "object") return void 0;
+  const r = raw;
+  const provider = typeof r.provider === "string" && r.provider.trim() ? r.provider.trim() : defaultProvider?.trim();
+  const rawId = typeof r.modelId === "string" && r.modelId.trim() ? r.modelId.trim() : typeof r.id === "string" && r.id.trim() ? r.id.trim() : void 0;
+  if (!provider || !rawId) return void 0;
+  const prefix = `${provider}/`;
+  const cleanModelId = rawId.startsWith(prefix) ? rawId.slice(prefix.length) : rawId;
+  return { provider, modelId: cleanModelId };
+}
+
 // src/policy/errors.ts
 var SubagentPolicyError = class extends Error {
   cause;
@@ -565,15 +587,16 @@ function mapBbReasoningToNativeThinking(level) {
 }
 function resolveSubagentModelConfiguration(record, parentContext, availableModels) {
   if (record.policy.mode === "inherit") {
-    if (!parentContext.model?.provider || !parentContext.model?.modelId) {
+    const parentModel = normalizeModelReference(parentContext.model);
+    if (!parentModel) {
       throw new SubagentPolicyInvalidError(
         "Parent model is required for inherit mode"
       );
     }
     return {
       model: {
-        provider: parentContext.model.provider,
-        modelId: parentContext.model.modelId
+        provider: parentModel.provider,
+        modelId: parentModel.modelId
       },
       thinkingLevel: mapBbReasoningToNativeThinking(parentContext.thinkingLevel),
       source: "parent_inherited",
@@ -581,10 +604,12 @@ function resolveSubagentModelConfiguration(record, parentContext, availableModel
     };
   }
   const targetProfile = record.policy.configuredProfile;
-  const foundModel = availableModels.find(
-    (m) => m.provider === targetProfile.model.provider && m.id === targetProfile.model.modelId
-  );
-  if (!foundModel) {
+  const targetModel = normalizeModelReference(targetProfile.model);
+  const foundModel = targetModel ? availableModels.find((m) => {
+    const availableNorm = normalizeModelReference(m, m.provider);
+    return availableNorm && availableNorm.provider === targetModel.provider && availableNorm.modelId === targetModel.modelId;
+  }) : void 0;
+  if (!foundModel || !targetModel) {
     throw new SubagentModelUnavailableError(
       `Configured subagent model "${targetProfile.model.provider}/${targetProfile.model.modelId}" is unavailable or unauthenticated. Update the subagent model in Settings \u2192 Installed plugins \u2192 Pi Durable \u2192 Subagents.`
     );
@@ -592,13 +617,13 @@ function resolveSubagentModelConfiguration(record, parentContext, availableModel
   const supportedLevels = getSupportedThinkingLevels(foundModel);
   if (!supportedLevels.includes(targetProfile.thinkingLevel)) {
     throw new SubagentPolicyInvalidError(
-      `Thinking level "${targetProfile.thinkingLevel}" is not supported by model "${targetProfile.model.provider}/${targetProfile.model.modelId}". Supported levels: ${supportedLevels.join(", ")}.`
+      `Thinking level "${targetProfile.thinkingLevel}" is not supported by model "${targetModel.provider}/${targetModel.modelId}". Supported levels: ${supportedLevels.join(", ")}.`
     );
   }
   return {
     model: {
-      provider: targetProfile.model.provider,
-      modelId: targetProfile.model.modelId
+      provider: targetModel.provider,
+      modelId: targetModel.modelId
     },
     thinkingLevel: targetProfile.thinkingLevel,
     source: "user_configured",
@@ -654,7 +679,7 @@ function createSubagentExtension(getPolicy) {
             const resolved = resolveSubagentModelConfiguration(
               policySnapshot,
               {
-                model: parentAgent?.model ? { provider: parentAgent.model.provider, modelId: parentAgent.model.modelId } : void 0,
+                model: normalizeModelReference(parentAgent?.model),
                 thinkingLevel: parentAgent?.thinkingLevel ?? "off"
               },
               availableModels
@@ -990,31 +1015,13 @@ async function acquireSessionLock(directory, cwd, id) {
       try {
         rawRelease = await lockfile.lock(directory, lockOpts);
       } catch (retryErr) {
-        throw new Error(`Session is already open in another process (PID: ${owner.pid}): ${directory}`, { cause: retryErr });
-      }
-    } else if (owner.pid !== process.pid) {
-      try {
-        process.kill(owner.pid, "SIGTERM");
-      } catch (err) {
-        logUnexpectedErr(err, "ESRCH", `Failed to send SIGTERM to PID ${owner.pid}`);
-      }
-      const deadline = Date.now() + 3e3;
-      while (Date.now() < deadline && isProcessAlive(owner.pid)) {
-        await new Promise((r) => setTimeout(r, 100));
-      }
-      if (!isProcessAlive(owner.pid)) {
-        await forceUnlock(directory);
-        await removeOwnerFile(directory);
-        try {
-          rawRelease = await lockfile.lock(directory, lockOpts);
-        } catch (retryErr) {
-          throw new Error(`Session is already open in another process (PID: ${owner.pid}): ${directory}`, { cause: retryErr });
-        }
-      } else {
-        throw new Error(`Session is already open in another process (PID: ${owner.pid}): ${directory}`, { cause: initialErr });
+        throw new DurableStorageError(`Session is already open in another process (PID: ${owner.pid}): ${directory}`, retryErr);
       }
     } else {
-      throw new Error(`Session is already open in another process (PID: ${owner.pid}): ${directory}`, { cause: initialErr });
+      throw new DurableStorageError(
+        `Session is already open in another live process (PID: ${owner.pid}): ${directory}`,
+        initialErr
+      );
     }
   }
   await writeOwnerFile(directory, { pid: process.pid, id, cwd, startedAt: Date.now() });
@@ -4433,6 +4440,7 @@ var RuntimeGraphConversations = class {
 // src/runner/task-labels.ts
 var MAX_NAME = 48;
 var MAX_TARGET_HINT = 128;
+var MAX_TASK_NAMES = 512;
 var KIND_NAMES = {
   "pi.generation": "assistant turn",
   "pi.compaction": "compacting context"
@@ -4478,6 +4486,13 @@ var TaskNames = class {
       const hint = argumentHint(args2);
       const toolName = slot.name ? clip(slot.name, MAX_NAME) : void 0;
       const preview = clip(hint === void 0 ? slot.name : `${slot.name}: ${hint}`, MAX_NAME);
+      if (this.names.size >= MAX_TASK_NAMES) {
+        const oldest = this.names.keys().next().value;
+        if (oldest !== void 0) {
+          this.names.delete(oldest);
+          this.details.delete(oldest);
+        }
+      }
       this.names.set(key, preview);
       this.details.set(key, { toolName, targetHint: hint, preview });
     }
@@ -4690,7 +4705,13 @@ var RuntimeGraphSource = class {
           } else if (ch?.type === "task") {
             const taskVal = ch.value;
             const idNum = Number(taskVal?.id);
-            if (taskVal?.startedAt) this.nativeStartedAt.set(idNum, Number(taskVal.startedAt));
+            if (taskVal?.startedAt) {
+              if (this.nativeStartedAt.size >= 256) {
+                const oldest = this.nativeStartedAt.keys().next().value;
+                if (oldest !== void 0) this.nativeStartedAt.delete(oldest);
+              }
+              this.nativeStartedAt.set(idNum, Number(taskVal.startedAt));
+            }
             if (taskVal?.state?.status === "terminal") {
               this.learnNames();
               recordTerminalWithDetails(this.receipts, taskVal, this.names, this.nativeStartedAt, this.viewSource.current(), this.recentEntries);
