@@ -16,6 +16,7 @@ export interface CliArgs {
 	extensions?: string[];
 	noGlobalExtensions?: boolean;
 	skills?: string[];
+	toolsFilePath?: string;
 }
 
 export function parseCliArgs(argv: string[]): CliArgs {
@@ -45,6 +46,9 @@ export function parseCliArgs(argv: string[]): CliArgs {
 		else if (arg === "--skill" && i + 1 < argv.length) {
 			args.skills ??= [];
 			args.skills.push(argv[++i]);
+		}
+		else if (arg === "--tools-file" && i + 1 < argv.length) {
+			args.toolsFilePath = argv[++i];
 		}
 		else if (arg.startsWith("-")) {
 			// Skip unknown options and consume their parameter if present

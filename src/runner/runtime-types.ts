@@ -87,7 +87,10 @@ export interface OpenDurableOptions {
 		readonly extension?: string;
 		readonly extensions?: string[];
 		readonly noGlobalExtensions?: boolean;
+		readonly toolsFilePath?: string;
 	};
+	readonly toolsFilePath?: string;
+	readonly forwardToolCall?: (name: string, args: unknown) => Promise<{ content: Array<{ type: "text"; text: string }>; isError: boolean }>;
 	readonly prompt?: PromptOptions;
 	readonly plugins?: import("./plugins/types.ts").DurablePlugin[];
 }

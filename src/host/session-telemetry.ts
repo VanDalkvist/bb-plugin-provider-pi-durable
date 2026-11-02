@@ -84,6 +84,9 @@ export function buildRunnerArgs(options: SessionOptions): string[] {
 			args.push("--skill", p);
 		}
 	}
+	if (options.toolsFilePath) {
+		args.push("--tools-file", options.toolsFilePath);
+	}
 	return args;
 }
 

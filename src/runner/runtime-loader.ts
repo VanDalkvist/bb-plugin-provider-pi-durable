@@ -15,6 +15,7 @@ import {
 } from "./harness-setup.ts";
 import { createStandardExtensionFactories } from "./extension-bridge.ts";
 import { createNestedToolExecutor, mountExtensionBridge } from "./extension-mount.ts";
+import { createBbDynamicToolsExtension } from "./extensions/bb-tools-extension.ts";
 import { getAgentDir, type SessionLocation } from "./session-storage.ts";
 import { Harness, type ModelRef } from "@earendil-works/pi-durable";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
@@ -91,6 +92,18 @@ export async function loadHarnessEnvironment(
 	});
 	await resourceLoader.reload();
 	const extensionsResult = resourceLoader.getExtensions();
+
+	const toolsFile = options.toolsFilePath ?? options.cli?.toolsFilePath;
+	if (toolsFile) {
+		const dynamicToolsExt = createBbDynamicToolsExtension({
+			toolsFilePath: toolsFile,
+			forwardToolCall: options.forwardToolCall ?? (async (name) => ({
+				content: [{ type: "text", text: `Tool call ${name} not handled` }],
+				isError: true,
+			})),
+		});
+		extensionsResult.extensions.push(dynamicToolsExt as any);
+	}
 
 	registerPendingProviders(modelRuntime, extensionsResult.runtime);
 	configureHarnessHttp(settingsManager);
