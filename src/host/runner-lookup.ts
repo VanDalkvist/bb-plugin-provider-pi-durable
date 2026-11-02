@@ -37,6 +37,7 @@ function runnerInPluginRoot(rootDir: string): string | null {
 	for (const candidate of [
 		join(rootDir, "dist", "runner", "index.js"),
 		join(rootDir, "dist", "runner.js"),
+		join(rootDir, "node_modules", "durable-zero", "packages", "core", "dist", "runner.js"),
 		join(rootDir, "node_modules", "@durable-zero", "core", "dist", "runner.js"),
 		join(rootDir, "runner", "index.js"),
 	]) {

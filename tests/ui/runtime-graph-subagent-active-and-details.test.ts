@@ -11,7 +11,7 @@ installTestPluginRuntime();
 const { RuntimeGraphTree } = await import("../../src/ui/runtime-graph/tree.tsx");
 const { RuntimeGraphDetails } = await import("../../src/ui/runtime-graph/details.tsx");
 const { RuntimeGraphSegmentDetails } = await import("../../src/ui/runtime-graph/segment.tsx");
-const { findSubagentMeta, buildMappedNode, TaskNames } = await import("@durable-zero/core");
+const { findSubagentMeta, buildMappedNode, TaskNames } = await import("durable-zero/core");
 
 test.afterEach(() => {
 	cleanup();

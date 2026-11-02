@@ -10,7 +10,7 @@ import { getAgentDir } from "../shared/agent-dir.ts";
 import { resolvePluginVersion } from "./installation-manager.ts";
 import { getPiDurableVersion } from "../shared/version.ts";
 import { SUPPORTED_EXTENSION_HOOKS } from "./diagnostics-hooks.ts";
-import type { ExtensionDiagnostic, PiDiagnosticsReport, PiPathStatus } from "@durable-zero/contracts";
+import type { ExtensionDiagnostic, PiDiagnosticsReport, PiPathStatus } from "durable-zero/contracts";
 
 function checkPath(fullPath: string, type: "file" | "directory", required: boolean): PiPathStatus {
 	const exists = existsSync(fullPath);

@@ -4,10 +4,16 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const rootDir = join(__dirname, "..");
-const coreDist = join(rootDir, "node_modules", "@durable-zero", "core", "dist");
+const candidates = [
+	join(rootDir, "node_modules", "durable-zero", "packages", "core", "dist"),
+	join(rootDir, "node_modules", "@durable-zero", "core", "dist"),
+	join(rootDir, "..", "durable-zero", "packages", "core", "dist"),
+];
 
-if (!existsSync(coreDist)) {
-	console.warn(`[copy-runner-assets] Warning: ${coreDist} does not exist, skipping runner copy`);
+const coreDist = candidates.find((dir) => existsSync(dir));
+
+if (!coreDist) {
+	console.warn(`[copy-runner-assets] Warning: core dist not found in candidates, skipping runner copy`);
 	process.exit(0);
 }
 

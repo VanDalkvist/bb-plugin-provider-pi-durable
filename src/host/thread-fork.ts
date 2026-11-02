@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { forkSessionDatabase as coreForkSessionDatabase } from "@durable-zero/core";
+import { forkSessionDatabase as coreForkSessionDatabase } from "durable-zero/core";
 import { resolveSessionFilePath } from "./paths.ts";
 
 export interface ForkSessionOptions {

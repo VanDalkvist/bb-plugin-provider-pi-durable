@@ -98,7 +98,7 @@ test("PiThreadSession completes child thread when subagent finishes", async () =
 });
 
 test("DurableChildEventAdapter decorates all events with conversationId and emits agent_end on run_end", async () => {
-	const { DurableChildEventAdapter } = await import("@durable-zero/core");
+	const { DurableChildEventAdapter } = await import("durable-zero/core");
 	const wireEvents: any[] = [];
 	const adapter = new DurableChildEventAdapter((ev) => wireEvents.push(ev), "call_sub_1", 42);
 

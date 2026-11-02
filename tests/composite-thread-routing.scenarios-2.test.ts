@@ -7,7 +7,7 @@ import type { PiThreadSession } from "../src/host/session.ts";
 import { sessionFixture } from "./fixtures/mirror.ts";
 
 test("handleActiveSessionCommand targets child conversation when conversationId is provided", async () => {
-	const { handleActiveSessionCommand } = await import("@durable-zero/core");
+	const { handleActiveSessionCommand } = await import("durable-zero/core");
 
 	let submitCalledWith: unknown;
 	let abortCalled = false;

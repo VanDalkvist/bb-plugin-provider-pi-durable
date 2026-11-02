@@ -3,7 +3,7 @@ import { requireExtensionPath } from "./paths.ts";
 import { RunnerProcess } from "./runner-process.ts";
 import type { AvailableModelDescriptor, ModelScope } from "./types.ts";
 import { inspectPiEnvironment } from "./diagnostics.ts";
-import type { PiDiagnosticsReport } from "@durable-zero/contracts";
+import type { PiDiagnosticsReport } from "durable-zero/contracts";
 
 export class ModelCatalog {
 	private cwd: string;

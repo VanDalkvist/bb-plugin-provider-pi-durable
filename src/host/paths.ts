@@ -44,7 +44,7 @@ export function resolveRunnerPath(options?: ResolveRunnerOptions): string {
 	if (!options?.fromDir && !options?.bbDbPath) {
 		try {
 			const esmRequire = createRequire(import.meta.url);
-			const pkgRunner = esmRequire.resolve("@durable-zero/core/runner");
+			const pkgRunner = esmRequire.resolve("durable-zero/runner");
 			if (existsSync(pkgRunner)) return pkgRunner;
 		} catch {
 			// continue to local fallback paths

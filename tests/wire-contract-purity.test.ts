@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { lifecycleSchemas } from "@durable-zero/contracts";
+import { lifecycleSchemas } from "durable-zero/contracts";
 
 test("wire-lifecycle: contains zero presentation schemas (no tasks_snapshot)", () => {
 	const types = lifecycleSchemas.map((s: any) => s.shape.type.value);

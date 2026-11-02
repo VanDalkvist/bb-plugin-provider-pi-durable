@@ -3,7 +3,7 @@ import { existsSync, unlinkSync } from "node:fs";
 import { resolveRunnerPath } from "./paths.ts";
 import { RunnerRpcChannel } from "./runner-rpc-channel.ts";
 import { RunnerProtocolError } from "./runner-protocol-error.ts";
-import type { RunnerChannelFrame } from "@durable-zero/contracts";
+import type { RunnerChannelFrame } from "durable-zero/contracts";
 import type { RunnerEvent } from "./types.ts";
 import { writeRunnerPrompts, type SessionPrompts } from "./runner-prompts.ts";
 

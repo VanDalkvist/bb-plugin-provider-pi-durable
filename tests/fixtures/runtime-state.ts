@@ -1,7 +1,7 @@
 import { Harness, MemoryStorage, createRegistry } from "@earendil-works/pi-durable";
 import { createModels } from "@earendil-works/pi-ai";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
-import type { RuntimeReadBinding } from "@durable-zero/core";
+import type { RuntimeReadBinding } from "durable-zero/core";
 
 export function trackedBinding<T>(initial: T, failSubscribe = false) {
 	let value = initial, subscriptions = 0, disposals = 0, unsubscribes = 0;

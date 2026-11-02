@@ -1,5 +1,5 @@
 import { readFileSync, existsSync } from "node:fs";
-import { forwardHostToolCall } from "@durable-zero/core";
+import { forwardHostToolCall } from "durable-zero/core";
 import { bbDynamicToolSchema } from "../host/bb-tools.ts";
 
 export default function bbToolsExtension(pi: any): void {

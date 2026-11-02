@@ -1,4 +1,4 @@
-import { createSubagentExtension } from "@durable-zero/core";
+import { createSubagentExtension } from "durable-zero/core";
 
 const Subagent = createSubagentExtension(() => ({
 	version: 1,

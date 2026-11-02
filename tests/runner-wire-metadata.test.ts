@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { runnerEventSchema } from "@durable-zero/contracts";
+import { runnerEventSchema } from "durable-zero/contracts";
 
 test("single assistant message consumed on agent_end is validated, not opaque passthrough metadata", () => {
  assert.equal(runnerEventSchema.safeParse({ type: "agent_end", messages: [], message: 42 }).success, false);

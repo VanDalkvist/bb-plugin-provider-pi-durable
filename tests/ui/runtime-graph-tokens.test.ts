@@ -11,7 +11,7 @@ installTestPluginRuntime();
 const { RuntimeGraphTree } = await import("../../src/ui/runtime-graph/tree.tsx");
 const { RuntimeGraphDetails } = await import("../../src/ui/runtime-graph/details.tsx");
 const { formatTokens, formatDetailedTokens, formatTokenDelta, formatStepTokens, calculateStepTokens } = await import("../../src/ui/runtime-graph/token-format.ts");
-const { extractLiveTokens, extractTerminalTokens } = await import("@durable-zero/core");
+const { extractLiveTokens, extractTerminalTokens } = await import("durable-zero/core");
 
 test.afterEach(() => {
 	cleanup();

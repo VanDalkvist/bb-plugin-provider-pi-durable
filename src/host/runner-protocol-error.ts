@@ -1,6 +1,6 @@
-import { runnerEventSchema, knownEventTypes } from "@durable-zero/contracts";
-import { runnerResponseSchema } from "@durable-zero/contracts";
-import { runnerChannelSchema, knownChannelKinds } from "@durable-zero/contracts";
+import { runnerEventSchema, knownEventTypes } from "durable-zero/contracts";
+import { runnerResponseSchema } from "durable-zero/contracts";
+import { runnerChannelSchema, knownChannelKinds } from "durable-zero/contracts";
 
 export type ProtocolCode = "MALFORMED_JSON" | "INVALID_MESSAGE" | "MISMATCHED_RESPONSE" | "FRAME_TOO_LARGE" | "CONSUMER_FAILURE";
 export class RunnerProtocolError extends Error {

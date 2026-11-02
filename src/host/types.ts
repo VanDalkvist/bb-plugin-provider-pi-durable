@@ -58,8 +58,8 @@ export interface SessionOptions {
 	providerOptions?: Record<string, unknown>;
 }
 
-export type { CumulativeUsageMetrics } from "@durable-zero/contracts";
-export type { RunnerEvent } from "@durable-zero/contracts";
+export type { CumulativeUsageMetrics } from "durable-zero/contracts";
+export type { RunnerEvent } from "durable-zero/contracts";
 
 export interface ThreadDelta {
 	kind: string;

@@ -2,7 +2,7 @@ import { writeSync } from "node:fs";
 import { createInterface } from "node:readline";
 import { SettingsManager } from "@earendil-works/pi-coding-agent";
 import type { PromptInput } from "@earendil-works/pi-durable";
-import { parseCliArgs, createPiPrompt } from "@durable-zero/core";
+import { parseCliArgs, createPiPrompt } from "durable-zero/core";
 
 const args = parseCliArgs(process.argv.slice(2));
 const extension = createPiPrompt(SettingsManager.inMemory(), process.cwd(), {

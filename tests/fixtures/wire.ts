@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { threadDeltaSchema } from "@get-bb/plugin-sdk/provider-bridge";
-import { runnerEventSchema, type RunnerEvent, assistantMessageSchema, type AssistantMessage } from "@durable-zero/contracts";
+import { runnerEventSchema, type RunnerEvent, assistantMessageSchema, type AssistantMessage } from "durable-zero/contracts";
 
 export function publicDeltaFixture(value: unknown) { return threadDeltaSchema.parse(value); }
 export function publicDeltasFixture(value: unknown) { return z.array(threadDeltaSchema).parse(value); }

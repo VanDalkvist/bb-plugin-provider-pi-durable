@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import * as contracts from "@durable-zero/contracts";
+import * as contracts from "durable-zero/contracts";
 
 test("command contract validates actual image/conversation/model and policy envelope", () => {
 	assert.equal(typeof contracts.runnerCommandSchema, "object");

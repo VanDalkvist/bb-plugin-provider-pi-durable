@@ -67,7 +67,7 @@ test("Cycle 92: Leaf task row and breadcrumb child use min-w-0 without artificia
 });
 
 test("Cycle 93: sanitizeTargetHint preserves targetHint up to 128 characters (no premature 48-char cutoff)", async () => {
-	const { sanitizeTargetHint } = await import("@durable-zero/core");
+	const { sanitizeTargetHint } = await import("durable-zero/core");
 	const path86 = "/Users/vanya/Projects/arch-rules-skills/skills/arch-rules-implementation-review/SKILL.md";
 	const hint = sanitizeTargetHint(path86);
 	assert.equal(hint, path86, "Target path up to 128 characters must be preserved without 48-char clipping");
