@@ -285,6 +285,21 @@
 - Use next time: The Composition Root must maintain and return references to all registries holding stateful resources. Session `cleanup()` must invoke `pluginRegistry.teardownAll()`, and plugins must implement `teardown()` to terminate worker threads (`sandbox.close()`) and clear transient holds.
 - Evidence: `src/runner/plugins/built-in/codemode.ts`, `src/runner/harness-setup.ts`, `src/runner/runtime-loader.ts`, `tests/codemode-plugin-lifecycle.test.ts`, Cycle 102.
 
+## 2026-11-02 - Sovereign Stdio RPC Over Specialized File Descriptors (Cycle 106)
+- Context: Inter-process communication between host harness (Beyond Boundaries) and headless agent runner (`durable-zero`).
+- Symptom: Hardcoded file descriptors (FD 3 for bridge out, FD 4 for bridge in) coupled core runner logic to a specific host architecture, making sovereign standalone CLI and external transports impossible and causing `ENXIO` errors in standard environments.
+- Cause: Host tools and UI dialogs were bolted onto secondary pipes rather than being modeled as first-class frames in the canonical JSONL wire protocol.
+- Use next time: Never allocate custom secondary file descriptors (FD 3/4) for domain protocols. All bidirectional RPC must flow through standard POSIX stdio: `stdin` for commands (`prompt`, `steer`, `host_tool_result`, `host_interaction_response`) and `stdout` for events (`text_delta`, `host_tool_call`, `host_interaction_request`). This preserves 100% portability across POSIX, Windows, and remote transports.
+- Evidence: `durable-zero/packages/core/src/host-rpc.ts`, `durable-zero/packages/core/src/runner-server.ts`, `bb-plugin-provider-pi-durable/src/host/runner-process.ts`, `tests/sovereign-rpc-and-db-leakage.test.ts`, Cycle 106.
+
+## 2026-11-02 - Session SQLite Encapsulation: Core Domain vs Host Leaks (Cycle 106)
+- Context: Forking and checkpoint rollback of SQLite session databases in multi-thread agents.
+- Symptom: Host plugin directly imported `node:sqlite`, executed raw SQL against internal tables (`entries`, `tasks`), and hardcoded table schemas, violating Hexagonal Architecture (Ports & Adapters).
+- Cause: Session database operations were treated as generic filesystem utilities rather than encapsulated domain capabilities of the storage engine.
+- Use next time: The host harness must never touch the agent's SQLite session database or execute SQL statements against internal tables. Storage layout, WAL checkpoints, `VACUUM INTO`, and checkpoint pruning belong strictly inside `@durable-zero/core` (`forkSessionDatabase`). The host interacts with session state solely via domain service functions or RPC wire commands (`session_fork`).
+- Evidence: `durable-zero/packages/core/src/session-fork.ts`, `bb-plugin-provider-pi-durable/src/host/thread-fork.ts`, `tests/sovereign-rpc-and-db-leakage.test.ts`, Cycle 106.
+
+
 
 
 

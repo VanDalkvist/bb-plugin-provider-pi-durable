@@ -764,5 +764,45 @@
   - Версия `0.4.4` в `package.json` и `package-lock.json`.
   - `npm run build` пересобрал дистрибутивы: `dist/runner/index.js`, `dist/runner/quickjs.wasm`, `dist/server.js`, `dist/app.js`, `dist/host.js`.
 
+### Sovereign Wire Protocol & Zero DB Leakage (Cycle 106) — 2026-11-02
+
+- **Цель и статус:** Превратить `durable-zero` в 100% суверенный headless-рантайм с каноническим двусторонним RPC-протоколом по `stdio` (полная ликвидация хака с дескрипторами FD 3/4) и полностью устранить утечки SQLite сессий агента из хоста Beyond Boundaries (`bb-plugin-provider-pi-durable`). Статус: **PASS (VERIFIED)**.
+- **Связанные аудиты и планы:**
+  - Аудит: `docs/arch-improvement/audits/2026-11-02-sovereign-rpc-and-db-leakage-audit.md`
+  - План: `docs/superpowers/plans/2026-11-02-arch-improvement-cycle-106-sovereign-rpc-protocol-and-zero-db-leakage.md`
+- **Архитектурные правила (AP Gates):**
+  - AP-001 (Sovereign Core Purity): Ядро не содержит специфики внешних сред и дескрипторов 3/4. PASSED.
+  - AP-002 (Single Source of Truth): Форк и структура сессий инкапсулированы в `durable-zero`. PASSED.
+  - AP-003 (Protocol Completeness): Wire-протокол выражает полный спектр управления жизненным циклом и возможностями хоста. PASSED.
+  - AP-010 (Hexagonal Architecture / Ports & Adapters): Четкое разделение домена, портов и адаптеров. PASSED.
+  - AP-012 (Coupling to External Harness): Нулевая завязка на приватные соглашения Beyond Boundaries. PASSED.
+  - AP-019 (Line Budgets): Каждый файл строго < 250 LOC (максимальный файл: `src/host/session.ts` — 246 LOC). PASSED.
+- **Устранённые дефекты и первоисточники:**
+  - *D-106-01 (P1, AP-002, AP-010): Утечка базы данных сессий в хост BB (DB Leakage).*
+    В `bb-plugin-provider-pi-durable/src/host/thread-fork.ts` полностью удалены импорты `node:sqlite`, вызовы `DatabaseSync` и прямое исполнение SQL-запросов к `session.sqlite`. Вся логика создания форков SQLite (транзакционный `VACUUM INTO`, усечение записей `entries` и `tasks` по `checkpointId`, очистка блокировок) перенесена в `@durable-zero/core` (`packages/core/src/session-fork.ts`, функция `forkSessionDatabase`), изолируя внутреннюю структуру БД как деталь реализации ядра.
+  - *D-106-02 (P1, AP-001, AP-012): Протекание файловых дескрипторов FD 3/4 Beyond Boundaries в ядро.*
+    В `durable-zero` полностью удалён файл `packages/core/src/bridge-channel.ts`. Из `runner-server.ts` удалены `createBridgeSender`, `sendToBridge`, `initBridgeInboundChannel`, `CHILD_TO_BRIDGE_FD = 3` и `BRIDGE_TO_CHILD_FD = 4`. Все динамические инструменты хоста и UI-диалоги переведены на стандартные потоки `stdio` через канонические сообщения протокола (`HostRpcManager`).
+  - *D-106-03 (P2, AP-003): Полнота контракта Wire-протокола.*
+    В `@durable-zero/contracts`:
+    - В `runnerCommandSchema` добавлены команды: `session_fork`, `host_tool_result`, `host_interaction_response`.
+    - В `runnerEventSchema` добавлены события: `host_tool_call` (`wire-tool.ts`), `host_interaction_request` (`wire-lifecycle.ts`).
+  - *D-106-04 (P2, AP-001, AP-012): Перевод RunnerProcess хоста BB на чистый POSIX stdio.*
+    В `bb-plugin-provider-pi-durable/src/host/runner-process.ts` процесс раннера запускается строго с `stdio: ["pipe", "pipe", "pipe"]` (3 дескриптора). Удалена прослушка дескриптора 3 и запись в дескриптор 4. В `src/host/session.ts` обработка вызовов инструментов хоста и UI-диалогов переведена на события раннера `host_tool_call` и `host_interaction_request` с ответом через команды `host_tool_result` и `host_interaction_response` по `stdin`.
+- **TDD и доказательная база:**
+  - Новые тесты цикла:
+    * `durable-zero/packages/contracts/test/wire-host-channels.test.ts`: валидация `session_fork`, `host_tool_result`, `host_interaction_response` в `runnerCommandSchema` и `host_tool_call`, `host_interaction_request` в `runnerEventSchema`.
+    * `durable-zero/packages/core/test/session-fork.test.ts`: интеграционный тест создания форка базы, очистки записей `entries`/`tasks` выше `checkpointId`, сохранения исходной базы и очистки `.lock`/owner файлов.
+    * `durable-zero/packages/core/test/stdio-host-tool-call.test.ts`: тест `HostRpcManager` на асинхронную маршрутизацию вызовов инструментов и UI-диалогов по stdio без FD 3/4.
+    * `bb-plugin-provider-pi-durable/tests/sovereign-rpc-and-db-leakage.test.ts`: негативный контрактный тест отсутствия `node:sqlite`/`DatabaseSync` в `src/host/thread-fork.ts` и использования строго 3 stdio пайпов `["pipe", "pipe", "pipe"]` в `src/host/runner-process.ts`.
+  - Сьют тестов `durable-zero`: **171 pass, 0 fail**.
+  - Сьют тестов `bb-plugin-provider-pi-durable`: **448 pass (331 backend + 117 UI), 0 fail**.
+  - Контрактная безопасность: `npm run test:contracts` (Negative contract guard TS2322 PASS, 0 type errors).
+  - Фаервол слоёв: `node scripts/verify-layer-boundaries.mjs` (0 нарушений).
+  - Проверка здоровья: `npm run doctor` (PASSED / Healthy).
+- **Line Budgets (AP-019):**
+  - 100% файлов в `src/` строго < 250 LOC (максимальный файл: `src/host/session.ts` — 246 LOC; в ядре: `runner-server.ts` — 220 LOC).
+- **Residual Risk:**
+  - Нулевой. Все 448 тестов плагина и 171 тест рантайма проходят на 100% green без обратных регрессий.
+
 
 

@@ -58,12 +58,13 @@ export class ModelCatalog {
 			cwd: this.cwd,
 			args: ["--mode", "rpc", "--no-session", "--extension", extensionPath],
 			onChannelMessage: (msg: any) => {
-				if (msg?.kind === "model-scope") {
+				if (msg?.kind === "model-scope" || msg?.scopedModelIds) {
 					this.modelScope = {
 						scopedModelIds: msg.scopedModelIds,
 						defaultModelId: msg.defaultModelId,
 					};
-				} else if (msg?.kind === "ready") {
+				}
+				if (msg?.kind === "ready" || msg?.type === "ready") {
 					this.readyResolve();
 				}
 			},

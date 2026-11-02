@@ -13,7 +13,7 @@ const input = { conversationId: "fixture", agent: { cwd: process.cwd(), tools: [
 const rendered = Object.fromEntries((extension.sections ?? []).map((section) => [
 	section.key, section.render(input, {} as never),
 ]));
-writeSync(3, JSON.stringify({ kind: "ready" }) + "\n");
+console.log(JSON.stringify({ type: "ready", kind: "ready", ready: true }));
 const lines = createInterface({ input: process.stdin });
 lines.on("line", (line) => {
 	const cmd = JSON.parse(line);

@@ -147,6 +147,29 @@ export class PiThreadSession {
 			}
 		}
 
+		if (event.type === "host_tool_call" && this.context?.toolCallTracker) {
+			const res = await this.context.toolCallTracker.forwardToolCall({
+				threadId: this.options.threadId, providerThreadId: this.options.providerThreadId,
+				toolName: event.toolName, arguments: event.arguments, scope: this.options.threadId,
+			});
+			await this.runner.request({ type: "host_tool_result", callId: event.callId, result: res.content, isError: res.isError }).catch((err) => {
+				console.warn(`[PiThreadSession] host_tool_result delivery warning: ${err}`);
+			});
+			return;
+		}
+
+		if (event.type === "host_interaction_request" && this.context?.interactionTracker) {
+			const dialogKind = (event.interactionKind || event.dialogKind || "select") as "select" | "confirm" | "input" | "editor" | "notify";
+			const res = await this.context.interactionTracker.requestInteraction({
+				threadId: this.options.threadId, providerThreadId: this.options.providerThreadId,
+				kind: dialogKind, title: event.title, message: event.message, data: event.data, scope: this.options.threadId,
+			});
+			await this.runner.request({ type: "host_interaction_response", id: event.id, result: res }).catch((err) => {
+				console.warn(`[PiThreadSession] host_interaction_response delivery warning: ${err}`);
+			});
+			return;
+		}
+
 		const shouldDropFromParent = this.subagents.handleEvent(event, this, this.sendNotification);
 		if (shouldDropFromParent) return;
 
@@ -168,24 +191,8 @@ export class PiThreadSession {
 		}
 	}
 
-	private async handleChannelMessage(msg: import("@durable-zero/contracts").RunnerChannelFrame): Promise<void> {
-		if (msg.kind === "ready") { this.readyResolve(); return; }
-		if (msg.kind === "tool_call_request" && this.context?.toolCallTracker) {
-			const res = await this.context.toolCallTracker.forwardToolCall({
-				threadId: this.options.threadId, providerThreadId: this.options.providerThreadId,
-				toolName: msg.toolName, arguments: msg.arguments, scope: this.options.threadId,
-			});
-			this.runner.sendChannel({ kind: "tool_call_response", callId: msg.callId, result: res.content, isError: res.isError });
-			return;
-		}
-		if (msg.kind === "interaction_request" && this.context?.interactionTracker) {
-			const dialogKind = (msg.interactionKind || msg.dialogKind || "select") as "select" | "confirm" | "input" | "editor" | "notify";
-			const res = await this.context.interactionTracker.requestInteraction({
-				threadId: this.options.threadId, providerThreadId: this.options.providerThreadId,
-				kind: dialogKind, title: msg.title, message: msg.message, data: msg.data, scope: this.options.threadId,
-			});
-			this.runner.sendChannel({ kind: "interaction_response", id: msg.id, result: res });
-		}
+	private handleChannelMessage(msg: { kind?: string; [key: string]: unknown }): void {
+		if (msg.kind === "ready") this.readyResolve();
 	}
 
 	public async prompt(request: PromptRequest): Promise<void> {

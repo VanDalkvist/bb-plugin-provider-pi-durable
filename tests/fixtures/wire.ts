@@ -20,6 +20,8 @@ const base = {
  compaction_end: { type: "compaction_end", reason: "manual", aborted: false },
  auto_retry_start: { type: "auto_retry_start", attempt: 1 },
  auto_retry_end: { type: "auto_retry_end", attempt: 1, success: true },
+ host_tool_call: { type: "host_tool_call", callId: "c_fixture", toolName: "fixture", arguments: {} },
+ host_interaction_request: { type: "host_interaction_request", id: "i_fixture", dialogKind: "confirm" },
  runtime_graph_snapshot: {
   type: "runtime_graph_snapshot",
   snapshot: {

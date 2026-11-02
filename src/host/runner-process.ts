@@ -40,7 +40,7 @@ export class RunnerProcess {
 		try {
 			this.child = spawn(process.execPath, [runnerPath, ...options.args, ...prompts.args], {
 				cwd: options.cwd,
-				stdio: ["pipe", "pipe", "pipe", "pipe", "pipe"],
+				stdio: ["pipe", "pipe", "pipe"],
 				env: { ...process.env, ...options.env },
 			});
 		} catch (error) {
@@ -60,13 +60,6 @@ export class RunnerProcess {
 		this.child.stdout?.on("data", (chunk: Buffer) => {
 			this.channel.feedStdout(chunk, (event) => this.handleIncoming(event));
 		});
-
-		const channelIn = (this.child.stdio as unknown as Array<NodeJS.ReadableStream | null>)[3];
-		if (channelIn) {
-			channelIn.on("data", (chunk: Buffer) => {
-				this.channel.feedChannel(chunk, (msg) => this.options.onChannelMessage?.(msg));
-			});
-		}
 	}
 
 	private setupLifecycle() {
@@ -94,7 +87,7 @@ export class RunnerProcess {
 
 	public handleIncoming(msg: RunnerEvent): void {
 		if ((msg as any).type === "ready" || (msg as any).kind === "ready") {
-			this.options.onChannelMessage?.({ kind: "ready" });
+			this.options.onChannelMessage?.({ kind: "ready", ...(msg as any) });
 			return;
 		}
 		const handled = this.channel.handleIncoming(msg);
@@ -133,11 +126,8 @@ export class RunnerProcess {
 		return res;
 	}
 
-	public sendChannel(msg: unknown): void {
-		const channelOut = (this.child.stdio as unknown as Array<NodeJS.WritableStream | null>)[4];
-		if (channelOut) {
-			channelOut.write(JSON.stringify(msg) + "\n");
-		}
+	public sendChannel(_msg: unknown): void {
+		// Retained for backward-compatible interface; all RPC now traverses stdio.
 	}
 
 	public cleanup(): void {
