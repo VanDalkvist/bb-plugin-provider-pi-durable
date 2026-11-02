@@ -1656,7 +1656,7 @@ function hasOutput(api) {
 }
 function adaptExtensionTool(toolDef, executeToolFn, createToolContext, getExtensionRunner) {
   const exposure = toolDef.exposure;
-  const isDeferred = exposure === "deferred" || exposure === "codemode" || exposure === "codemode-deferred";
+  const isDeferred = exposure === "deferred";
   const callers = exposure === "model-only" ? ["model"] : exposure === "codemode" || exposure === "codemode-deferred" ? ["tools"] : exposure === "hidden" ? [] : ["model", "tools"];
   return defineTool2({
     name: toolDef.name,
@@ -1970,6 +1970,15 @@ var DynamicCodemodeNamespaces = class {
           prefix,
           ...def.namespace?.description ? { description: def.namespace.description } : {},
           ...def.namespace?.instructions ? { instructions: def.namespace.instructions } : {}
+        });
+      } else if (def.namespace?.name) {
+        const name = def.namespace.name;
+        const prefix = def.name.startsWith(`${name}__`) ? `${name}__` : def.name.startsWith(`${name}_`) ? `${name}_` : `${name}:`;
+        this.registerNamespace({
+          name,
+          prefix,
+          ...def.namespace.description ? { description: def.namespace.description } : {},
+          ...def.namespace.instructions ? { instructions: def.namespace.instructions } : {}
         });
       }
     }
