@@ -57,7 +57,7 @@
     "typescript": "^5.7.0"
   },
   "scripts": {
-    "build": "bb plugin build",
+    "build": "bb plugin build && node scripts/copy-runner-assets.mjs",
     "test": "node scripts/verify-layer-boundaries.mjs && npm run test:contracts && node --test tests/*.test.ts && tsx --test tests/ui/*.test.ts",
     "test:contracts": "tsc --noEmit -p tsconfig.contract-tests.json && node scripts/check-negative-contracts.mjs",
     "doctor": "node scripts/doctor.mjs"

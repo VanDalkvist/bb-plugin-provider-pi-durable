@@ -32,9 +32,14 @@ export function dataDirsToSearch(input: DataDirInput): string[] {
 	return [...new Set(dirs.filter((dir): dir is string => Boolean(dir)))];
 }
 
-/** A plugin checkout carries its runner at one of two shapes: built (`dist`) or shipped beside the source. */
+/** A plugin checkout carries its runner at one of multiple shapes: built (`dist`), shipped beside source, or via core dependency. */
 function runnerInPluginRoot(rootDir: string): string | null {
-	for (const candidate of [join(rootDir, "dist", "runner", "index.js"), join(rootDir, "runner", "index.js")]) {
+	for (const candidate of [
+		join(rootDir, "dist", "runner", "index.js"),
+		join(rootDir, "dist", "runner.js"),
+		join(rootDir, "node_modules", "@durable-zero", "core", "dist", "runner.js"),
+		join(rootDir, "runner", "index.js"),
+	]) {
 		if (existsSync(candidate)) return candidate;
 	}
 	return null;
