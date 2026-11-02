@@ -1,4 +1,4 @@
-import type { PiDiagnosticsReport } from "../../src/contracts/diagnostics.ts";
+import type { PiDiagnosticsReport } from "@durable-zero/contracts";
 
 export function diagnosticsFixture(): PiDiagnosticsReport {
  return {

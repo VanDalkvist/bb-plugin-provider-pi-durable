@@ -1,6 +1,6 @@
 import { defineRpcContract } from "@get-bb/plugin-sdk";
 import { z } from "zod";
-import { piDiagnosticsReportSchema } from "../contracts/diagnostics.ts";
+import { piDiagnosticsReportSchema } from "@durable-zero/contracts";
 import {
   subagentPolicyRecordSchema,
   subagentPolicySetInputSchema,

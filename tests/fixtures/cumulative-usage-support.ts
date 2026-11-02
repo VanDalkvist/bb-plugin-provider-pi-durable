@@ -1,4 +1,4 @@
-import type { DurableView } from "../../src/runner/runtime-types.ts";
+import type { DurableView } from "@durable-zero/core";
 import { jsonFixture, viewFixture } from "./durable.ts";
 
 function createMockView(usageDoc?: unknown): DurableView {

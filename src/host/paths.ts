@@ -1,4 +1,5 @@
 import { chmodSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -30,6 +31,16 @@ export function resolveRunnerPath(options?: ResolveRunnerOptions): string {
 	if (envCmd) {
 		const custom = resolve(envCmd);
 		if (existsSync(custom)) return custom;
+	}
+
+	if (!options?.fromDir && !options?.bbDbPath) {
+		try {
+			const esmRequire = createRequire(import.meta.url);
+			const pkgRunner = esmRequire.resolve("@durable-zero/core/runner");
+			if (existsSync(pkgRunner)) return pkgRunner;
+		} catch {
+			// continue to local fallback paths
+		}
 	}
 
 	const baseDir = options?.fromDir ? resolve(options.fromDir) : __dirname;

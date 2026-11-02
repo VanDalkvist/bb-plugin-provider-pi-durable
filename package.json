@@ -1,6 +1,6 @@
 {
   "name": "bb-plugin-provider-pi-durable",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "type": "module",
   "engines": {
     "bb": ">=0.47.1",
@@ -24,6 +24,8 @@
     "app": "./app.tsx"
   },
   "dependencies": {
+    "@durable-zero/contracts": "file:../durable-zero/packages/contracts",
+    "@durable-zero/core": "file:../durable-zero/packages/core",
     "@earendil-works/chord": "1.5.0",
     "@earendil-works/pi-ai": "1.5.0",
     "@earendil-works/pi-codemode": "1.5.0",
@@ -32,7 +34,7 @@
     "@earendil-works/pi-schema": "1.5.0",
     "@get-bb/plugin-sdk": "0.6.79",
     "@types/proper-lockfile": "^4.1.4",
-    "durable-zero": "github:VanDalkvist/durable-zero#v0.6.0",
+    "durable-zero": "github:VanDalkvist/durable-zero#v0.7.0",
     "proper-lockfile": "^4.1.2",
     "quickjs-wasi": "3.6.2",
     "zod": "^4.6.6"
@@ -55,9 +57,7 @@
     "typescript": "^5.7.0"
   },
   "scripts": {
-    "build:runner": "node scripts/build-runner.mjs",
-    "build:host": "bb plugin build",
-    "build": "node scripts/build-runner.mjs && bb plugin build",
+    "build": "bb plugin build",
     "test": "node scripts/verify-layer-boundaries.mjs && npm run test:contracts && node --test tests/*.test.ts && tsx --test tests/ui/*.test.ts",
     "test:contracts": "tsc --noEmit -p tsconfig.contract-tests.json && node scripts/check-negative-contracts.mjs",
     "doctor": "node scripts/doctor.mjs"

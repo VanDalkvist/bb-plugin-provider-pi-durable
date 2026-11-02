@@ -1,4 +1,4 @@
-import { createSubagentExtension } from "../../src/runner/subagent.ts";
+import { createSubagentExtension } from "@durable-zero/core";
 
 const Subagent = createSubagentExtension(() => ({
 	version: 1,

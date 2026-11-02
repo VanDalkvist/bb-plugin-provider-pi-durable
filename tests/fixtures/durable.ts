@@ -2,8 +2,8 @@ import { z } from "zod";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai/providers/faux";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type { EntryId, EntryRecord, JsonObject, TaskGraph, TaskGraphNode, TaskId } from "@earendil-works/pi-durable";
-import type { DurableView, DurableViewSource } from "../../src/runner/runtime-types.ts";
-import { parseConversationId } from "../../src/runner/conversation-id.ts";
+import type { DurableView, DurableViewSource } from "@durable-zero/core";
+import { parseConversationId } from "@durable-zero/core";
 
 function positiveId(value: number): number {
  if (!Number.isSafeInteger(value) || value <= 0) throw new Error("INVALID_FIXTURE_ID");

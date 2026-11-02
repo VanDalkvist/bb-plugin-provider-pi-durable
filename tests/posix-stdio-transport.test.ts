@@ -3,8 +3,10 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { resolve } from "node:path";
 
+import { resolveRunnerPath } from "../src/host/paths.ts";
+
 test("Runner CLI: emits ready frame on stdout in standard POSIX stdio (no FD 3/4)", { timeout: 10000 }, async () => {
-	const runnerBin = resolve("dist/runner/index.js");
+	const runnerBin = resolveRunnerPath();
 
 	const child = spawn(process.execPath, [runnerBin, "--no-session"], {
 		stdio: ["pipe", "pipe", "pipe"], // strictly 3 standard descriptors!

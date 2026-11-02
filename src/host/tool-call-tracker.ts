@@ -1,5 +1,5 @@
 import type { ToolCallForwardResult } from "./types.ts";
-import { bbToolCallResponseSchema } from "../contracts/bb-tools.ts";
+import { bbToolCallResponseSchema } from "./bb-tools.ts";
 
 export interface ForwardToolCallParams {
 	threadId?: string;
@@ -63,7 +63,7 @@ export class PendingToolCallTracker {
 		});
 	}
 
-	public handleToolCallResponse(response: { id?: string | number; result?: unknown; error?: unknown }): boolean {
+	public handleToolCallResponse(response: { id?: string | number; result?: unknown; error?: unknown; [key: string]: unknown }): boolean {
 		if (response.id === undefined || response.id === null) return false;
 		const pendingCall = this.pending.get(response.id);
 		if (!pendingCall) return false;

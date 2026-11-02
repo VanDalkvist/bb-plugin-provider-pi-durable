@@ -93,7 +93,7 @@ test("stdout-guard unit: activates upstream takeover, enables wire writing, and 
 		flushWireStdout,
 		isStdoutGuarded,
 		restoreRunnerStdout,
-	} = await import("../src/runner/stdout-guard.ts");
+	} = await import("@durable-zero/core");
 
 	const capturedStderr: string[] = [];
 	const originalStderrWrite = process.stderr.write;
@@ -126,7 +126,7 @@ test("stdout-guard compatibility port: validates version, checks shape, and fail
 		validateUpstreamGuardVersion,
 		validateUpstreamGuardShape,
 		UpstreamStdoutGuardPortError,
-	} = await import("../src/runner/stdout-guard.ts");
+	} = await import("@durable-zero/core");
 
 	// Version compatibility checks
 	assert.doesNotThrow(() => validateUpstreamGuardVersion("1.4.0"));

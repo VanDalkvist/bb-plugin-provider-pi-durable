@@ -1,7 +1,7 @@
 import type { RuntimeGraphSnapshot } from "../../runtime-graph/types.ts";
 import { runtimeGraphSnapshotSchema } from "../../runtime-graph/schema.ts";
 import { RUNTIME_GRAPH_EXTENSION_KIND } from "../../host/runtime-graph-delta.ts";
-import { filterSnapshotForConversation } from "../../runner/runtime-graph-scope.ts";
+import { filterSnapshotForConversation } from "@durable-zero/contracts";
 
 export const MAX_EVENT_PAGES = 5;
 export const PAGE_SIZE = "100";

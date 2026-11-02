@@ -1,8 +1,8 @@
 import { StringDecoder } from "node:string_decoder";
-import { runnerCommandSchema, runnerRequestHeaderSchema, knownCommandTypes } from "../contracts/runner-command.ts";
-import type { RunnerEvent } from "../contracts/runner-event.ts";
-import type { RunnerResponse } from "../contracts/runner-response.ts";
-import type { RunnerChannelFrame } from "../contracts/runner-channel.ts";
+import { runnerCommandSchema, runnerRequestHeaderSchema, knownCommandTypes } from "@durable-zero/contracts";
+import type { RunnerEvent } from "@durable-zero/contracts";
+import type { RunnerResponse } from "@durable-zero/contracts";
+import type { RunnerChannelFrame } from "@durable-zero/contracts";
 import { decodeStdout, decodeChannel, parseProtocolJson, RunnerProtocolError } from "./runner-protocol-error.ts";
 
 export interface PendingRequest {

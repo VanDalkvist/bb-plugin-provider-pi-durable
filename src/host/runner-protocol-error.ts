@@ -1,6 +1,6 @@
-import { runnerEventSchema, knownEventTypes } from "../contracts/runner-event.ts";
-import { runnerResponseSchema } from "../contracts/runner-response.ts";
-import { runnerChannelSchema, knownChannelKinds } from "../contracts/runner-channel.ts";
+import { runnerEventSchema, knownEventTypes } from "@durable-zero/contracts";
+import { runnerResponseSchema } from "@durable-zero/contracts";
+import { runnerChannelSchema, knownChannelKinds } from "@durable-zero/contracts";
 
 export type ProtocolCode = "MALFORMED_JSON" | "INVALID_MESSAGE" | "MISMATCHED_RESPONSE" | "FRAME_TOO_LARGE" | "CONSUMER_FAILURE";
 export class RunnerProtocolError extends Error {
@@ -22,13 +22,18 @@ export function parseProtocolJson(line: string): unknown {
 }
 
 export function decodeStdout(value: unknown) {
-	if (!object(value) || typeof value.type !== "string") throw new RunnerProtocolError("INVALID_MESSAGE");
+	if (!object(value) || (typeof value.type !== "string" && typeof value.kind !== "string")) {
+		throw new RunnerProtocolError("INVALID_MESSAGE");
+	}
+	if (value.type === "ready" || value.kind === "ready") {
+		return value as any;
+	}
 	if (value.type === "response") {
 		const result = runnerResponseSchema.safeParse(value);
 		if (!result.success) throw new RunnerProtocolError("INVALID_MESSAGE", result.error);
 		return result.data;
 	}
-	if (!knownEventTypes.has(value.type)) return undefined;
+	if (typeof value.type !== "string" || !knownEventTypes.has(value.type)) return undefined;
 	const result = runnerEventSchema.safeParse(value);
 	if (!result.success) throw new RunnerProtocolError("INVALID_MESSAGE", result.error);
 	return result.data;
@@ -39,7 +44,9 @@ export function runnerProtocolWarning(error: RunnerProtocolError): import("@get-
 }
 
 export function decodeChannel(value: unknown) {
-	if (!object(value) || typeof value.kind !== "string") throw new RunnerProtocolError("INVALID_MESSAGE");
+	if (!object(value) || typeof value.kind !== "string") {
+		throw new RunnerProtocolError("INVALID_MESSAGE");
+	}
 	if (!knownChannelKinds.has(value.kind)) return undefined;
 	const result = runnerChannelSchema.safeParse(value);
 	if (!result.success) throw new RunnerProtocolError("INVALID_MESSAGE", result.error);

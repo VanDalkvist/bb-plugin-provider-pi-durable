@@ -168,7 +168,7 @@ export class PiThreadSession {
 		}
 	}
 
-	private async handleChannelMessage(msg: import("../contracts/runner-channel.ts").RunnerChannelFrame): Promise<void> {
+	private async handleChannelMessage(msg: import("@durable-zero/contracts").RunnerChannelFrame): Promise<void> {
 		if (msg.kind === "ready") { this.readyResolve(); return; }
 		if (msg.kind === "tool_call_request" && this.context?.toolCallTracker) {
 			const res = await this.context.toolCallTracker.forwardToolCall({

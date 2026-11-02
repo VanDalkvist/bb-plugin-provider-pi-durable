@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { piDiagnosticsReportSchema } from "../src/contracts/diagnostics.ts";
+import { piDiagnosticsReportSchema } from "@durable-zero/contracts";
 import { rpcContract } from "../src/rpc/contract.ts";
 import { diagnosticsFixture } from "./fixtures/diagnostics.ts";
 

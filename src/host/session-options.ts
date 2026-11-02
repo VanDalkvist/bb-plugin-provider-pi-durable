@@ -44,12 +44,20 @@ export function buildSessionOptions(
 		fs.writeFileSync(toolsFilePath, JSON.stringify(filtered, null, 2), "utf8");
 	}
 
+	const rawExts = providerOptions?.extensions ?? providerOptions?.additionalExtensionPaths ?? params.options?.extensions;
+	const additionalExtensionPaths = Array.isArray(rawExts)
+		? rawExts.filter((p): p is string => typeof p === "string" && p.trim().length > 0)
+		: undefined;
+	const noGlobalExtensions = Boolean(providerOptions?.noGlobalExtensions ?? params.options?.noGlobalExtensions);
+
 	if (isNativeChildParent) {
 		return {
 			threadId, providerThreadId: sessionKey, cwd: params.cwd, sessionFilePath, sessionDir, extensionPath, scratchDir,
 			model: undefined, thinkingLevel: undefined, shellEnvOverrides: resolvedEnv,
 			...resolveSessionPrompts(params), providerOptions, ...(skillRoots.length > 0 ? { additionalSkillPaths: skillRoots } : {}),
 			...(toolsFilePath ? { toolsFilePath } : {}),
+			...(additionalExtensionPaths ? { additionalExtensionPaths } : {}),
+			...(noGlobalExtensions ? { noGlobalExtensions: true } : {}),
 		};
 	}
 
@@ -71,5 +79,7 @@ export function buildSessionOptions(
 		model: resolvedModel, thinkingLevel: resolvedThinking, shellEnvOverrides: resolvedEnv,
 		...resolveSessionPrompts(params), providerOptions, ...(skillRoots.length > 0 ? { additionalSkillPaths: skillRoots } : {}),
 		...(toolsFilePath ? { toolsFilePath } : {}),
+		...(additionalExtensionPaths ? { additionalExtensionPaths } : {}),
+		...(noGlobalExtensions ? { noGlobalExtensions: true } : {}),
 	};
 }

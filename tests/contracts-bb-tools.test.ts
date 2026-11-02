@@ -5,7 +5,7 @@ import {
 	bbToolCallRequestParamsSchema,
 	bbToolCallResponseSchema,
 	bbInteractionRequestParamsSchema,
-} from "../src/contracts/bb-tools.ts";
+} from "../src/host/bb-tools.ts";
 
 test("bbDynamicToolSchema validates valid BB dynamic tool definition", () => {
 	const valid = {
