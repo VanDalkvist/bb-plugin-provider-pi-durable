@@ -1,9 +1,9 @@
 import type {
-	AgentEvent,
 	EntryRecord,
 	NestedToolExecutionResult,
 	ToolDiagnostic,
 } from "@earendil-works/pi-durable";
+import type { AgentEvent } from "./durable-contracts.ts";
 
 export type NativeToolEndEvent = Extract<AgentEvent, { type: "tool_execution_end" }>;
 export type NativeToolUpdateEvent = Extract<AgentEvent, { type: "tool_execution_update" }>;
@@ -66,7 +66,7 @@ function decodeResult(result: NestedToolExecutionResult): NativeDecodedOutcome {
 	return {
 		status: "result",
 		isError: Boolean(result.isError),
-		rawOutput: result.structuredOutput,
+		rawOutput: (result as any).output ?? result.structuredOutput,
 		details: "details" in result ? result.details : undefined,
 		diagnostics: result.diagnostics ?? [],
 	};

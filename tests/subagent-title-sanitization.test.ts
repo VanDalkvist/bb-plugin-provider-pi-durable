@@ -4,7 +4,7 @@ import { nativeChildTitle } from "../src/shared/child-title.ts";
 import { DurableChildEventAdapter } from "../src/runner/bridge/durable-child-event-adapter.ts";
 import { buildSpawnArgs } from "../src/host/subthread-spawner.ts";
 import type { RunnerEvent } from "../src/runner/bridge/contracts.ts";
-import type { AgentEvent } from "@earendil-works/pi-durable";
+import type { AgentEvent } from "../src/runner/bridge/contracts.ts";
 
 test("nativeChildTitle: strips control characters and collapses whitespace", () => {
 	const raw = "fix\u0000\u0007bug\u001b\n\r\tin\u007fauth\u009fcontroller";

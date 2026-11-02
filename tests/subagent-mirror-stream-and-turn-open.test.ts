@@ -4,7 +4,7 @@ import { DurableChildEventAdapter } from "../src/runner/bridge/durable-child-eve
 import { PiThreadSession } from "../src/host/session.ts";
 import { handleTurnStart } from "../src/host/bridge-router.ts";
 import { SessionRegistry } from "../src/host/session-registry.ts";
-import type { AgentEvent } from "@earendil-works/pi-durable";
+import type { AgentEvent } from "../src/runner/bridge/contracts.ts";
 import type { RunnerEvent } from "../src/runner/bridge/contracts.ts";
 import { sessionFixture } from "./fixtures/mirror.ts";
 

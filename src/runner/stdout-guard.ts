@@ -22,7 +22,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { existsSync, readFileSync } from "node:fs";
 
-export const SUPPORTED_PI_VERSION_PREFIX = "1.4.";
+export const SUPPORTED_PI_VERSION_PREFIXES = ["1.4.", "1.5."];
 export const EXPECTED_GUARD_RELATIVE_PATH = "dist/core/output-guard.js";
 
 export class UpstreamStdoutGuardPortError extends Error {
@@ -47,9 +47,9 @@ export interface UpstreamOutputGuard {
 let activeGuard: UpstreamOutputGuard | null = null;
 
 export function validateUpstreamGuardVersion(version: string): void {
-	if (!version.startsWith(SUPPORTED_PI_VERSION_PREFIX)) {
+	if (!SUPPORTED_PI_VERSION_PREFIXES.some((prefix) => version.startsWith(prefix))) {
 		throw new UpstreamStdoutGuardPortError(
-			`Incompatible @earendil-works/pi-coding-agent version: "${version}". Expected ${SUPPORTED_PI_VERSION_PREFIX}x`,
+			`Incompatible @earendil-works/pi-coding-agent version: "${version}". Expected 1.4.x or 1.5.x`,
 			"INCOMPATIBLE_VERSION",
 		);
 	}

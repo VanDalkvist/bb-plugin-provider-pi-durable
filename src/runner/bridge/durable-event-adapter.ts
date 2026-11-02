@@ -1,4 +1,4 @@
-import type { AgentEvent, SnapshotEvent } from "@earendil-works/pi-durable";
+import type { AgentEvent, SnapshotEvent } from "./durable-contracts.ts";
 import type { DurableView } from "../runtime-types.ts";
 import type { RunnerEvent, AssistantMessage, AssistantMessageUsage } from "./contracts.ts";
 import { resolveTurnSummary, findSubmissionFault } from "./turn-summary.ts";

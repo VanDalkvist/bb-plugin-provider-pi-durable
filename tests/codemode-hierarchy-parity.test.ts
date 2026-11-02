@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { DeltaTranslator } from "../src/host/delta-translator.ts";
 import { DurableEventAdapter } from "../src/runner/bridge/durable-event-adapter.ts";
 import { DurableChildEventAdapter } from "../src/runner/bridge/durable-child-event-adapter.ts";
-import type { AgentEvent } from "@earendil-works/pi-durable";
+import type { AgentEvent } from "../src/runner/bridge/contracts.ts";
 import type { DurableView } from "../src/runner/runtime-types.ts";
 import type { RunnerEvent } from "../src/runner/bridge/contracts.ts";
 import { viewFixture } from "./fixtures/durable.ts";

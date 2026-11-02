@@ -11,7 +11,7 @@ import { createDurableController } from "./runtime-controller.ts";
 import { RuntimeBindings } from "./runtime-bindings.ts";
 import { closeRuntimeResources } from "./runtime-cleanup.ts";
 import { loadHarnessEnvironment, type LoadedHarnessEnvironment } from "./runtime-loader.ts";
-import { hydrateSessionActiveTools, loadSummaries } from "./runtime-hydration.ts";
+import { hydrateSessionActiveTools, loadSummaries, createConversationBinding } from "./runtime-hydration.ts";
 
 export { hydrateSessionActiveTools } from "./runtime-hydration.ts";
 
@@ -53,7 +53,7 @@ export async function openDurable(options: OpenDurableOptions = {}): Promise<Ope
 		}
 
 		const summaries = await loadSummaries(harness, root.id);
-		const conversation = await root.viewState(runtimeContext);
+		const conversation = await createConversationBinding(root, runtimeContext);
 
 		const enabled = settingsManager.getEnabledModels();
 		const scoped = enabled?.length ? await resolveModelScopeWithDiagnostics(enabled, modelRuntime) : undefined;
@@ -97,9 +97,10 @@ export async function openDurable(options: OpenDurableOptions = {}): Promise<Ope
 		activeEnvState.setNoticeForwarder?.((level, message) => notice(level, message));
 
 		const bindings = new RuntimeBindings(root, conversation, update);
-		const unsubscribeCommits = harness.subscribeCommits((pub) => {
+
+		const handlePublication = (pub: any) => {
 			let convs = state.conversations;
-			for (const ch of pub.changes) {
+			for (const ch of pub.changes ?? []) {
 				if (ch.type === "conversation") {
 					convs = [...convs, { id: ch.value.id, label: ch.value.id === root.id ? "main" : `subagent ${ch.value.id}` }];
 				} else if (ch.type === "entry" && ch.value.kind === "pi.user") {
@@ -108,7 +109,14 @@ export async function openDurable(options: OpenDurableOptions = {}): Promise<Ope
 				}
 			}
 			if (convs !== state.conversations) update({ conversations: convs });
-		});
+		};
+
+		const observation = typeof (harness as any).observeCommits === "function"
+			? (harness as any).observeCommits({ advance: handlePublication, end: () => {} })
+			: undefined;
+		const unsubscribeCommits = observation
+			? () => observation.detach?.()
+			: (harness as any).subscribeCommits?.(handlePublication);
 
 
 		const opened = harness;

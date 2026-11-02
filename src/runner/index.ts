@@ -9,7 +9,7 @@ import { parseCliArgs } from "./cli-args.ts";
 import { handleActiveSessionCommand } from "./session-commands.ts";
 import { parseRunnerCommand, type RunnerCommandPayload } from "../contracts/runner-command.ts";
 import { getPiDurableVersion } from "./version.ts";
-import { createBridgeSender, initBridgeInboundChannel } from "./bridge-channel.ts";
+import { createBridgeSender, initBridgeInboundChannel, createForwardToolCall, createRequestInteraction } from "./bridge-channel.ts";
 import { startSubagentWatcher, type SubagentWatcherController } from "./subagent-watcher.ts";
 import { RuntimeGraphSource } from "./runtime-graph-source.ts";
 import { ROOT_CONVERSATION_ID } from "@earendil-works/pi-durable";
@@ -31,6 +31,8 @@ function output(data: unknown): void {
 }
 
 const sendToBridge = createBridgeSender();
+const forwardToolCall = createForwardToolCall(sendToBridge);
+const requestInteraction = createRequestInteraction(sendToBridge);
 
 async function main() {
 	await setupRunnerStdoutGuard();
@@ -125,6 +127,9 @@ async function main() {
 		session: args.session,
 		cli: { provider: args.provider, model: args.model, thinking: args.thinking, skills: args.skills, extension: args.extension },
 		prompt: { systemPromptPath: args.systemPromptPath, appendSystemPromptPath: args.appendSystemPromptPath },
+		toolsFilePath: args.toolsFilePath,
+		forwardToolCall,
+		requestInteraction,
 	});
 	activeDurable = durable;
 	activeControlChannel = startRunnerControlChannel(durable.view.current().session.directory, durable.harness);

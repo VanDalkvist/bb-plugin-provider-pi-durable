@@ -34,6 +34,8 @@ test("createBbDynamicToolsExtension registers tools from toolsFilePath", async (
 	assert.ok(ext.tools.has("check_ui"), "check_ui must be registered in extension tools Map");
 	const tool = ext.tools.get("check_ui")!;
 	assert.equal(tool.name, "check_ui");
+	assert.deepEqual(tool.definition.namespace, { name: "bb", description: "Beyond Boundaries dynamic tools" });
+	assert.deepEqual((tool as any).namespace, { name: "bb", description: "Beyond Boundaries dynamic tools" });
 
 	const res = await tool.execute("call_1", { spec: "Card('Title', [])" } as any, undefined as any);
 	assert.equal(forwardedName, "check_ui");

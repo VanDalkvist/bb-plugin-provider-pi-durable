@@ -29,8 +29,11 @@ test("an actual reporter queues to an existing sleeping courier without creating
 		const root = await harness.root(context, { agent: { model } });
 		const child = await harness.createConversation({ ownership: { kind: "ownerless" }, agent: { model } }, context);
 		let sleepingId: TaskId<null> | undefined;
-		const asleep = new Promise<void>((resolve) => harness.subscribeCommits((publication) => {
-			if (publication.changes.some((change) => change.type === "task" && change.value.id === sleepingId && change.value.state.status === "sleeping")) resolve();
+		const asleep = new Promise<void>((resolve) => (harness as any).observeCommits({
+			advance: (publication: any) => {
+				if (publication.changes.some((change: any) => change.type === "task" && change.value.id === sleepingId && change.value.state.status === "sleeping")) resolve();
+			},
+			end: () => {},
 		}));
 		sleepingId = await harness.commit(async (tx) => {
 			const id = await tx.createTask(courier, null, { ownership: { kind: "conversation" }, conversationId: root.id, background: true });
@@ -59,11 +62,12 @@ test("courier durably sleeps until exact next-phase deadline and resumes same ID
 	try {
 		const root = await harness.root(context);
 		let id: TaskId<null> | undefined;
-		const asleep = new Promise<void>((resolve) => {
-			harness.subscribeCommits((publication) => {
-				if (publication.changes.some((change) => change.type === "task" && change.value.id === id && change.value.state.status === "sleeping")) resolve();
-			});
-		});
+		const asleep = new Promise<void>((resolve) => (harness as any).observeCommits({
+			advance: (publication: any) => {
+				if (publication.changes.some((change: any) => change.type === "task" && change.value.id === id && change.value.state.status === "sleeping")) resolve();
+			},
+			end: () => {},
+		}));
 		id = await harness.commit(async (tx) => {
 			const next = await tx.createTask(courier, null, { ownership: { kind: "conversation" }, conversationId: root.id, background: true });
 			(await tx.doc(SubagentsDoc, root.id)).courier = next;

@@ -2,7 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { startSubagentWatcher, type SubagentWatcherController } from "../src/runner/subagent-watcher.ts";
 import { DurableEventAdapter } from "../src/runner/bridge/durable-event-adapter.ts";
-import type { AgentEvent, ConversationId, Harness } from "@earendil-works/pi-durable";
+import type { ConversationId, Harness } from "@earendil-works/pi-durable";
+import type { AgentEvent } from "../src/runner/bridge/contracts.ts";
 import { BindingIndexDoc } from "../src/runner/binding-docs.ts";
 import { SubagentsDoc } from "../src/runner/subagent-docs.ts";
 

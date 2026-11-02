@@ -12,6 +12,7 @@ import type {
 import type { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { agentOf, type DurableController, type DurableView, type Notice, runtimeContext } from "./runtime-types.ts";
 import { SubagentsDoc } from "./subagent-docs.ts";
+import { createConversationBinding, createTaskGraphBinding } from "./runtime-hydration.ts";
 
 export interface ControllerContext {
  bindings: import("./runtime-types.ts").RuntimeBindingPort;
@@ -206,14 +207,14 @@ export function createDurableController(ctx: ControllerContext): DurableControll
 		toggleTasks: () =>
 			command(async () => {
 				if (ctx.bindings.tasksOpen) return ctx.bindings.closeTasks();
-				ctx.bindings.attachTasks(await ctx.opened.taskGraph(runtimeContext));
+				ctx.bindings.attachTasks(await createTaskGraphBinding(ctx.opened, runtimeContext));
 			}),
 
 		switchConversation: (id: ConversationId) =>
 			command(async () => {
 				const next = await ctx.opened.conversation(id, runtimeContext);
 				if (next === undefined) throw new Error(`Conversation ${id} does not exist`);
-				ctx.bindings.bindConversation(next, await next.viewState(runtimeContext));
+				ctx.bindings.bindConversation(next, await createConversationBinding(next, runtimeContext));
 			}),
 	};
 }

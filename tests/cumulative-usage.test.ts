@@ -1,7 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { threadDeltaSchema } from "@get-bb/plugin-sdk/provider-bridge";
-import type { AgentEvent } from "@earendil-works/pi-durable";
+import type { AgentEvent } from "../src/runner/bridge/contracts.ts";
 import type { DurableView } from "../src/runner/runtime-types.ts";
 import { extractCumulativeUsage } from "../src/runner/bridge/assistant-message-builder.ts";
 import { DurableEventAdapter } from "../src/runner/bridge/durable-event-adapter.ts";

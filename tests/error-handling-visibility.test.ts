@@ -6,7 +6,7 @@ import { resolveTurnSummary } from "../src/runner/bridge/turn-summary.ts";
 import { translateAgentEnd } from "../src/host/message-delta-translator.ts";
 import type { RunnerEvent } from "../src/runner/bridge/contracts.ts";
 import type { DurableView } from "../src/runner/runtime-types.ts";
-import type { AgentEvent } from "@earendil-works/pi-durable";
+import type { AgentEvent } from "../src/runner/bridge/contracts.ts";
 import { viewFixture, nativeAssistantFixture, entryFixture } from "./fixtures/durable.ts";
 import { wireFixture } from "./fixtures/wire.ts";
 

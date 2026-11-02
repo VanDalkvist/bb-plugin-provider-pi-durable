@@ -1,3 +1,4 @@
+import { existsSync, unlinkSync } from "node:fs";
 import { RunnerProcess } from "./runner-process.ts";
 import { runnerProtocolWarning } from "./runner-protocol-error.ts";
 import type { PromptRequest } from "./prompt-request.ts";
@@ -14,9 +15,15 @@ import type { RunnerEvent, SessionOptions } from "./types.ts";
 
 export type { SubagentMirrorRecord };
 
+export interface PiThreadSessionContext {
+	toolCallTracker?: import("./tool-call-tracker.ts").PendingToolCallTracker;
+	interactionTracker?: import("./interaction-tracker.ts").PendingInteractionTracker;
+}
+
 export class PiThreadSession {
 	public options: SessionOptions;
 	private sendNotification: (method: string, params: Record<string, unknown>) => void;
+	private context?: PiThreadSessionContext;
 	public runner: RunnerProcess;
 	public translator = new DeltaTranslator();
 	public readyPromise: Promise<void>;
@@ -29,9 +36,14 @@ export class PiThreadSession {
 	private subagents = new SessionSubagentHandler();
 	private acknowledgedSubagentPolicyRevision?: number = undefined;
 
-	constructor(options: SessionOptions, sendNotification: (method: string, params: Record<string, unknown>) => void) {
+	constructor(
+		options: SessionOptions,
+		sendNotification: (method: string, params: Record<string, unknown>) => void,
+		context?: PiThreadSessionContext,
+	) {
 		this.options = options;
 		this.sendNotification = sendNotification;
+		this.context = context;
 		const deferred = createReadyDeferred();
 		this.readyPromise = deferred.promise;
 		this.readyResolve = deferred.resolve;
@@ -39,10 +51,11 @@ export class PiThreadSession {
 		this.runner = new RunnerProcess({
 			cwd: options.cwd || process.cwd(),
 			args: buildRunnerArgs(options),
+			toolsFilePath: options.toolsFilePath,
 			prompts: { scratchDir: options.scratchDir, systemPrompt: options.systemPrompt, appendSystemPrompt: options.appendSystemPrompt },
 			env: options.shellEnvOverrides,
 			onEvent: (event) => this.handleRunnerEvent(event),
-			onChannelMessage: (msg) => { if (msg.kind === "ready") this.readyResolve(); },
+			onChannelMessage: (msg) => { void this.handleChannelMessage(msg); },
 			onProtocolError: (error) => this.sendNotification("thread/delta", {
 				threadId: this.options.threadId, deltas: [runnerProtocolWarning(error)],
 			}),
@@ -155,6 +168,26 @@ export class PiThreadSession {
 		}
 	}
 
+	private async handleChannelMessage(msg: import("../contracts/runner-channel.ts").RunnerChannelFrame): Promise<void> {
+		if (msg.kind === "ready") { this.readyResolve(); return; }
+		if (msg.kind === "tool_call_request" && this.context?.toolCallTracker) {
+			const res = await this.context.toolCallTracker.forwardToolCall({
+				threadId: this.options.threadId, providerThreadId: this.options.providerThreadId,
+				toolName: msg.toolName, arguments: msg.arguments, scope: this.options.threadId,
+			});
+			this.runner.sendChannel({ kind: "tool_call_response", callId: msg.callId, result: res.content, isError: res.isError });
+			return;
+		}
+		if (msg.kind === "interaction_request" && this.context?.interactionTracker) {
+			const dialogKind = (msg.interactionKind || msg.dialogKind || "select") as "select" | "confirm" | "input" | "editor" | "notify";
+			const res = await this.context.interactionTracker.requestInteraction({
+				threadId: this.options.threadId, providerThreadId: this.options.providerThreadId,
+				kind: dialogKind, title: msg.title, message: msg.message, data: msg.data, scope: this.options.threadId,
+			});
+			this.runner.sendChannel({ kind: "interaction_response", id: msg.id, result: res });
+		}
+	}
+
 	public async prompt(request: PromptRequest): Promise<void> {
 		this.isProcessing = true;
 		try {
@@ -194,6 +227,13 @@ export class PiThreadSession {
 		const res = await this.runner.requestOk({ type: "get_session_stats" });
 		return extractSessionStats(res);
 	}
-	public async closeGracefully(): Promise<void> { await this.runner.closeGracefully(); }
+	public async closeGracefully(): Promise<void> {
+		await this.runner.closeGracefully();
+		if (this.options.toolsFilePath && existsSync(this.options.toolsFilePath)) {
+			try { unlinkSync(this.options.toolsFilePath); } catch (err) {
+				console.warn(`[PiThreadSession] Tools file cleanup warning: ${err instanceof Error ? err.message : String(err)}`);
+			}
+		}
+	}
 	public kill(): void { this.runner.kill(); }
 }

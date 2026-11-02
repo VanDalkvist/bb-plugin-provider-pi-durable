@@ -10,7 +10,7 @@ import type {
 	TurnEndEvent,
 	AgentEndEvent,
 } from "../src/runner/bridge/contracts.ts";
-import type { AgentEvent } from "@earendil-works/pi-durable";
+import type { AgentEvent } from "../src/runner/bridge/contracts.ts";
 import { viewFixture, entryFixture, nativeAssistantFixture } from "./fixtures/durable.ts";
 import { wireFixture } from "./fixtures/wire.ts";
 

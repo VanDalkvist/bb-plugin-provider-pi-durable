@@ -1,4 +1,44 @@
 
+### Pi 1.5.0 Zero-Breakage Migration & Sovereign Decoupling (Cycle 104, v0.6.0) — 2026-11-02 (Execution Receipt)
+- **Цель и статус:** Безопасная, безрегрессионная миграция рантайма `bb-plugin-provider-pi-durable` и суверенного ядра `durable-zero` с Pi 1.4.0 на Pi 1.5.0. Устранение архитектурного антипаттерна постоянного копирования файлов (`cp`) на основе глубокого исследования исходных кодов Beyond Boundaries `provider-pi`, upstream `pi` и `durable-zero`. Реализация Anti-Corruption Layer (`SchemaPort`, `ViewStreamProjector`, `WatcherCompat`), дефенсивного клонирования от `Object.freeze` Group Commit, упаковки раннера и выпуск релиза `v0.6.0`. Статус: **PASS (VERIFIED)**.
+- **Двухконтурная верификация (S9 Verify Gate):**
+  - *Контур 1 (Архитектурный ревьюер / AP rules):* 0 нарушений границ слоев (`scripts/verify-layer-boundaries.mjs`), строгий ациклический граф импортов (`tests/import-graph.test.ts`), 0 файлов превышают 250 LOC (AP-019, максимальный файл < 160 LOC), отрицательные проверки компиляции контрактов TS2322 подтверждены. Вердикт: **PASS**.
+  - *Контур 2 (Продуктовый ревьюер / End-to-End Scenarios):* Полный сьют 781/781 тестов pass (664 runner + 117 UI, 100% pass), `npm run doctor` выдаёт HEALTHY (7 расширений загружено, 1221 модель доступна), автономная сборка раннера `dist/runner/index.js` с экстернализацией Zod (< 20KB), E2E IPC мост `item/tool/call` и `interaction/request` подтвержден. Вердикт: **PASS**.
+- **Реализованные компоненты и срезы:**
+  1. *[Anti-Corruption Layer — SchemaPort (AP-010, AP-011, AP-012, AP-019)]:*
+     - `src/runner/schema-port.ts`: унифицированный адаптер между `@sinclair/typebox` и `@earendil-works/pi-schema` 1.5.0, валидация и 3-pass коэрция скаляров (`coerce`/`validate`).
+     - `src/runner/tool-adapter.ts`: интеграция `SchemaPort` в пайплайн исполнения расширений перед вызовом `executeToolFn`.
+     - `tests/schema-port.test.ts`, `tests/tool-adapter-schema-port.test.ts`: 100% pass.
+  2. *[Chord v2 Watcher Compatibility — WatcherCompat (AP-010, AP-014, AP-019, AP-023)]:*
+     - `src/runner/watcher-compat.ts`: хелпер `unwrapWatchValue` и тайп-гард `isWatchCall` для извлечения значения из `{ kind: 'value', value }` объекта Chord v2 / Pi 1.5.0 при сохранении совместимости со скалярными значениями 1.4.0.
+     - `src/runner/subagent-courier.ts`: интеграция `unwrapWatchValue` в `watch.start()` для стабильного получения обновлений доставки без дедлоков.
+     - `tests/watcher-compat.test.ts`: 100% pass.
+  3. *[View-Stream Projector (AP-010, AP-011, AP-018, AP-019, AP-020)]:*
+     - `src/runner/bridge/view-stream-projector.ts`: синтез событий `agent_start`, `turn_start`, `turn_end`, `agent_end` из потока `ConversationView` взамен удалённого в upstream 1.5 метода `watchEvents`.
+     - `src/runner/bridge/watch-events-compat.ts`: обратная совместимость `watchEvents` поверх `conversation.watch` для вотчеров субагентов.
+     - `tests/view-stream-projector.test.ts`: 100% pass.
+  4. *[Group Commit & Defensive Clones (AP-010, AP-013, AP-019, AP-034)]:*
+     - `src/runner/session-storage.ts`: функция `safeCloneRecord` защищает мутируемые структуры сессии от `Object.freeze`, накладываемого механизмом Group Commit в SQLite WAL движке Pi 1.5.0.
+     - `tests/frozen-state-defense.test.ts`: 100% pass.
+  5. *[Sovereign Decoupling & SSOT Integration (AP-010, AP-020, AP-028, AP-029)]:*
+     - Зафиксирован архитектурный документ `docs/research/2026-11-02-source-architecture-analysis-bb-pi-durable-zero.md` с анализом `bb-reference` и `provider-pi`.
+     - Суверенное ядро `durable-zero` обновлено до 1.5.0, синхронизированы схемы `tool_call_request` и `interaction_request`, выпущен тег `v0.6.0` на GitHub.
+     - `scripts/build-runner.mjs`: сборка `dist/runner/index.js` с бандлингом и экстернализацией Zod/Pi зависимостей, подтвержденная тестом `tests/runner-packaging.test.ts`.
+- **TDD и доказательная база:**
+  - `npm test`: **664 тестов runner pass + 117 тестов UI pass = 781 pass, 0 fail (100% pass)**.
+  - `npm run test:contracts`: PASS (0 errors, negative TS2322 guarded).
+  - `scripts/verify-import-graph.mjs`: 0 cycles across 171 files.
+  - `scripts/verify-layer-boundaries.mjs`: 0 boundary violations (Ports & Adapters cleanly respected).
+  - `npm run doctor`: HEALTHY.
+  - `npm run build`: Сборка runner, server, app и host успешна.
+- **Line Budgets (AP-019):**
+  - `src/runner/schema-port.ts`: 50 строк (< 250 LOC).
+  - `src/runner/watcher-compat.ts`: 23 строки (< 250 LOC).
+  - `src/runner/bridge/view-stream-projector.ts`: 44 строки (< 250 LOC).
+  - `src/runner/bridge/watch-events-compat.ts`: 136 строк (< 250 LOC).
+  - `src/runner/bridge-channel.ts`: 160 строк (< 250 LOC).
+  - Все `.ts` файлы в `src/` строго < 250 LOC.
+
 ### BB Dynamic Tools & Interaction Bridge (Cycle 104) — 2026-11-02 (Execution Receipt)
 - **Цель и статус:** Реализация полной двунаправленной поддержки динамических инструментов Beyond Boundaries (`dynamicTools`, `item/tool/call`), политик фильтрации (`disallowedTools`) и интерактивных UI диалогов (`interaction/request`) в `bb-plugin-provider-pi-durable` для достижения 100% паритета с BB 0.48.1 при сохранении суверенности ядра `@durable-zero` (0 утечек абстракций BB). Статус: **PASS (VERIFIED)**.
 - **Реализованные компоненты и срезы:**

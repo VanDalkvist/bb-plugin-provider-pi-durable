@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
+import { existsSync, unlinkSync } from "node:fs";
 import { resolveRunnerPath } from "./paths.ts";
 import { RunnerRpcChannel } from "./runner-rpc-channel.ts";
 import { RunnerProtocolError } from "./runner-protocol-error.ts";
@@ -10,6 +11,7 @@ export interface RunnerProcessOptions {
 	cwd: string;
 	args: string[];
 	prompts?: SessionPrompts & { scratchDir: string };
+	toolsFilePath?: string;
 	env?: Record<string, string>;
 	onEvent?: (event: RunnerEvent) => void | Promise<void>;
 	onChannelMessage?: (msg: RunnerChannelFrame) => void;
@@ -69,14 +71,14 @@ export class RunnerProcess {
 
 	private setupLifecycle() {
 		this.child.on("error", (err) => {
-			this.cleanupPrompts();
+			this.cleanup();
 			this.exited = true;
 			this.channel.failAll(err);
 			this.options.onError?.(err);
 		});
 
 		this.child.on("exit", (code, signal) => {
-			this.cleanupPrompts();
+			this.cleanup();
 			this.exited = true;
 			this.channel.failAll(new Error(`Runner process exited (code ${code}, signal ${signal})`));
 			this.options.onExit?.(code, signal);
@@ -138,6 +140,15 @@ export class RunnerProcess {
 		}
 	}
 
+	public cleanup(): void {
+		this.cleanupPrompts();
+		if (this.options.toolsFilePath && existsSync(this.options.toolsFilePath)) {
+			try { unlinkSync(this.options.toolsFilePath); } catch (err) {
+				console.warn(`[RunnerProcess] Cleanup tools file warning: ${err instanceof Error ? err.message : String(err)}`);
+			}
+		}
+	}
+
 	public async closeGracefully(timeoutMs = 5000): Promise<void> {
 		if (this.exited) return;
 
@@ -164,6 +175,7 @@ export class RunnerProcess {
 	public kill(): void {
 		if (!this.exited) {
 			this.exited = true;
+			this.cleanup();
 			try {
 				this.child.kill("SIGTERM");
 			} catch (err) {

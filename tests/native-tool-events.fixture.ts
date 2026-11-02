@@ -1,20 +1,13 @@
+import { createModels, fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@earendil-works/pi-ai";
+import { Type } from "typebox";
 import {
-	createModels,
-	fauxAssistantMessage,
-	fauxProvider,
-	fauxText,
-	fauxToolCall,
-	Type,
-} from "@earendil-works/pi-ai";
-import {
-	type AgentEvent,
 	createRegistry,
 	defineExtension,
 	defineTool,
 	Harness,
 	MemoryStorage,
-	watchEvents,
-} from "@earendil-works/pi-durable";
+	} from "@earendil-works/pi-durable";
+import { watchEvents, type AgentEvent } from "../src/runner/bridge/contracts.ts";
 import { BACKGROUND_CONTEXT as ctx } from "@earendil-works/chord/context";
 
 export type NativeToolEndEvent = Extract<AgentEvent, { type: "tool_execution_end" }>;

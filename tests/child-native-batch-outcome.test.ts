@@ -1,7 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { DurableChildEventAdapter } from "../src/runner/bridge/durable-child-event-adapter.ts";
-import type { AgentEvent } from "@earendil-works/pi-durable";
+import type { AgentEvent } from "../src/runner/bridge/contracts.ts";
 
 describe("Child Native Batch Outcome Truth (Task 7)", () => {
 	it("run_end followed by submission unanswered with reason aborted emits wire aborted", () => {

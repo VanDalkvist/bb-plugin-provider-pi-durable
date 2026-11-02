@@ -1,6 +1,6 @@
 {
   "name": "bb-plugin-provider-pi-durable",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "type": "module",
   "engines": {
     "bb": ">=0.47.1",
@@ -24,18 +24,22 @@
     "app": "./app.tsx"
   },
   "dependencies": {
-    "@earendil-works/pi-codemode": "1.4.0",
-    "@earendil-works/pi-coding-agent": "1.4.0",
-    "@earendil-works/pi-durable": "1.4.0",
+    "@earendil-works/chord": "1.5.0",
+    "@earendil-works/pi-ai": "1.5.0",
+    "@earendil-works/pi-codemode": "1.5.0",
+    "@earendil-works/pi-coding-agent": "1.5.0",
+    "@earendil-works/pi-durable": "1.5.0",
+    "@earendil-works/pi-schema": "1.5.0",
     "@get-bb/plugin-sdk": "0.6.79",
     "@types/proper-lockfile": "^4.1.4",
+    "durable-zero": "github:VanDalkvist/durable-zero#v0.6.0",
     "proper-lockfile": "^4.1.2",
     "quickjs-wasi": "3.6.2",
     "zod": "^4.6.6"
   },
   "overrides": {
-    "@earendil-works/chord": "1.4.0",
-    "@earendil-works/pi-ai": "1.4.0",
+    "@earendil-works/chord": "1.5.0",
+    "@earendil-works/pi-ai": "1.5.0",
     "undici": "8.12.2"
   },
   "devDependencies": {

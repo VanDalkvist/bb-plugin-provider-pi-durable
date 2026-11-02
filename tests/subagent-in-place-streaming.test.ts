@@ -5,7 +5,7 @@ import { DurableChildEventAdapter } from "../src/runner/bridge/durable-child-eve
 import { DurableEventAdapter } from "../src/runner/bridge/durable-event-adapter.ts";
 import type { RunnerEvent } from "../src/runner/bridge/contracts.ts";
 import { DeltaTranslator } from "../src/host/delta-translator.ts";
-import type { AgentEvent } from "@earendil-works/pi-durable";
+import type { AgentEvent } from "../src/runner/bridge/contracts.ts";
 import { wireFixture } from "./fixtures/wire.ts";
 
 describe("Native Subagent In-Place Streaming (Cycle 80)", () => {

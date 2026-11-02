@@ -31,6 +31,16 @@ await build({
 		"@earendil-works/pi-ai/*",
 		"@earendil-works/chord",
 		"@earendil-works/chord/*",
+		"@earendil-works/pi-schema",
+		"@earendil-works/pi-schema/*",
+		"@sinclair/typebox",
+		"@sinclair/typebox/*",
+		"@durable-zero/contracts",
+		"@durable-zero/contracts/*",
+		"@durable-zero/core",
+		"@durable-zero/core/*",
+		"durable-zero",
+		"durable-zero/*",
 		"proper-lockfile",
 		"zod",
 		"zod/*",
@@ -49,5 +59,5 @@ try {
 	await fs.copyFile(wasmSource, wasmDest);
 	console.log("Copied quickjs.wasm to dist/runner/quickjs.wasm successfully!");
 } catch (err) {
-	console.warn("Could not copy quickjs.wasm to dist/runner:", err);
+	console.warn("quickjs.wasm copy warning:", err.message);
 }

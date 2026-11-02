@@ -128,6 +128,7 @@ export async function mountExtensionBridge(
 	settingsManager?: import("@earendil-works/pi-coding-agent").SettingsManager,
 	dynamicNamespaces?: DynamicCodemodeNamespaces,
 	actionsDelegate?: ExtensionActionsDelegate,
+	requestInteraction?: import("../shared/extension-ui-context.ts").ExtensionUIDialogRequester,
 ): Promise<MountedExtensionBridge> {
 	let extensionRunner: ExtensionRunner | undefined;
 	try {
@@ -147,6 +148,7 @@ export async function mountExtensionBridge(
 			cwd: location.cwd,
 			modelRuntime,
 			executeToolFn,
+			requestInteraction,
 			getCallableTools: () => {
 				const map = new Map<string, unknown>();
 				for (const t of registry.snapshot().tools()) {

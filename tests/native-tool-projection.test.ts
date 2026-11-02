@@ -15,9 +15,8 @@ import {
 	Harness,
 	MemoryStorage,
 	createRegistry,
-	watchEvents,
-	type AgentEvent,
 } from "@earendil-works/pi-durable";
+import { watchEvents, type AgentEvent } from "../src/runner/bridge/contracts.ts";
 import { BACKGROUND_CONTEXT as ctx } from "@earendil-works/chord/context";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { CodingTools } from "@earendil-works/pi-durable/tools";

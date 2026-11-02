@@ -4,4 +4,5 @@ export type { AssistantMessage, AssistantMessageUsage, MessageUpdateEvent } from
 export type { ToolExecutionStartEvent, ToolExecutionUpdateEvent, ToolExecutionEndEvent } from "../../contracts/wire-tool.ts";
 export type { RuntimeGraphSnapshotEvent, SessionStatsData } from "../../contracts/wire-lifecycle.ts";
 export type { CumulativeUsageMetrics } from "../../contracts/wire-context.ts";
+export { watchEvents } from "./watch-events-compat.ts";
 export * from "./durable-contracts.ts";

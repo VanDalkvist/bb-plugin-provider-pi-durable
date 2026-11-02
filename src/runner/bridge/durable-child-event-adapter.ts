@@ -1,4 +1,4 @@
-import type { AgentEvent } from "@earendil-works/pi-durable";
+import type { AgentEvent } from "./durable-contracts.ts";
 import type { DurableView } from "../runtime-types.ts";
 import type { RunnerEvent } from "./contracts.ts";
 import { ToolEventProjector } from "./tool-result-extractor.ts";
@@ -118,7 +118,7 @@ export class DurableChildEventAdapter {
 				const message = event.entry?.model?.[0];
 				if (message?.role === "assistant" && Array.isArray(message.content)) {
 					const fullText = message.content
-						.flatMap((part) => (part.type === "text" ? [part.text] : []))
+						.flatMap((part: { type?: string; text?: string }) => (part.type === "text" && part.text ? [part.text] : []))
 						.join("");
 					if (fullText.startsWith(this.currentText) && fullText.length > this.currentText.length) {
 						const delta = fullText.slice(this.currentText.length);

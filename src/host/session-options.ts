@@ -14,7 +14,7 @@ export function buildSessionOptions(
 	isNativeChildParent = false,
 ): SessionOptions {
 	const sessionDir = resolveSessionDir(), sessionFilePath = resolveSessionFilePath(sessionKey), extensionPath = requireExtensionPath(), scratchDir = requireScratchDir();
-	const rawSkills = (params.additionalSkillPaths as string[]) ?? ((params.options as any)?.additionalSkillPaths as string[]);
+	const rawSkills = (params.additionalSkillPaths as string[] | undefined) ?? (params.options?.additionalSkillPaths as string[] | undefined);
 	const skillRoots = Array.from(new Set([...(rawSkills ?? []), ...sharedSkillRoots]));
 	const rawEnv = params.shellEnvOverrides ?? params.options?.envVars;
 	const resolvedEnv = typeof rawEnv === "object" && rawEnv !== null

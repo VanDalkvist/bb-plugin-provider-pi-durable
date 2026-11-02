@@ -27,6 +27,7 @@ export interface SessionCreationParams {
 		instructions?: string;
 		dynamicTools?: unknown[];
 		disallowedTools?: string[];
+		additionalSkillPaths?: string[];
 		[key: string]: unknown;
 	};
 	baseInstructions?: string;

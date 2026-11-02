@@ -320,1653 +320,6 @@ var codemodePlugin = {
   }
 };
 
-// src/runner/subagent.ts
-import { Type } from "@earendil-works/pi-ai";
-import {
-  configure,
-  defineExtension as defineExtension2,
-  defineTool
-} from "@earendil-works/pi-durable";
-
-// src/runner/subagent-docs.ts
-import {
-  AssistantEntry,
-  defineDoc
-} from "@earendil-works/pi-durable";
-var SubagentsDoc = defineDoc({
-  kind: "durable.subagents",
-  version: 1,
-  scope: "conversation",
-  checkpointWhen: () => false,
-  history: "latest",
-  fork: "initial",
-  initial: () => ({ agents: {} })
-});
-function isRecord(value) {
-  return typeof value === "object" && value !== null;
-}
-function extractAssistantText(entry) {
-  if (!isRecord(entry) || !Array.isArray(entry.model) || entry.model.length === 0) return "";
-  const firstMessage = entry.model[0];
-  if (!isRecord(firstMessage) || !Array.isArray(firstMessage.content)) return "";
-  return firstMessage.content.flatMap((p) => isRecord(p) && p.type === "text" && typeof p.text === "string" ? [p.text] : []).join("");
-}
-async function answerText(api, answer, context) {
-  const entry = await api.commit((tx) => tx.entry(AssistantEntry, answer), context);
-  return extractAssistantText(entry);
-}
-
-// src/runner/subagent-delivery.ts
-import {
-  AssistantEntry as AssistantEntry2,
-  defineTask as defineTask2
-} from "@earendil-works/pi-durable";
-
-// src/runner/subagent-courier.ts
-import { defineTask } from "@earendil-works/pi-durable";
-var GATHER_MS = 50;
-var DEFAULT_HOLD_TIMEOUT_MS = 5e3;
-function courierIsIdle(active) {
-  return active === void 0 || active.state.status === "terminal";
-}
-function asExtensionTask(task, extensionName) {
-  return Object.assign(task, { name: extensionName, tasks: [task] });
-}
-function courierFor(admit, holdTimeoutMs = DEFAULT_HOLD_TIMEOUT_MS) {
-  const task = defineTask({
-    name: "durable.subagent-courier",
-    version: 1,
-    initial: () => ({ phase: "gather" }),
-    phases: {
-      gather: (_task, runtime, context) => runtime.sleepUntil(runtime.now() + GATHER_MS, { phase: "next" }, context),
-      next: async (task2, runtime, context) => runtime.commit(async (tx) => {
-        const state = await tx.doc(SubagentsDoc, runtime.conversationId);
-        if (state.deliveryHold !== void 0) return { status: "running", checkpoint: { phase: "hold" } };
-        if (state.sending === void 0) {
-          const reports = state.outbox ?? [];
-          if (reports.length === 0) {
-            if (state.courier === task2.id) delete state.courier;
-            return { status: "terminal", outcome: { status: "completed", result: null } };
-          }
-          const batch = (state.batchNumber ?? 0) + 1;
-          state.batchNumber = batch;
-          state.outbox = [];
-          state.sending = { requestId: `subagent-batch:${task2.id}:${batch}`, reports };
-        } else {
-          const attempt = (state.sending.attempt ?? 0) + 1;
-          state.sending.attempt = attempt;
-          const batch = state.batchNumber ?? 1;
-          state.sending.requestId = `subagent-batch:${task2.id}:${batch}:r${attempt}`;
-        }
-        return { status: "running", checkpoint: { phase: "send" } };
-      }, context),
-      send: async (_task, runtime, context) => {
-        const state = await runtime.snapshot(SubagentsDoc, runtime.conversationId, context);
-        const sending = state?.sending;
-        if (sending === void 0) {
-          await runtime.commit(() => ({ status: "running", checkpoint: { phase: "next" } }), context);
-          return;
-        }
-        const parent = await runtime.conversation(runtime.conversationId, context);
-        try {
-          await admit?.(parent, sending.requestId, context);
-        } catch (error) {
-          if (runtime.signal.aborted || context.abortSignal?.aborted) throw error;
-          const reason = error instanceof Error ? error.message : String(error);
-          await runtime.commit(async (tx) => {
-            const current = await tx.doc(SubagentsDoc, runtime.conversationId);
-            if (current.sending?.requestId === sending.requestId) {
-              current.deliveryHold = { kind: "admission", requestId: sending.requestId, reason };
-            }
-            return { status: "running", checkpoint: { phase: "hold" } };
-          }, context);
-          return;
-        }
-        const prompt = sending.reports.map((r) => r.text).join("\n\n---\n\n");
-        const content = `[Subagent Reports Available]:
-
-${prompt}`;
-        const submission = await parent.submit({ type: "input", content, whenBusy: "followUp", requestId: sending.requestId }, context);
-        const settled = await submission.wait(context);
-        return runtime.commit(async (tx) => {
-          const current = await tx.doc(SubagentsDoc, runtime.conversationId);
-          if (current.sending?.requestId !== sending.requestId) return { status: "running", checkpoint: { phase: "next" } };
-          if (settled.status === "done") delete current.sending;
-          else current.deliveryHold = { kind: "uncertain", requestId: sending.requestId, reason: `Delivery outcome uncertain: ${settled.status}` };
-          return { status: "running", checkpoint: { phase: settled.status === "done" ? "next" : "hold" } };
-        }, context);
-      },
-      hold: async (_task, runtime, context) => {
-        const watch2 = await runtime.watchDoc(SubagentsDoc, runtime.conversationId, context);
-        if (watch2 === void 0 || watch2.value?.deliveryHold === void 0) {
-          await watch2?.stop();
-          return runtime.commit(() => ({ status: "running", checkpoint: { phase: "next" } }), context);
-        }
-        try {
-          await new Promise((resolve3) => {
-            const timer = setTimeout(() => resolve3(), holdTimeoutMs);
-            timer.unref?.();
-            watch2.start((v) => {
-              if (v?.deliveryHold === void 0) {
-                clearTimeout(timer);
-                resolve3();
-              }
-              return Promise.resolve();
-            });
-            void watch2.closed.then(() => {
-              clearTimeout(timer);
-              resolve3();
-            });
-          });
-        } finally {
-          await watch2.stop();
-        }
-        return runtime.commit(async (tx) => {
-          const current = await tx.doc(SubagentsDoc, runtime.conversationId);
-          delete current.deliveryHold;
-          return { status: "running", checkpoint: { phase: "next" } };
-        }, context);
-      }
-    },
-    abort: (_t, rt, ctx) => rt.commit(() => ({ status: "terminal", outcome: { status: "aborted" } }), ctx)
-  });
-  return asExtensionTask(task, "durable.subagent-courier");
-}
-
-// src/runner/subagent-delivery.ts
-var BACKGROUND = { ownership: { kind: "conversation" }, background: true };
-var Anchor = asExtensionTask(
-  defineTask2({
-    name: "durable.subagent-anchor",
-    version: 1,
-    initial: () => ({ phase: "done" }),
-    phases: { done: (_t, rt, ctx) => rt.commit(() => ({ status: "terminal", outcome: { status: "completed", result: null } }), ctx) },
-    abort: (_t, rt, ctx) => rt.commit(() => ({ status: "terminal", outcome: { status: "aborted" } }), ctx)
-  }),
-  "durable.subagent-anchor"
-);
-function reporterFor(courier, admit) {
-  const task = defineTask2({
-    name: "durable.subagent-reporter",
-    version: 1,
-    initial: () => ({ phase: "deliver" }),
-    phases: {
-      deliver: async (task2, runtime, context) => {
-        const child = await runtime.conversation(task2.input.conversationId, context);
-        await admit?.(child, task2.input.requestId, context);
-        const submission = await child.submit({ type: "input", content: task2.input.task, requestId: task2.input.requestId }, context);
-        const settled = await submission.wait(context);
-        return runtime.commit(async (tx) => {
-          const doc = await tx.doc(SubagentsDoc, runtime.conversationId);
-          doc.agents ??= {};
-          const record = doc.agents[task2.input.key] ?? {
-            name: task2.input.task.trim(),
-            conversationId: task2.input.conversationId,
-            requestId: task2.input.requestId,
-            task: task2.input.task,
-            role: "worker",
-            ownerTaskId: task2.id,
-            background: true
-          };
-          doc.agents[task2.input.key] = record;
-          let text = `Subagent ${record.name} failed: ${settled.status}`;
-          if (settled.status === "unanswered") text += ` (${settled.reason ?? "unknown"})`;
-          if (settled.status === "done" && settled.type === "input") {
-            text = `Subagent ${record.name} answered: ` + extractAssistantText(await tx.entry(AssistantEntry2, settled.answer));
-          }
-          record.report = text;
-          record.settled = true;
-          return { status: "running", checkpoint: { phase: "report", text } };
-        }, context);
-      },
-      report: async (task2, runtime, context) => runtime.commit(async (tx) => {
-        const state = await tx.doc(SubagentsDoc, runtime.conversationId);
-        const reportId = String(task2.id);
-        if (!(state.outbox ?? []).some((report) => report.id === reportId)) {
-          const name = state.agents[task2.input.key]?.name ?? task2.input.key;
-          state.outbox = [...state.outbox ?? [], { id: reportId, name, text: task2.state.checkpoint.text }];
-        }
-        const active = state.courier === void 0 ? void 0 : await tx.task(state.courier);
-        if (courierIsIdle(active)) state.courier = await tx.createTask(courier, null, BACKGROUND);
-        return { status: "terminal", outcome: { status: "completed", result: null } };
-      }, context)
-    },
-    abort: (_t, rt, ctx) => rt.commit(() => ({ status: "terminal", outcome: { status: "aborted" } }), ctx)
-  });
-  return asExtensionTask(task, "durable.subagent-reporter");
-}
-var DefaultCourier = courierFor();
-var DefaultReporter = reporterFor(DefaultCourier);
-
-// src/runner/subagent-role.ts
-function buildTechnicalWorkerRole() {
-  return [
-    "You are an isolated worker subagent.",
-    "Your goal is to solve the delegated task using your available tools.",
-    "Execute the assigned task thoroughly, verify your findings, and return your final answer concisely."
-  ].join("\n");
-}
-
-// src/policy/resolver.ts
-import { getSupportedThinkingLevels } from "@earendil-works/pi-ai/models";
-
-// src/shared/model-ref.ts
-function normalizeModelReference(raw, defaultProvider) {
-  if (!raw || typeof raw !== "object") return void 0;
-  const r = raw;
-  const provider = typeof r.provider === "string" && r.provider.trim() ? r.provider.trim() : defaultProvider?.trim();
-  const rawId = typeof r.modelId === "string" && r.modelId.trim() ? r.modelId.trim() : typeof r.id === "string" && r.id.trim() ? r.id.trim() : void 0;
-  if (!provider || !rawId) return void 0;
-  const prefix = `${provider}/`;
-  const cleanModelId = rawId.startsWith(prefix) ? rawId.slice(prefix.length) : rawId;
-  return { provider, modelId: cleanModelId };
-}
-
-// src/policy/errors.ts
-var SubagentPolicyError = class extends Error {
-  cause;
-  constructor(message, options) {
-    super(message);
-    this.name = this.constructor.name;
-    this.cause = options?.cause;
-  }
-};
-var SubagentPolicyInvalidError = class extends SubagentPolicyError {
-  code = "SUBAGENT_POLICY_INVALID";
-  constructor(message, options) {
-    super(message, options);
-  }
-};
-var SubagentModelUnavailableError = class extends SubagentPolicyError {
-  code = "SUBAGENT_MODEL_UNAVAILABLE";
-  constructor(message, options) {
-    super(message, options);
-  }
-};
-var SubagentPolicyLoadError = class extends SubagentPolicyError {
-  code = "SUBAGENT_POLICY_LOAD_ERROR";
-  constructor(message, options) {
-    super(message, options);
-  }
-};
-var SubagentRevisionConflictError = class extends SubagentPolicyError {
-  code = "REVISION_CONFLICT";
-  constructor(message, options) {
-    super(message, options);
-  }
-};
-
-// src/policy/resolver.ts
-function mapBbReasoningToNativeThinking(level) {
-  if (level === "none" || level === void 0) {
-    return "off";
-  }
-  return level;
-}
-function resolveSubagentModelConfiguration(record, parentContext, availableModels) {
-  if (record.policy.mode === "inherit") {
-    const parentModel = normalizeModelReference(parentContext.model);
-    if (!parentModel) {
-      throw new SubagentPolicyInvalidError(
-        "Parent model is required for inherit mode"
-      );
-    }
-    return {
-      model: {
-        provider: parentModel.provider,
-        modelId: parentModel.modelId
-      },
-      thinkingLevel: mapBbReasoningToNativeThinking(parentContext.thinkingLevel),
-      source: "parent_inherited",
-      policyRevision: record.revision
-    };
-  }
-  const targetProfile = record.policy.configuredProfile;
-  const targetModel = normalizeModelReference(targetProfile.model);
-  const foundModel = targetModel ? availableModels.find((m) => {
-    const availableNorm = normalizeModelReference(m, m.provider);
-    return availableNorm && availableNorm.provider === targetModel.provider && availableNorm.modelId === targetModel.modelId;
-  }) : void 0;
-  if (!foundModel || !targetModel) {
-    throw new SubagentModelUnavailableError(
-      `Configured subagent model "${targetProfile.model.provider}/${targetProfile.model.modelId}" is unavailable or unauthenticated. Update the subagent model in Settings \u2192 Installed plugins \u2192 Pi Durable \u2192 Subagents.`
-    );
-  }
-  const supportedLevels = getSupportedThinkingLevels(foundModel);
-  if (!supportedLevels.includes(targetProfile.thinkingLevel)) {
-    throw new SubagentPolicyInvalidError(
-      `Thinking level "${targetProfile.thinkingLevel}" is not supported by model "${targetModel.provider}/${targetModel.modelId}". Supported levels: ${supportedLevels.join(", ")}.`
-    );
-  }
-  return {
-    model: {
-      provider: targetModel.provider,
-      modelId: targetModel.modelId
-    },
-    thinkingLevel: targetProfile.thinkingLevel,
-    source: "user_configured",
-    policyRevision: record.revision
-  };
-}
-
-// src/runner/subagent.ts
-function createSubagentExtension(getPolicy) {
-  return defineExtension2({
-    name: "subagent",
-    tools: [
-      defineTool({
-        name: "subagent",
-        description: "Delegate a self-contained task to an async subagent. Uses the configured runtime subagent model policy (inherits parent model or uses provider-configured model). Runs in the background by default without blocking the conversation.",
-        parameters: Type.Object({
-          task: Type.String({ description: "What the subagent should do" }),
-          background: Type.Optional(
-            Type.Boolean({
-              description: "Run in background asynchronously (default: true). Set false only if an immediate synchronous answer is strictly required.",
-              default: true
-            })
-          )
-        }),
-        replay: "safe",
-        execute: async (args2, api, context) => {
-          if (api.conversationId !== void 0 && Number(api.conversationId) > 1) {
-            return {
-              output: [
-                {
-                  type: "text",
-                  text: "Subagent recursion blocked: nested subagents are not permitted to spawn further subagents (max depth 1 reached)."
-                }
-              ],
-              isError: true,
-              details: { error: "MAX_DEPTH_EXCEEDED", task: args2.task }
-            };
-          }
-          const isBackground = args2.background !== false;
-          const key = `subagent:${api.taskId}`;
-          const requestId = `subagent:${api.taskId}`;
-          const existingRecord = await api.commit(async (tx) => {
-            const state = await tx.doc(SubagentsDoc, api.conversationId);
-            return state?.agents?.[key];
-          }, context);
-          let childRecord;
-          if (existingRecord) {
-            childRecord = existingRecord;
-          } else {
-            const parentAgent = await api.agent(context);
-            const policySnapshot = getPolicy();
-            const availableModels = policySnapshot.policy.mode === "configured" ? await api.models.getAvailable() : [];
-            const resolved = resolveSubagentModelConfiguration(
-              policySnapshot,
-              {
-                model: normalizeModelReference(parentAgent?.model),
-                thinkingLevel: parentAgent?.thinkingLevel ?? "off"
-              },
-              availableModels
-            );
-            childRecord = await api.commit(async (tx) => {
-              const state = await tx.doc(SubagentsDoc, api.conversationId);
-              if (state?.agents?.[key]) {
-                return state.agents[key];
-              }
-              const existingAnchorId = state?.agents?.[key]?.anchorTaskId;
-              let existingConv = (await tx.scanConversations({ ownerTaskId: api.taskId }, 1)).items[0];
-              if (!existingConv && existingAnchorId !== void 0) {
-                existingConv = (await tx.scanConversations({ ownerTaskId: existingAnchorId }, 1)).items[0];
-              }
-              let childId = existingConv?.id ?? state?.agents?.[key]?.conversationId;
-              let anchorId = existingAnchorId;
-              if (childId === void 0) {
-                if (isBackground) {
-                  anchorId = await tx.createTask(Anchor, null, BACKGROUND);
-                }
-                const ownership = isBackground && anchorId !== void 0 ? { kind: "task", taskId: anchorId } : { kind: "task", taskId: api.taskId };
-                const created = await tx.createConversation({ ownership });
-                await configure(tx, created.id, {
-                  model: resolved.model,
-                  thinkingLevel: resolved.thinkingLevel,
-                  instructions: buildTechnicalWorkerRole()
-                });
-                childId = created.id;
-              }
-              const record = {
-                name: args2.task.trim(),
-                conversationId: childId,
-                requestId,
-                task: args2.task,
-                role: "worker",
-                ownerTaskId: api.taskId,
-                ...anchorId !== void 0 ? { anchorTaskId: anchorId } : {},
-                background: isBackground,
-                actualModel: resolved.model,
-                thinkingLevel: resolved.thinkingLevel,
-                source: resolved.source,
-                policyRevision: resolved.policyRevision
-              };
-              if (isBackground) {
-                record.reporter = await tx.createTask(
-                  DefaultReporter,
-                  { key, conversationId: childId, task: args2.task, requestId },
-                  BACKGROUND
-                );
-              }
-              if (state) {
-                state.agents ??= {};
-                state.agents[key] = record;
-              }
-              return record;
-            }, context);
-          }
-          const detailsPayload = {
-            conversationId: childRecord.conversationId,
-            task: args2.task,
-            background: isBackground
-          };
-          if (childRecord.actualModel) {
-            detailsPayload.actualModel = childRecord.actualModel;
-          }
-          if (childRecord.thinkingLevel) {
-            detailsPayload.thinkingLevel = childRecord.thinkingLevel;
-          }
-          if (childRecord.source) {
-            detailsPayload.source = childRecord.source;
-          }
-          if (childRecord.policyRevision !== void 0) {
-            detailsPayload.policyRevision = childRecord.policyRevision;
-          }
-          await api.details(detailsPayload, context);
-          if (isBackground) {
-            return {
-              output: [
-                {
-                  type: "text",
-                  text: `Subagent spawned in background (conversation ${childRecord.conversationId}). The task is running independently and will report upon completion.`
-                }
-              ],
-              details: detailsPayload
-            };
-          }
-          const handle = await api.conversation(childRecord.conversationId, context);
-          if (!handle) throw new Error(`Failed to access subagent conversation: ${childRecord.conversationId}`);
-          const submission = await handle.submit({ type: "input", content: args2.task, requestId }, context);
-          const settled = await submission.wait(context);
-          if (settled.status !== "done" || settled.type !== "input") {
-            throw new Error(`Subagent ${childRecord.conversationId} failed: ${settled.status}`);
-          }
-          const text = await answerText(api, settled.answer, context);
-          await api.commit(async (tx) => {
-            const state = await tx.doc(SubagentsDoc, api.conversationId);
-            if (state?.agents?.[key]) {
-              state.agents[key].settled = true;
-              state.agents[key].report = text;
-            }
-          }, context);
-          return {
-            output: [{ type: "text", text }],
-            details: detailsPayload
-          };
-        }
-      })
-    ]
-  });
-}
-
-// src/runner/plugins/built-in/subagents.ts
-var subagentsPlugin = {
-  id: "subagents",
-  name: "Subagents",
-  category: "built-in",
-  version: "1.0.0",
-  register(ctx) {
-    if (!ctx.registry) return;
-    if (typeof ctx.getSubagentPolicy === "function") {
-      ctx.registry.install(createSubagentExtension(ctx.getSubagentPolicy));
-    }
-    ctx.registry.install(Anchor);
-    ctx.registry.install(DefaultCourier);
-    ctx.registry.install(DefaultReporter);
-  },
-  teardown() {
-  }
-};
-
-// src/runner/harness-setup.ts
-function configureHarnessHttp(settingsManager) {
-  const proxy = settingsManager.getGlobalSettings()?.httpProxy?.trim();
-  if (proxy) {
-    process.env.HTTP_PROXY ??= proxy;
-    process.env.HTTPS_PROXY ??= proxy;
-  }
-}
-function createHarnessSettings(settingsManager, getActiveModel) {
-  return {
-    get stream() {
-      const provider = settingsManager.getProviderRetrySettings?.() ?? {};
-      const idle = settingsManager.getHttpIdleTimeoutMs?.() ?? 3e5;
-      return {
-        timeoutMs: provider.timeoutMs ?? (idle === 0 ? 2147483647 : idle),
-        maxRetryDelayMs: provider.maxRetryDelayMs,
-        ...provider.maxRetries === void 0 ? {} : { maxRetries: provider.maxRetries }
-      };
-    },
-    get compaction() {
-      const active = getActiveModel?.();
-      const model = active ? { provider: active.provider, id: active.modelId } : (() => {
-        const p = settingsManager.getDefaultProvider();
-        const m = settingsManager.getDefaultModel();
-        return p && m ? { provider: p, id: m } : void 0;
-      })();
-      return settingsManager.getCompactionSettings?.(model) ?? {};
-    },
-    get retry() {
-      return settingsManager.getRetrySettings?.() ?? {};
-    },
-    get steeringMode() {
-      return settingsManager.getSteeringMode?.() ?? "immediate";
-    },
-    get followUpMode() {
-      return settingsManager.getFollowUpMode?.() ?? "queue";
-    }
-  };
-}
-async function createCodingRegistry(settingsManager, cwd, getSubagentPolicy, promptOptions, dynamicNamespaces, customPlugins = []) {
-  const registry = createRegistry();
-  const pluginRegistry = new DurablePluginRegistry();
-  pluginRegistry.register(codingToolsPlugin);
-  pluginRegistry.register(codemodePlugin);
-  pluginRegistry.register(subagentsPlugin);
-  for (const plugin of customPlugins) {
-    pluginRegistry.register(plugin);
-  }
-  const ctx = {
-    registry,
-    settingsManager,
-    cwd,
-    storageDir: cwd,
-    getSubagentPolicy,
-    prompt: promptOptions,
-    dynamicNamespaces
-  };
-  await pluginRegistry.initAll(ctx);
-  registry.install(createToolSearchExtension());
-  registry.install(createPiPrompt(settingsManager, cwd, promptOptions));
-  return Object.assign(registry, { pluginRegistry });
-}
-var ExecutionEnvs = class {
-  #defaultCwd;
-  #envs = /* @__PURE__ */ new Map();
-  constructor(defaultCwd) {
-    this.#defaultCwd = defaultCwd;
-  }
-  env = ({ cwd = this.#defaultCwd }) => {
-    let env = this.#envs.get(cwd);
-    if (env === void 0) {
-      env = new NodeExecutionEnv({ cwd });
-      this.#envs.set(cwd, env);
-    }
-    return env;
-  };
-  async cleanup(context) {
-    const envs = [...this.#envs.values()];
-    this.#envs.clear();
-    for (const env of envs) await env.cleanup(context);
-  }
-};
-async function findInitialAgentModel(settingsManager, modelRuntime, cli) {
-  if (cli?.model !== void 0) {
-    const resolved = resolveCliModel({ cliProvider: cli.provider, cliModel: cli.model, modelRuntime });
-    if (resolved.error !== void 0 || resolved.model === void 0) {
-      throw new Error(`Could not resolve model: ${resolved.error ?? cli.model}`);
-    }
-    return {
-      model: { provider: resolved.model.provider, modelId: resolved.model.id },
-      thinkingLevel: cli.thinking ?? resolved.thinkingLevel ?? "off"
-    };
-  }
-  const defaultProvider = settingsManager.getDefaultProvider?.();
-  const defaultModelId = settingsManager.getDefaultModel?.();
-  const defaultThinkingLevel = settingsManager.getDefaultThinkingLevel?.();
-  if (defaultProvider && defaultModelId) {
-    const models = modelRuntime.getAvailableSnapshot();
-    const matched = models.find((m) => m.provider === defaultProvider && m.id === defaultModelId);
-    if (matched) {
-      return {
-        model: { provider: matched.provider, modelId: matched.id },
-        thinkingLevel: defaultThinkingLevel ?? "off"
-      };
-    }
-  }
-  const available = modelRuntime.getAvailableSnapshot();
-  if (available.length > 0) {
-    return {
-      model: { provider: available[0].provider, modelId: available[0].id },
-      thinkingLevel: "off"
-    };
-  }
-  return {};
-}
-
-// src/runner/session-storage.ts
-import { execFileSync } from "node:child_process";
-import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
-import { basename, join as join2, resolve as resolve2 } from "node:path";
-import lockfile from "proper-lockfile";
-
-// src/shared/agent-dir.ts
-import { homedir } from "node:os";
-import { join, resolve } from "node:path";
-function getAgentDir(env = process.env) {
-  const override = env.PI_AGENT_DIR?.trim() || env.PI_CODING_AGENT_DIR?.trim();
-  if (override && override.length > 0) return resolve(override);
-  return join(homedir(), ".pi", "agent");
-}
-
-// src/runner/session-storage.ts
-function isProcessAlive(pid) {
-  if (!pid || pid <= 0) return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (err) {
-    return err.code === "EPERM";
-  }
-}
-function isVerifiedRunnerProcess(owner) {
-  if (!isProcessAlive(owner.pid)) return false;
-  try {
-    const output2 = execFileSync("ps", ["-p", String(owner.pid), "-o", "command="], {
-      encoding: "utf8",
-      timeout: 1e3,
-      stdio: ["ignore", "pipe", "ignore"]
-    }).trim();
-    return output2.includes("node") || output2.includes("runner") || output2.includes("durable") || output2.includes("bb");
-  } catch {
-    return false;
-  }
-}
-function logUnexpectedErr(err, allowedCode, context) {
-  if (err?.code !== allowedCode) {
-    console.warn(`[SessionStorage] ${context}: ${err instanceof Error ? err.message : String(err)}`);
-  }
-}
-async function writeOwnerFile(directory, owner) {
-  await writeFile(join2(directory, "session.owner.json"), JSON.stringify(owner, null, 2), "utf8");
-}
-async function readOwnerFile(directory) {
-  try {
-    const content = await readFile(join2(directory, "session.owner.json"), "utf8");
-    return JSON.parse(content);
-  } catch (err) {
-    logUnexpectedErr(err, "ENOENT", `Corrupted or unreadable session.owner.json in ${directory}`);
-    return null;
-  }
-}
-async function removeOwnerFile(directory) {
-  await rm(join2(directory, "session.owner.json"), { force: true }).catch(
-    (err) => logUnexpectedErr(err, "ENOENT", `Failed to remove owner file in ${directory}`)
-  );
-}
-async function forceUnlock(directory) {
-  await lockfile.unlock(directory, { realpath: false }).catch(
-    (err) => logUnexpectedErr(err, "ENOENT", `unlock warning for ${directory}`)
-  );
-  await rm(`${directory}.lock`, { recursive: true, force: true }).catch(
-    (err) => logUnexpectedErr(err, "ENOENT", `lockfile cleanup warning for ${directory}`)
-  );
-}
-async function acquireSessionLock(directory, cwd, id) {
-  const lockOpts = { realpath: false, retries: { retries: 2, minTimeout: 100, maxTimeout: 200 } };
-  let rawRelease;
-  try {
-    rawRelease = await lockfile.lock(directory, lockOpts);
-  } catch (initialErr) {
-    let owner = await readOwnerFile(directory);
-    if (!owner) {
-      await new Promise((r) => setTimeout(r, 100));
-      owner = await readOwnerFile(directory);
-    }
-    if (!owner) {
-      throw new Error(`Session is already open in another process: ${directory}`, { cause: initialErr });
-    }
-    const isAlive = isProcessAlive(owner.pid);
-    const isRunner = isAlive && isVerifiedRunnerProcess(owner);
-    if (!isAlive || !isRunner) {
-      await forceUnlock(directory);
-      await removeOwnerFile(directory);
-      try {
-        rawRelease = await lockfile.lock(directory, lockOpts);
-      } catch (retryErr) {
-        throw new DurableStorageError(`Session is already open in another process (PID: ${owner.pid}): ${directory}`, retryErr);
-      }
-    } else {
-      throw new DurableStorageError(
-        `Session is already open in another live process (PID: ${owner.pid}): ${directory}`,
-        initialErr
-      );
-    }
-  }
-  await writeOwnerFile(directory, { pid: process.pid, id, cwd, startedAt: Date.now() });
-  let released = false;
-  return async () => {
-    if (released) return;
-    released = true;
-    try {
-      await removeOwnerFile(directory);
-    } finally {
-      await rawRelease();
-    }
-  };
-}
-async function selectSession(cwdInput, continueSession, targetSession) {
-  const cwd = await realpath(resolve2(cwdInput));
-  const root = join2(getAgentDir(), "experimental", "durable-sessions", createHash("sha256").update(cwd).digest("hex").slice(0, 24));
-  await mkdir(root, { recursive: true });
-  let directory;
-  let created = false;
-  if (targetSession) {
-    const clean = targetSession.endsWith(".sqlite") ? resolve2(targetSession, "..") : targetSession;
-    directory = clean.includes("/") || clean.includes("\\") ? resolve2(clean) : join2(root, clean);
-    try {
-      await mkdir(directory, { recursive: true });
-      const entries = await readdir(directory);
-      if (!entries.includes("session.sqlite")) {
-        created = true;
-      }
-    } catch (err) {
-      logUnexpectedErr(err, "ENOENT", `Directory inspection failed in ${directory}`);
-    }
-  } else if (continueSession) {
-    const entries = await readdir(root, { withFileTypes: true });
-    const newest = entries.filter((entry) => entry.isDirectory() && /^\d{13}-[0-9a-f-]{36}$/u.test(entry.name)).map((entry) => entry.name).sort().at(-1);
-    if (!newest) throw new Error(`No durable session exists for ${cwd}`);
-    directory = join2(root, newest);
-  } else {
-    directory = join2(root, `${String(Date.now()).padStart(13, "0")}-${randomUUID()}`);
-    await mkdir(directory);
-    created = true;
-  }
-  const id = basename(directory);
-  const release = await acquireSessionLock(directory, cwd, id);
-  return { id, directory, database: join2(directory, "session.sqlite"), cwd, created, release };
-}
-
-// src/runner/runtime-types.ts
-import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import {
-  ROOT_CONVERSATION_ID
-} from "@earendil-works/pi-durable";
-var runtimeContext = BACKGROUND_CONTEXT;
-function agentOf(view) {
-  return view.docs["pi.agent"] ?? {};
-}
-function titleOf(entry) {
-  const message = entry?.model?.[0];
-  if (message?.role !== "user") return {};
-  const text = typeof message.content === "string" ? message.content : message.content.flatMap((block) => block.type === "text" ? [block.text] : []).join(" ");
-  return { title: text.replace(/\s+/g, " ").trim() };
-}
-async function firstInput(harness, id) {
-  if (id === ROOT_CONVERSATION_ID) return {};
-  const conversation = await harness.conversation(id, runtimeContext);
-  let first;
-  let cursor;
-  do {
-    const page = await conversation.entries({}, 256, cursor, runtimeContext);
-    first = [...page.items].reverse().find((entry) => entry.kind === "pi.user") ?? first;
-    cursor = page.next;
-  } while (cursor !== void 0);
-  return titleOf(first);
-}
-
-// src/runner/compaction-hooks.ts
-var CompactionSideEffectError = class extends Error {
-  code;
-  operation;
-  constructor(operation, cause) {
-    const code = operation === "compact_context" ? "CONTEXT_RETRIEVAL_FAILED" : "COMPACTION_HOOK_FAILED";
-    super(`${operation} failed (${code})`, { cause });
-    this.name = "CompactionSideEffectError";
-    this.operation = operation;
-    this.code = code;
-  }
-};
-async function runCompactionSideEffect(operation, action, notice) {
-  try {
-    return { status: "succeeded", value: await action() };
-  } catch (cause) {
-    const error = new CompactionSideEffectError(operation, cause);
-    notice("warning", error.message);
-    return { status: "failed", error };
-  }
-}
-
-// src/runner/runtime-controller.ts
-import { clampThinkingLevel, getSupportedThinkingLevels as getSupportedThinkingLevels2 } from "@earendil-works/pi-ai";
-function createDurableController(ctx) {
-  let queue = Promise.resolve();
-  const command = (operation) => {
-    queue = queue.then(operation).catch(ctx.fail);
-    return queue;
-  };
-  const watchAnswer = (submission) => {
-    void submission.wait(runtimeContext).then(async (settled) => {
-      if (settled.status === "unanswered" && settled.reason !== "aborted") {
-        ctx.notice(
-          "error",
-          `No answer: ${settled.reason}${settled.detail === void 0 ? "" : ` ${JSON.stringify(settled.detail)}`}`
-        );
-      }
-      if (ctx.extensionRunner) {
-        try {
-          await ctx.extensionRunner.emit({ type: "agent_end", messages: [] });
-          await ctx.extensionRunner.emit({ type: "agent_settled", aborted: settled.status === "unanswered" && settled.reason === "aborted" });
-        } catch (err) {
-          ctx.notice("warning", `agent lifecycle hook error: ${err instanceof Error ? err.message : String(err)}`);
-        }
-      }
-    }, ctx.fail);
-  };
-  const agentModel = () => {
-    const ref = agentOf(ctx.getState().conversation).model;
-    const model = ref === void 0 ? void 0 : ctx.modelRuntime.getModel(ref.provider, ref.modelId);
-    if (model === void 0) {
-      throw new Error(ref === void 0 ? "No model selected" : "Current model is unavailable");
-    }
-    return model;
-  };
-  return {
-    submit: (input, whenBusy) => command(async () => {
-      const isStr = typeof input === "string";
-      const prompt = isStr ? input : input.filter((c) => c.type === "text").map((c) => c.text).join("\n");
-      const images = isStr ? void 0 : input.filter((c) => c.type === "image");
-      if (ctx.extensionRunner) {
-        try {
-          const currentAgent = await ctx.bindings.current.agent(runtimeContext);
-          const activeTools = currentAgent.tools.map((t) => t.name);
-          const hookRes = await ctx.extensionRunner.emitBeforeAgentStart(
-            { messageType: "user", prompt, images: images?.length ? images : void 0 },
-            {
-              cwd: ctx.cwd ?? process.cwd(),
-              selectedTools: activeTools,
-              sections: ctx.dynamicSections?.getSections() ?? {}
-            }
-          );
-          if (hookRes?.systemPromptOptions?.sections && ctx.dynamicSections) {
-            ctx.dynamicSections.updateSections(hookRes.systemPromptOptions.sections);
-          }
-          const selectedTools = hookRes?.systemPromptOptions?.selectedTools;
-          const handlerEdited = selectedTools && (selectedTools.length !== activeTools.length || selectedTools.some((name, i) => name !== activeTools[i]));
-          const nextActiveTools = handlerEdited ? selectedTools : ctx.getActiveTools?.() ?? ctx.extensionRunner?.getActiveTools?.() ?? activeTools;
-          if (handlerEdited && ctx.setActiveTools) ctx.setActiveTools(selectedTools);
-          if (nextActiveTools && (nextActiveTools.length !== activeTools.length || nextActiveTools.some((name, i) => name !== activeTools[i]))) {
-            await ctx.bindings.current.configure({ modelTools: nextActiveTools.map((name) => ({ name })) }, runtimeContext);
-          }
-        } catch (err) {
-          ctx.notice(
-            "warning",
-            `before_agent_start error: ${err instanceof Error ? err.message : String(err)}`
-          );
-        }
-      }
-      return watchAnswer(await ctx.bindings.current.submit({ type: "input", content: input, whenBusy }, runtimeContext));
-    }),
-    compact: (instructions) => command(async () => {
-      const extensionRunner = ctx.extensionRunner;
-      if (extensionRunner) {
-        const context = await runCompactionSideEffect("compact_context", () => ctx.bindings.current.context(runtimeContext), ctx.notice);
-        if (context.status === "succeeded") {
-          const ctxView = context.value;
-          const msgs = [...ctxView.messages], entries = [...ctxView.entries];
-          await runCompactionSideEffect("session_before_compact", () => extensionRunner.emit({
-            type: "session_before_compact",
-            preparation: { firstKeptEntryId: ctxView.head?.id !== void 0 ? String(ctxView.head.id) : "", messagesToSummarize: msgs, turnPrefixMessages: [], isSplitTurn: false, tokensBefore: 0, fileOps: { read: /* @__PURE__ */ new Set(), written: /* @__PURE__ */ new Set(), edited: /* @__PURE__ */ new Set() }, settings: {} },
-            branchEntries: entries,
-            customInstructions: instructions,
-            reason: "manual",
-            willRetry: false,
-            signal: new AbortController().signal
-          }), ctx.notice);
-        }
-      }
-      const id = await ctx.bindings.current.compact(instructions, runtimeContext);
-      void ctx.opened.waitForTask(id, runtimeContext).then(async (receipt) => {
-        const outcome = receipt.state.outcome;
-        if (outcome.status === "completed") {
-          if (extensionRunner) {
-            void runCompactionSideEffect("session_compact", () => extensionRunner.emit({
-              type: "session_compact",
-              compactionEntry: { id: outcome.result?.entryId ?? "", type: "compaction", summary: "", tokensBefore: 0, tokensAfter: 0 },
-              fromExtension: false,
-              reason: "manual",
-              willRetry: false
-            }), ctx.notice).catch(ctx.fail);
-          }
-          const { entryId, submissionId } = outcome.result;
-          const status = submissionId === void 0 ? void 0 : (await (await ctx.opened.submission(submissionId, runtimeContext))?.status(runtimeContext))?.status;
-          const msg = entryId !== void 0 || status === "done" ? "Compacted." : status === "queued" ? "Compaction summary queued; it is placed at the next turn boundary." : status === "unanswered" ? "Compaction summary dropped: the context changed under it." : "Nothing to compact: the context fits in the recent window that is kept verbatim.";
-          ctx.notice("info", msg);
-        } else if (outcome.status === "aborted") {
-          ctx.notice("info", "Compaction aborted.");
-        } else {
-          ctx.notice("error", `Compaction ${outcome.status}: ${outcome.error?.message ?? outcome.reason ?? ""}`);
-        }
-      }).catch(ctx.fail);
-    }),
-    abort: () => command(async () => {
-      await ctx.bindings.current.abort(runtimeContext, { background: true });
-      const childConversationIds = [];
-      await ctx.bindings.current.commit(async (tx) => {
-        const doc = await tx.doc(SubagentsDoc, ctx.bindings.current.id);
-        for (const agent of Object.values(doc?.agents ?? {})) {
-          if (!agent.settled && agent.conversationId) {
-            childConversationIds.push(agent.conversationId);
-          }
-        }
-      }, runtimeContext).catch((err) => {
-        ctx.notice("warning", `Cascade abort read error: ${err}`);
-      });
-      for (const childId of childConversationIds) {
-        const child = await ctx.opened.conversation(childId, runtimeContext).catch((err) => {
-          ctx.notice("warning", `Failed to access subagent: ${err}`);
-          return void 0;
-        });
-        if (child) {
-          await child.abort(runtimeContext, { background: true }).catch((err) => {
-            ctx.notice("warning", `Failed to abort subagent: ${err}`);
-          });
-        }
-      }
-    }),
-    cycleThinking: () => command(async () => {
-      const model = agentModel();
-      if (!model.reasoning) throw new Error("Current model does not support thinking");
-      const levels = getSupportedThinkingLevels2(model), level = agentOf(ctx.getState().conversation).thinkingLevel ?? "off";
-      await ctx.bindings.current.configure({ thinkingLevel: levels[(levels.indexOf(level) + 1) % levels.length] ?? "off" }, runtimeContext);
-    }),
-    setThinkingLevel: (targetLevel) => command(async () => {
-      const model = agentModel();
-      if (!model.reasoning) {
-        if (targetLevel === "off" || targetLevel === "none") {
-          return void await ctx.bindings.current.configure({ thinkingLevel: "off" }, runtimeContext);
-        }
-        throw new Error("Current model does not support thinking");
-      }
-      await ctx.bindings.current.configure({ thinkingLevel: clampThinkingLevel(model, targetLevel) }, runtimeContext);
-    }),
-    setModel: (ref) => command(async () => {
-      const model = ctx.modelRuntime.getModel(ref.provider, ref.modelId);
-      if (model === void 0) throw new Error(`Unknown model: ${ref.provider}/${ref.modelId}`);
-      ctx.setActiveModelRef(ref);
-      const thinking = agentOf(ctx.getState().conversation).thinkingLevel ?? "off";
-      await ctx.bindings.current.configure({ model: ref, thinkingLevel: clampThinkingLevel(model, thinking) }, runtimeContext);
-    }),
-    toggleTasks: () => command(async () => {
-      if (ctx.bindings.tasksOpen) return ctx.bindings.closeTasks();
-      ctx.bindings.attachTasks(await ctx.opened.taskGraph(runtimeContext));
-    }),
-    switchConversation: (id) => command(async () => {
-      const next = await ctx.opened.conversation(id, runtimeContext);
-      if (next === void 0) throw new Error(`Conversation ${id} does not exist`);
-      ctx.bindings.bindConversation(next, await next.viewState(runtimeContext));
-    })
-  };
-}
-
-// src/runner/runtime-bindings.ts
-var RuntimeBindings = class {
-  conversation;
-  view;
-  unsubscribe;
-  tasks;
-  unsubscribeTasks;
-  epoch = 0;
-  taskEpoch = 0;
-  closed = false;
-  update;
-  constructor(conversation, view, update) {
-    this.conversation = conversation;
-    this.view = view;
-    this.update = update;
-    try {
-      this.unsubscribe = view.subscribe((value) => {
-        if (!this.closed && this.epoch === 0) this.update({ conversation: value });
-      });
-    } catch (cause) {
-      try {
-        view.dispose();
-      } catch (cleanup) {
-        throw new AggregateError([cause, cleanup], "SUBSCRIBE_FAILED");
-      }
-      throw new Error("SUBSCRIBE_FAILED", { cause });
-    }
-  }
-  get current() {
-    return this.conversation;
-  }
-  get tasksOpen() {
-    return this.tasks !== void 0;
-  }
-  bindConversation(conversation, view) {
-    if (this.closed) {
-      view.dispose();
-      throw new Error("BINDING_CLOSED");
-    }
-    if (this.view === view) return;
-    const epoch = this.epoch + 1;
-    let unsubscribe;
-    try {
-      unsubscribe = view.subscribe((value) => {
-        if (!this.closed && this.epoch === epoch) this.update({ conversation: value });
-      });
-    } catch (cause) {
-      view.dispose();
-      throw new Error("SUBSCRIBE_FAILED", { cause });
-    }
-    const previous = this.view, previousUnsubscribe = this.unsubscribe;
-    this.view = view;
-    this.conversation = conversation;
-    this.unsubscribe = unsubscribe;
-    this.epoch = epoch;
-    try {
-      previousUnsubscribe();
-    } finally {
-      previous.dispose();
-    }
-    this.update({ conversation: view.value });
-  }
-  attachTasks(view) {
-    if (this.closed) {
-      view.dispose();
-      throw new Error("BINDING_CLOSED");
-    }
-    if (this.tasks === view) return;
-    const epoch = this.taskEpoch + 1;
-    let unsubscribe;
-    try {
-      unsubscribe = view.subscribe((value) => {
-        if (!this.closed && this.taskEpoch === epoch) this.update({ tasks: value });
-      });
-    } catch (cause) {
-      view.dispose();
-      throw new Error("SUBSCRIBE_FAILED", { cause });
-    }
-    const previous = this.tasks, previousUnsubscribe = this.unsubscribeTasks;
-    this.tasks = view;
-    this.unsubscribeTasks = unsubscribe;
-    this.taskEpoch = epoch;
-    try {
-      previousUnsubscribe?.();
-    } finally {
-      previous?.dispose();
-    }
-    this.update({ tasks: view.value });
-  }
-  closeTasks() {
-    if (!this.tasks) return;
-    this.taskEpoch++;
-    const previous = this.tasks, unsubscribe = this.unsubscribeTasks;
-    this.tasks = void 0;
-    this.unsubscribeTasks = void 0;
-    try {
-      unsubscribe?.();
-    } finally {
-      previous.dispose();
-    }
-    if (!this.closed) this.update({ tasks: void 0 });
-  }
-  close() {
-    if (this.closed) return;
-    this.closed = true;
-    this.epoch++;
-    try {
-      this.unsubscribe();
-    } finally {
-      try {
-        this.view.dispose();
-      } finally {
-        this.closeTasks();
-      }
-    }
-  }
-};
-
-// src/runner/runtime-cleanup.ts
-async function closeRuntimeResources(operations) {
-  const failures = [];
-  for (const operation of operations) {
-    try {
-      await operation();
-    } catch (cause) {
-      failures.push(cause);
-    }
-  }
-  if (failures.length) throw new AggregateError(failures, "RUNTIME_CLEANUP_FAILED");
-}
-
-// src/runner/runtime-loader.ts
-import {
-  DefaultResourceLoader,
-  ModelRuntime,
-  SettingsManager,
-  initTheme
-} from "@earendil-works/pi-coding-agent";
-
-// src/shared/extension-runner.ts
-import {
-  createMcpExtension,
-  ExtensionRunner,
-  ModelRegistry,
-  SessionManager
-} from "@earendil-works/pi-coding-agent";
-
-// src/shared/extension-ui-context.ts
-function createExtensionUIContext(onNotice, requestInteraction) {
-  return {
-    select: async (title, options, dialogOptions) => {
-      if (requestInteraction) {
-        const res = await requestInteraction("select", { title, data: { options, dialogOptions } });
-        if (typeof res === "string") return res;
-        if (res && typeof res === "object" && "selected" in res) return res.selected;
-      }
-      return void 0;
-    },
-    confirm: async (title, message, dialogOptions) => {
-      if (requestInteraction) {
-        const res = await requestInteraction("confirm", { title, message, data: { dialogOptions } });
-        if (typeof res === "boolean") return res;
-        if (res && typeof res === "object" && "confirmed" in res) return Boolean(res.confirmed);
-      }
-      return false;
-    },
-    input: async (title, placeholder, dialogOptions) => {
-      if (requestInteraction) {
-        const res = await requestInteraction("input", { title, data: { placeholder, dialogOptions } });
-        if (typeof res === "string") return res;
-        if (res && typeof res === "object" && "value" in res) return res.value;
-      }
-      return void 0;
-    },
-    notify: (message, type = "info") => {
-      onNotice?.(type, message);
-    },
-    onTerminalInput: () => () => {
-    },
-    setStatus: () => {
-    },
-    setWorkingMessage: () => {
-    },
-    setWorkingVisible: () => {
-    },
-    setWorkingIndicator: () => {
-    },
-    setHiddenThinkingLabel: () => {
-    },
-    setWidget: () => {
-    },
-    setFooter: () => {
-    },
-    setHeader: () => {
-    },
-    setTitle: () => {
-    },
-    custom: async () => void 0,
-    pasteToEditor: () => {
-    },
-    setEditorText: () => {
-    },
-    getEditorText: () => "",
-    editor: async (title, content, dialogOptions) => {
-      if (requestInteraction) {
-        const res = await requestInteraction("editor", { title, data: { content, dialogOptions } });
-        if (typeof res === "string") return res;
-        if (res && typeof res === "object" && "content" in res) return res.content;
-      }
-      return void 0;
-    },
-    addAutocompleteProvider: () => {
-    },
-    setEditorComponent: () => {
-    },
-    getEditorComponent: () => void 0,
-    theme: {},
-    getAllThemes: () => [],
-    getTheme: () => void 0,
-    setTheme: () => ({ success: true }),
-    getToolsExpanded: () => false,
-    setToolsExpanded: () => {
-    }
-  };
-}
-
-// src/shared/extension-runner.ts
-function createStandardExtensionFactories() {
-  return [createMcpExtension()];
-}
-function createExtensionActions(options, initialActiveTools = []) {
-  let activeToolNames = [...initialActiveTools];
-  let sessionName;
-  const sendMessage = (message, sendOptions) => {
-    if (sendOptions?.triggerTurn && message?.content) {
-      const text = typeof message.content === "string" ? message.content : JSON.stringify(message.content);
-      void options.onSubmitUserMessage?.(text, sendOptions.deliverAs === "steer" ? "steer" : "followUp");
-    }
-  };
-  const sendUserMessage = (content, sendOptions) => {
-    void options.onSubmitUserMessage?.(content, sendOptions?.deliverAs);
-  };
-  return {
-    getActiveTools: () => activeToolNames,
-    getAllTools: () => {
-      const map = /* @__PURE__ */ new Map();
-      if (options.getCallableTools) {
-        for (const t of options.getCallableTools()) {
-          map.set(t.name, {
-            name: t.name,
-            description: t.description,
-            parameters: t.parameters,
-            exposure: "direct",
-            reachesTools: t.name === "codemode" || t.name === "tool_search"
-          });
-        }
-      }
-      if (options.getRegisteredTools) {
-        for (const t of options.getRegisteredTools()) {
-          map.set(t.definition.name, {
-            name: t.definition.name,
-            description: t.definition.description,
-            parameters: t.definition.parameters,
-            promptGuidelines: t.definition.promptGuidelines,
-            exposure: t.definition.exposure ?? "direct",
-            namespace: t.definition.namespace,
-            annotations: t.definition.annotations,
-            sourceInfo: t.sourceInfo
-          });
-        }
-      }
-      return Array.from(map.values());
-    },
-    getSettings: () => ({
-      ...options.settingsManager?.getGlobalSettings() ?? {},
-      ...options.settingsManager?.getProjectSettings() ?? {}
-    }),
-    setActiveTools: (toolNames) => {
-      activeToolNames = [...toolNames];
-      options.onActiveToolsChanged?.(activeToolNames);
-    },
-    refreshTools: () => {
-      options.onToolsChanged?.();
-    },
-    getThinkingLevel: () => options.settingsManager?.getDefaultThinkingLevel?.() ?? "high",
-    setThinkingLevel: () => {
-    },
-    setModel: async () => false,
-    getCommands: () => [],
-    sendMessage,
-    sendUserMessage,
-    appendEntry: (customType, data) => {
-      options.sessionManager?.appendCustomEntry(customType, data);
-    },
-    setSessionName: (name) => {
-      sessionName = name;
-    },
-    getSessionName: () => sessionName,
-    setLabel: () => {
-    }
-  };
-}
-async function setupExtensionRunner(options) {
-  const sessionManager = SessionManager.create(options.cwd);
-  const modelRegistry = new ModelRegistry(options.modelRuntime);
-  const runner = new ExtensionRunner(options.extensions, options.runtime, options.cwd, sessionManager, modelRegistry);
-  runner.setUIContext(createExtensionUIContext(options.onNotice));
-  const initialActive = options.initialActiveTools ? [...options.initialActiveTools] : options.getCallableTools ? options.getCallableTools().map((t) => t.name) : [];
-  const actions = createExtensionActions({
-    getRegisteredTools: () => runner.getAllRegisteredTools(),
-    getCallableTools: options.getCallableTools,
-    settingsManager: options.settingsManager,
-    onActiveToolsChanged: options.onActiveToolsChanged,
-    onToolsChanged: options.onToolsChanged,
-    sessionManager,
-    onSubmitUserMessage: options.onSubmitUserMessage
-  }, initialActive);
-  const contextActions = {
-    getModel: () => {
-      const active = options.settingsManager?.getDefaultModel?.();
-      const provider = options.settingsManager?.getDefaultProvider?.();
-      if (active && provider) {
-        const found = options.modelRuntime.getModel(provider, active);
-        if (found) return found;
-      }
-      return options.modelRuntime.getAvailableSnapshot()[0];
-    },
-    getScopedModels: () => options.modelRuntime.getAvailableSnapshot().map((model) => ({ model })),
-    isIdle: () => options.isIdle ? options.isIdle() : true,
-    isProjectTrusted: () => true,
-    getSignal: () => void 0,
-    abort: () => {
-      options.onAbort?.();
-    },
-    hasPendingMessages: () => false,
-    shutdown: () => {
-    },
-    getContextUsage: () => {
-      const u = options.getContextUsage?.();
-      if (!u) return void 0;
-      const pct = typeof u.tokens === "number" && u.contextWindow > 0 ? u.tokens / u.contextWindow * 100 : null;
-      return { tokens: u.tokens, contextWindow: u.contextWindow, percent: pct };
-    },
-    compact: (opts) => {
-      options.onCompact?.(typeof opts === "string" ? opts : opts?.customInstructions);
-    },
-    getSystemPrompt: () => "",
-    getSystemPromptOptions: () => ({ cwd: options.cwd }),
-    executeTool: (callerId, name, args2, opts) => options.executeToolFn(callerId, name, args2, opts),
-    getCallableTools: () => options.getCallableTools ? options.getCallableTools() : runner.getAllRegisteredTools().map((t) => ({
-      name: t.definition.name,
-      description: t.definition.description,
-      parameters: t.definition.parameters,
-      promptGuidelines: t.definition.promptGuidelines,
-      exposure: t.definition.exposure,
-      namespace: t.definition.namespace,
-      annotations: t.definition.annotations,
-      sourceInfo: t.sourceInfo
-    }))
-  };
-  runner.bindCore(actions, contextActions);
-  await runner.emit({ type: "session_start", reason: "startup" });
-  return runner;
-}
-
-// src/runner/tool-adapter.ts
-import {
-  createMcpExtension as createMcpExtension2
-} from "@earendil-works/pi-coding-agent";
-import {
-  defineExtension as defineExtension3,
-  defineTool as defineTool2
-} from "@earendil-works/pi-durable";
-function hasOutput(api) {
-  return typeof api === "object" && api !== null && "output" in api && typeof api.output === "function";
-}
-function adaptExtensionTool(toolDef, executeToolFn, createToolContext, getExtensionRunner) {
-  const exposure = toolDef.exposure;
-  const isDeferred = exposure === "deferred";
-  const callers = exposure === "model-only" ? ["model"] : exposure === "codemode" || exposure === "codemode-deferred" ? ["tools"] : exposure === "hidden" ? [] : ["model", "tools"];
-  return defineTool2({
-    name: toolDef.name,
-    description: toolDef.description,
-    parameters: toolDef.parameters,
-    callers,
-    ...toolDef.promptSnippet ? { promptSnippet: toolDef.promptSnippet } : {},
-    ...toolDef.promptGuidelines?.length ? { promptGuidelines: toolDef.promptGuidelines } : {},
-    ...isDeferred ? { deferred: true } : {},
-    ...toolDef.outputSchema ? {
-      outputSchema: toolDef.outputSchema,
-      structuredOutputSchema: toolDef.outputSchema
-    } : {},
-    async execute(args2, api, runtimeContext2) {
-      const runner = getExtensionRunner?.();
-      const abortSignal = runtimeContext2?.abortSignal;
-      if (runner?.hasHandlers("tool_call")) {
-        const hookResult = await runner.emitToolCall({
-          type: "tool_call",
-          toolName: toolDef.name,
-          toolCallId: api.callId,
-          input: args2 ?? {}
-        });
-        if (hookResult?.block) {
-          const blockContent = [{ type: "text", text: `Tool execution blocked: ${hookResult.reason ?? "policy"}` }];
-          return {
-            output: blockContent,
-            isError: true
-          };
-        }
-      }
-      const base = createToolContext?.(api.callId);
-      const descriptors = {
-        ...Object.getOwnPropertyDescriptors(base ?? {}),
-        tools: {
-          get: () => base?.tools ?? [],
-          configurable: true,
-          enumerable: true
-        },
-        executeTool: {
-          value: async (name, nestedArgs, options) => base?.executeTool ? base.executeTool(name, nestedArgs, options) : executeToolFn(api.callId, name, nestedArgs, options),
-          configurable: true,
-          enumerable: true,
-          writable: true
-        }
-      };
-      const ctx = Object.defineProperties({}, descriptors);
-      try {
-        const result = await toolDef.execute(
-          api.callId,
-          args2,
-          abortSignal,
-          (update) => {
-            if (update?.content && hasOutput(api)) {
-              const textChunks = update.content.filter((c) => c.type === "text").map((c) => c.text).join("");
-              if (textChunks.length > 0) api.output(textChunks);
-            }
-          },
-          ctx
-        );
-        if (runner?.hasHandlers("tool_result")) {
-          await runner.emitToolResult({
-            type: "tool_result",
-            toolName: toolDef.name,
-            toolCallId: api.callId,
-            input: args2 ?? {},
-            content: result.content,
-            details: result.details ?? void 0,
-            isError: result.isError ?? false
-          });
-        }
-        const structuredOutput = result.structuredContent !== void 0 ? result.structuredContent : result.structuredOutput;
-        return {
-          output: result.content,
-          isError: result.isError,
-          details: result.details ?? void 0,
-          ...structuredOutput !== void 0 ? { structuredOutput } : {}
-        };
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        const errorContent = [{ type: "text", text: message }];
-        if (runner?.hasHandlers("tool_result")) {
-          await runner.emitToolResult({
-            type: "tool_result",
-            toolName: toolDef.name,
-            toolCallId: api.callId,
-            input: args2 ?? {},
-            content: errorContent,
-            details: void 0,
-            isError: true
-          });
-        }
-        return {
-          output: errorContent,
-          isError: true
-        };
-      }
-    }
-  });
-}
-function installExtensionTools(registry, tools) {
-  if (tools.length === 0) return;
-  registry.install(defineExtension3({ name: "extension-tools", tools }));
-}
-
-// src/runner/extension-mount.ts
-function createNestedToolExecutor(registry, getExtensionRunner, getEnv) {
-  return async (callerId, name, args2, options) => {
-    const runner = getExtensionRunner?.();
-    let target = registry.snapshot().tools().find((t) => t.tool.name === name);
-    if (!target && runner) {
-      const toolDef = runner.getAllRegisteredTools().find((t) => t.definition.name === name);
-      if (toolDef) {
-        const ctx = (callId) => runner.createToolContext(callId, options?.signal);
-        const adapted = adaptExtensionTool(toolDef.definition, createNestedToolExecutor(registry, getExtensionRunner, getEnv), ctx, () => runner);
-        installExtensionTools(registry, [adapted]);
-        target = registry.snapshot().tools().find((t) => t.tool.name === name);
-      }
-    }
-    if (!target) {
-      return { toolCall: { type: "toolCall", id: `${callerId}/nested`, name, arguments: args2 }, result: { content: [{ type: "text", text: `Tool ${name} not found` }], details: {} }, isError: true };
-    }
-    if (runner?.hasHandlers("tool_call")) {
-      const hook = await runner.emitToolCall({
-        type: "tool_call",
-        toolName: name,
-        toolCallId: `${callerId}/nested`,
-        parentToolCallId: callerId,
-        input: args2 ?? {}
-      });
-      if (hook?.block) {
-        return {
-          toolCall: { type: "toolCall", id: `${callerId}/nested`, name, arguments: args2 },
-          result: { content: [{ type: "text", text: `Tool execution blocked: ${hook.reason ?? "policy"}` }], details: {} },
-          isError: true
-        };
-      }
-    }
-    try {
-      const executor = target.tool.execute;
-      let outputText = "";
-      const api = {
-        callId: `${callerId}/nested`,
-        output: (chunk) => {
-          outputText += typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk);
-        },
-        retainedOutput: () => ({ text: outputText, truncated: false }),
-        outputWindow: void 0,
-        env: getEnv?.(),
-        diagnostic: () => {
-        }
-      };
-      const res = await executor(args2, api, runtimeContext);
-      const rawBlocks = res?.output;
-      const content = Array.isArray(rawBlocks) ? rawBlocks : rawBlocks !== void 0 ? [{ type: "text", text: String(rawBlocks) }] : [{ type: "text", text: outputText }];
-      if (runner?.hasHandlers("tool_result")) {
-        await runner.emitToolResult({
-          type: "tool_result",
-          toolName: name,
-          toolCallId: `${callerId}/nested`,
-          parentToolCallId: callerId,
-          input: args2 ?? {},
-          content,
-          details: res?.details,
-          isError: !!res?.isError
-        });
-      }
-      const structuredOutput = res?.structuredContent !== void 0 ? res.structuredContent : res?.structuredOutput;
-      return {
-        toolCall: { type: "toolCall", id: `${callerId}/nested`, name, arguments: args2 },
-        result: {
-          content,
-          details: res?.details,
-          ...structuredOutput !== void 0 ? { structuredOutput } : {}
-        },
-        isError: !!res?.isError
-      };
-    } catch (err) {
-      const errorContent = [{ type: "text", text: err instanceof Error ? err.message : String(err) }];
-      if (runner?.hasHandlers("tool_result")) {
-        await runner.emitToolResult({
-          type: "tool_result",
-          toolName: name,
-          toolCallId: `${callerId}/nested`,
-          parentToolCallId: callerId,
-          input: args2 ?? {},
-          content: errorContent,
-          details: {},
-          isError: true
-        });
-      }
-      return { toolCall: { type: "toolCall", id: `${callerId}/nested`, name, arguments: args2 }, result: { content: errorContent, details: {} }, isError: true };
-    }
-  };
-}
-async function mountExtensionBridge(location, modelRuntime, extensionsResult, registry, executeToolFn, report, dynamicSections, onNotice, settingsManager, dynamicNamespaces, actionsDelegate) {
-  let extensionRunner;
-  try {
-    const syncToolsToRegistry = () => {
-      if (!extensionRunner) return;
-      const all = extensionRunner.getAllRegisteredTools();
-      dynamicNamespaces?.registerFromToolDefinitions(all.map((t) => t.definition));
-      const adapted = all.map(
-        (t) => adaptExtensionTool(t.definition, executeToolFn, (callId) => extensionRunner.createToolContext(callId, void 0), () => extensionRunner)
-      );
-      installExtensionTools(registry, adapted);
-    };
-    extensionRunner = await setupExtensionRunner({
-      extensions: extensionsResult.extensions,
-      runtime: extensionsResult.runtime,
-      cwd: location.cwd,
-      modelRuntime,
-      executeToolFn,
-      getCallableTools: () => {
-        const map = /* @__PURE__ */ new Map();
-        for (const t of registry.snapshot().tools()) {
-          map.set(t.tool.name, { name: t.tool.name, description: t.tool.description ?? "", parameters: t.tool.parameters });
-        }
-        for (const t of extensionRunner?.getAllRegisteredTools() ?? []) {
-          map.set(t.definition.name, { ...t.definition, sourceInfo: t.sourceInfo });
-        }
-        return Array.from(map.values());
-      },
-      onToolsChanged: syncToolsToRegistry,
-      onActiveToolsChanged: (tools) => {
-        try {
-          void actionsDelegate?.onConfigureModelTools?.(tools)?.catch((err) => console.warn("[ExtensionMount] Configure model tools error:", err));
-        } catch (err) {
-          console.warn("[ExtensionMount] Synchronous error configuring model tools:", err);
-        }
-      },
-      onNotice,
-      settingsManager,
-      onAbort: () => actionsDelegate?.onAbort?.(),
-      onCompact: (i) => actionsDelegate?.onCompact?.(i),
-      getContextUsage: () => actionsDelegate?.getContextUsage?.(),
-      isIdle: () => actionsDelegate?.isIdle ? actionsDelegate.isIdle() : true,
-      onSubmitUserMessage: (c, d) => actionsDelegate?.onSubmitUserMessage?.(c, d)
-    });
-    if (extensionRunner) {
-      extensionRunner.onError((err) => {
-        report(err);
-        onNotice?.("error", `[Extension Error] ${err.extensionPath} (${err.event}): ${err.error}`);
-      });
-      syncToolsToRegistry();
-      try {
-        await new Promise((r) => setImmediate(r));
-        const currentTools = extensionRunner.getActiveTools?.() ?? registry.snapshot().tools().map((t) => t.tool.name);
-        const beforeStart = await extensionRunner.emitBeforeAgentStart(
-          { messageType: "user", prompt: "", images: void 0 },
-          { cwd: location.cwd, selectedTools: currentTools, sections: dynamicSections?.getSections() ?? {} }
-        );
-        if (beforeStart?.systemPromptOptions?.sections && dynamicSections) {
-          dynamicSections.updateSections(beforeStart.systemPromptOptions.sections);
-        }
-        const selected = beforeStart?.systemPromptOptions?.selectedTools;
-        if (selected && (selected.length !== currentTools.length || selected.some((t, i) => t !== currentTools[i]))) {
-          extensionsResult.runtime.setActiveTools?.(selected);
-        }
-      } catch (err) {
-        report(err);
-      }
-    }
-  } catch (error) {
-    report(error);
-  }
-  return {
-    extensionRunner,
-    cleanup: () => extensionRunner?.emit({ type: "session_shutdown", reason: "quit" }).catch((err) => console.warn("[ExtensionBridge] Cleanup session_shutdown:", err)) ?? Promise.resolve(),
-    setActiveTools: (tools) => extensionsResult.runtime.setActiveTools?.(tools),
-    getActiveTools: () => extensionsResult.runtime.getActiveTools?.() ?? []
-  };
-}
-
-// src/runner/extensions/bb-tools-extension.ts
-import fs from "node:fs";
-
 // node_modules/typebox/build/system/memory/memory.mjs
 var memory_exports = {};
 __export(memory_exports, {
@@ -2382,6 +735,9 @@ function IsMap(value) {
   return value instanceof globalThis.Map;
 }
 
+// node_modules/typebox/build/guard/index.mjs
+var guard_default = guard_exports;
+
 // node_modules/typebox/build/system/settings/settings.mjs
 var settings = {
   immutableTypes: false,
@@ -2787,12 +1143,34 @@ function IntersectOptions(type) {
   return memory_exports.Discard(type, ["~kind", "allOf"]);
 }
 
+// node_modules/typebox/build/system/hashing/hash.mjs
+var hash_exports = {};
+__export(hash_exports, {
+  Hash: () => Hash,
+  HashCode: () => HashCode
+});
+
 // node_modules/typebox/build/system/unreachable/unreachable.mjs
 function Unreachable() {
   throw new Error("Unreachable");
 }
 
 // node_modules/typebox/build/system/hashing/hash.mjs
+function InstanceKeys(value) {
+  const propertyKeys = /* @__PURE__ */ new Set();
+  let current = value;
+  while (current && current !== Object.prototype) {
+    for (const key of Reflect.ownKeys(current)) {
+      if (key !== "constructor" && typeof key !== "symbol")
+        propertyKeys.add(key);
+    }
+    current = Object.getPrototypeOf(current);
+  }
+  return [...propertyKeys];
+}
+function IsIEEE754(value) {
+  return typeof value === "number";
+}
 var ByteMarker;
 (function(ByteMarker2) {
   ByteMarker2[ByteMarker2["Array"] = 0] = "Array";
@@ -2819,7 +1197,174 @@ var Bytes = Array.from({ length: 256 }).map((_, i) => BigInt(i));
 var F64 = new Float64Array(1);
 var F64In = new DataView(F64.buffer);
 var F64Out = new Uint8Array(F64.buffer);
+function FNV1A64_OP(byte) {
+  Accumulator = Accumulator ^ Bytes[byte];
+  Accumulator = Accumulator * Prime % Size;
+}
+function FromArray2(value) {
+  FNV1A64_OP(ByteMarker.Array);
+  for (const item of value) {
+    FromValue2(item);
+  }
+}
+function FromBigInt(value) {
+  FNV1A64_OP(ByteMarker.BigInt);
+  F64In.setBigInt64(0, value);
+  for (const byte of F64Out) {
+    FNV1A64_OP(byte);
+  }
+}
+function FromBoolean(value) {
+  FNV1A64_OP(ByteMarker.Boolean);
+  FNV1A64_OP(value ? 1 : 0);
+}
+function FromConstructor(value) {
+  FNV1A64_OP(ByteMarker.Constructor);
+  FromValue2(value.toString());
+}
+function FromDate(value) {
+  FNV1A64_OP(ByteMarker.Date);
+  FromValue2(value.getTime());
+}
+function FromFunction(value) {
+  FNV1A64_OP(ByteMarker.Function);
+  FromValue2(value.toString());
+}
+function FromNull(_value) {
+  FNV1A64_OP(ByteMarker.Null);
+}
+function FromNumber(value) {
+  FNV1A64_OP(ByteMarker.Number);
+  F64In.setFloat64(
+    0,
+    value,
+    true
+    /* little-endian */
+  );
+  for (const byte of F64Out) {
+    FNV1A64_OP(byte);
+  }
+}
+function FromObject2(value) {
+  FNV1A64_OP(ByteMarker.Object);
+  for (const key of InstanceKeys(value).sort()) {
+    FromValue2(key);
+    FromValue2(value[key]);
+  }
+}
+function FromRegExp2(value) {
+  FNV1A64_OP(ByteMarker.RegExp);
+  FromString(value.toString());
+}
 var encoder = new TextEncoder();
+function FromString(value) {
+  FNV1A64_OP(ByteMarker.String);
+  for (const byte of encoder.encode(value)) {
+    FNV1A64_OP(byte);
+  }
+}
+function FromSymbol(value) {
+  FNV1A64_OP(ByteMarker.Symbol);
+  FromValue2(value.toString());
+}
+function FromTypeArray(value) {
+  FNV1A64_OP(ByteMarker.TypeArray);
+  const buffer = new Uint8Array(value.buffer);
+  for (let i = 0; i < buffer.length; i++) {
+    FNV1A64_OP(buffer[i]);
+  }
+}
+function FromUndefined(_value) {
+  return FNV1A64_OP(ByteMarker.Undefined);
+}
+function FromValue2(value) {
+  return globals_exports.IsTypeArray(value) ? FromTypeArray(value) : globals_exports.IsDate(value) ? FromDate(value) : globals_exports.IsRegExp(value) ? FromRegExp2(value) : globals_exports.IsBoolean(value) ? FromBoolean(value.valueOf()) : globals_exports.IsString(value) ? FromString(value.valueOf()) : globals_exports.IsNumber(value) ? FromNumber(value.valueOf()) : IsIEEE754(value) ? FromNumber(value) : guard_exports.IsArray(value) ? FromArray2(value) : guard_exports.IsBoolean(value) ? FromBoolean(value) : guard_exports.IsBigInt(value) ? FromBigInt(value) : guard_exports.IsConstructor(value) ? FromConstructor(value) : guard_exports.IsNull(value) ? FromNull(value) : guard_exports.IsObject(value) ? FromObject2(value) : guard_exports.IsString(value) ? FromString(value) : guard_exports.IsSymbol(value) ? FromSymbol(value) : guard_exports.IsUndefined(value) ? FromUndefined(value) : guard_exports.IsFunction(value) ? FromFunction(value) : Unreachable();
+}
+function HashCode(value) {
+  Accumulator = BigInt("14695981039346656037");
+  FromValue2(value);
+  return Accumulator;
+}
+function Hash(value) {
+  return HashCode(value).toString(16).padStart(16, "0");
+}
+
+// node_modules/typebox/build/system/locale/en_US.mjs
+function en_US(error) {
+  switch (error.keyword) {
+    case "additionalProperties":
+      return "must not have additional properties";
+    case "anyOf":
+      return "must match a schema in anyOf";
+    case "boolean":
+      return "schema is false";
+    case "const":
+      return "must be equal to constant";
+    case "contains":
+      return "must contain at least 1 valid item";
+    case "dependencies":
+      return `must have properties ${error.params.dependencies.join(", ")} when property ${error.params.property} is present`;
+    case "dependentRequired":
+      return `must have properties ${error.params.dependencies.join(", ")} when property ${error.params.property} is present`;
+    case "enum":
+      return "must be equal to one of the allowed values";
+    case "exclusiveMaximum":
+      return `must be ${error.params.comparison} ${error.params.limit}`;
+    case "exclusiveMinimum":
+      return `must be ${error.params.comparison} ${error.params.limit}`;
+    case "format":
+      return `must match format "${error.params.format}"`;
+    case "if":
+      return `must match "${error.params.failingKeyword}" schema`;
+    case "maxItems":
+      return `must not have more than ${error.params.limit} items`;
+    case "maxLength":
+      return `must not have more than ${error.params.limit} characters`;
+    case "maxProperties":
+      return `must not have more than ${error.params.limit} properties`;
+    case "maximum":
+      return `must be ${error.params.comparison} ${error.params.limit}`;
+    case "minItems":
+      return `must not have fewer than ${error.params.limit} items`;
+    case "minLength":
+      return `must not have fewer than ${error.params.limit} characters`;
+    case "minProperties":
+      return `must not have fewer than ${error.params.limit} properties`;
+    case "minimum":
+      return `must be ${error.params.comparison} ${error.params.limit}`;
+    case "multipleOf":
+      return `must be multiple of ${error.params.multipleOf}`;
+    case "not":
+      return "must not be valid";
+    case "oneOf":
+      return "must match exactly one schema in oneOf";
+    case "pattern":
+      return `must match pattern "${error.params.pattern}"`;
+    case "propertyNames":
+      return `property names ${error.params.propertyNames.join(", ")} are invalid`;
+    case "required":
+      return `must have required properties ${error.params.requiredProperties.join(", ")}`;
+    case "type":
+      return typeof error.params.type === "string" ? `must be ${error.params.type}` : `must be either ${error.params.type.join(" or ")}`;
+    case "unevaluatedItems":
+      return "must not have unevaluated items";
+    case "unevaluatedProperties":
+      return "must not have unevaluated properties";
+    case "uniqueItems":
+      return `must not have duplicate items`;
+    case "~refine":
+      return error.params.message;
+    // deno-coverage-ignore - unreachable
+    default:
+      return "an unknown validation error occurred";
+  }
+}
+
+// node_modules/typebox/build/system/locale/_config.mjs
+var locale = en_US;
+function Get2() {
+  return locale;
+}
 
 // node_modules/typebox/build/type/types/_codec.mjs
 var EncodeBuilder = class {
@@ -2959,6 +1504,12 @@ function Literal(value, options) {
 }
 function IsLiteralValue(value) {
   return guard_exports.IsBigInt(value) || guard_exports.IsBoolean(value) || guard_exports.IsNumber(value) || guard_exports.IsString(value);
+}
+function IsLiteralBigInt(value) {
+  return IsLiteral(value) && guard_exports.IsBigInt(value.const);
+}
+function IsLiteralBoolean(value) {
+  return IsLiteral(value) && guard_exports.IsBoolean(value.const);
 }
 function IsLiteralNumber(value) {
   return IsLiteral(value) && guard_exports.IsNumber(value.const);
@@ -3605,11 +2156,11 @@ function BaseMapping(input) {
 function WithMapping(input) {
   return guard_exports.IsEqual(input.length, 2) ? input[1] : [];
 }
-function FactorIndexArray(Type3, indexArray) {
+function FactorIndexArray(Type2, indexArray) {
   return indexArray.reduce((result, left) => {
     const _left = left;
     return guard_exports.IsEqual(_left.length, 1) ? IndexDeferred(result, _left[0]) : guard_exports.IsEqual(_left.length, 0) ? _Array_(result) : Unreachable2();
-  }, Type3);
+  }, Type2);
 }
 function FactorExtends(type, extend) {
   return guard_exports.IsEqual(extend.length, 3) ? ConditionalDeferred(type, extend[0], extend[1], extend[2]) : type;
@@ -4176,16 +2727,16 @@ function Until_1(end, input) {
 
 // node_modules/typebox/build/type/script/parser.mjs
 var If = (result, left, right = () => []) => result.length === 2 ? left(result) : right();
-var GenericParameterExtendsEquals = (input) => If(If(Ident(input), ([_0, input2]) => If(Const("extends", input2), ([_1, input3]) => If(Type2(input3), ([_2, input4]) => If(Const("=", input4), ([_3, input5]) => If(Type2(input5), ([_4, input6]) => [[_0, _1, _2, _3, _4], input6]))))), ([_0, input2]) => [GenericParameterExtendsEqualsMapping(_0), input2]);
-var GenericParameterExtends = (input) => If(If(Ident(input), ([_0, input2]) => If(Const("extends", input2), ([_1, input3]) => If(Type2(input3), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [GenericParameterExtendsMapping(_0), input2]);
-var GenericParameterEquals = (input) => If(If(Ident(input), ([_0, input2]) => If(Const("=", input2), ([_1, input3]) => If(Type2(input3), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [GenericParameterEqualsMapping(_0), input2]);
+var GenericParameterExtendsEquals = (input) => If(If(Ident(input), ([_0, input2]) => If(Const("extends", input2), ([_1, input3]) => If(Type(input3), ([_2, input4]) => If(Const("=", input4), ([_3, input5]) => If(Type(input5), ([_4, input6]) => [[_0, _1, _2, _3, _4], input6]))))), ([_0, input2]) => [GenericParameterExtendsEqualsMapping(_0), input2]);
+var GenericParameterExtends = (input) => If(If(Ident(input), ([_0, input2]) => If(Const("extends", input2), ([_1, input3]) => If(Type(input3), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [GenericParameterExtendsMapping(_0), input2]);
+var GenericParameterEquals = (input) => If(If(Ident(input), ([_0, input2]) => If(Const("=", input2), ([_1, input3]) => If(Type(input3), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [GenericParameterEqualsMapping(_0), input2]);
 var GenericParameterIdentifier = (input) => If(Ident(input), ([_0, input2]) => [GenericParameterIdentifierMapping(_0), input2]);
 var GenericParameter = (input) => If(If(GenericParameterExtendsEquals(input), ([_0, input2]) => [_0, input2], () => If(GenericParameterExtends(input), ([_0, input2]) => [_0, input2], () => If(GenericParameterEquals(input), ([_0, input2]) => [_0, input2], () => If(GenericParameterIdentifier(input), ([_0, input2]) => [_0, input2], () => [])))), ([_0, input2]) => [GenericParameterMapping(_0), input2]);
 var GenericParameterList_0 = (input, result = []) => If(If(Const(",", input), ([_0, input2]) => If(GenericParameter(input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => GenericParameterList_0(input2, [...result, _0]), () => [result, input]);
 var GenericParameterList = (input) => If(If(If(GenericParameter(input), ([_0, input2]) => If(GenericParameterList_0(input2), ([_1, input3]) => If(If(Const(",", input3), ([_02, input4]) => [[_02], input4], () => [[], input3]), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [_0, input2], () => If([[], input], ([_0, input2]) => [_0, input2], () => [])), ([_0, input2]) => [GenericParameterListMapping(_0), input2]);
 var GenericParameters = (input) => If(If(Const("<", input), ([_0, input2]) => If(GenericParameterList(input2), ([_1, input3]) => If(Const(">", input3), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [GenericParametersMapping(_0), input2]);
-var GenericCallArgumentList_0 = (input, result = []) => If(If(Const(",", input), ([_0, input2]) => If(Type2(input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => GenericCallArgumentList_0(input2, [...result, _0]), () => [result, input]);
-var GenericCallArgumentList = (input) => If(If(If(Type2(input), ([_0, input2]) => If(GenericCallArgumentList_0(input2), ([_1, input3]) => If(If(Const(",", input3), ([_02, input4]) => [[_02], input4], () => [[], input3]), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [_0, input2], () => If([[], input], ([_0, input2]) => [_0, input2], () => [])), ([_0, input2]) => [GenericCallArgumentListMapping(_0), input2]);
+var GenericCallArgumentList_0 = (input, result = []) => If(If(Const(",", input), ([_0, input2]) => If(Type(input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => GenericCallArgumentList_0(input2, [...result, _0]), () => [result, input]);
+var GenericCallArgumentList = (input) => If(If(If(Type(input), ([_0, input2]) => If(GenericCallArgumentList_0(input2), ([_1, input3]) => If(If(Const(",", input3), ([_02, input4]) => [[_02], input4], () => [[], input3]), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [_0, input2], () => If([[], input], ([_0, input2]) => [_0, input2], () => [])), ([_0, input2]) => [GenericCallArgumentListMapping(_0), input2]);
 var GenericCallArguments = (input) => If(If(Const("<", input), ([_0, input2]) => If(GenericCallArgumentList(input2), ([_1, input3]) => If(Const(">", input3), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [GenericCallArgumentsMapping(_0), input2]);
 var GenericCall = (input) => If(If(Ident(input), ([_0, input2]) => If(GenericCallArguments(input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [GenericCallMapping(_0), input2]);
 var OptionalSemiColon = (input) => If(If(If(Const(";", input), ([_0, input2]) => [[_0], input2]), ([_0, input2]) => [_0, input2], () => If([[], input], ([_0, input2]) => [_0, input2], () => [])), ([_0, input2]) => [OptionalSemiColonMapping(_0), input2]);
@@ -4203,21 +2754,21 @@ var KeywordNever = (input) => If(Const("never", input), ([_0, input2]) => [Keywo
 var KeywordSymbol = (input) => If(Const("symbol", input), ([_0, input2]) => [KeywordSymbolMapping(_0), input2]);
 var KeywordVoid = (input) => If(Const("void", input), ([_0, input2]) => [KeywordVoidMapping(_0), input2]);
 var KeywordThis = (input) => If(Const("this", input), ([_0, input2]) => [KeywordThisMapping(_0), input2]);
-var TemplateInterpolate = (input) => If(If(Const("${", input), ([_0, input2]) => If(Type2(input2), ([_1, input3]) => If(Const("}", input3), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [TemplateInterpolateMapping(_0), input2]);
+var TemplateInterpolate = (input) => If(If(Const("${", input), ([_0, input2]) => If(Type(input2), ([_1, input3]) => If(Const("}", input3), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [TemplateInterpolateMapping(_0), input2]);
 var TemplateSpan = (input) => If(Until(["${", "`"], input), ([_0, input2]) => [TemplateSpanMapping(_0), input2]);
 var TemplateBody = (input) => If(If(If(TemplateSpan(input), ([_0, input2]) => If(TemplateInterpolate(input2), ([_1, input3]) => If(TemplateBody(input3), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [_0, input2], () => If(If(TemplateSpan(input), ([_0, input2]) => [[_0], input2]), ([_0, input2]) => [_0, input2], () => If(If(TemplateSpan(input), ([_0, input2]) => [[_0], input2]), ([_0, input2]) => [_0, input2], () => []))), ([_0, input2]) => [TemplateBodyMapping(_0), input2]);
 var TemplateLiteralTypes = (input) => If(If(Const("`", input), ([_0, input2]) => If(TemplateBody(input2), ([_1, input3]) => If(Const("`", input3), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [TemplateLiteralTypesMapping(_0), input2]);
 var TemplateLiteral = (input) => If(TemplateLiteralTypes(input), ([_0, input2]) => [TemplateLiteralMapping(_0), input2]);
-var Dependent2 = (input) => If(If(If(Const("if", input), ([_0, input2]) => If(Type2(input2), ([_1, input3]) => If(Const("then", input3), ([_2, input4]) => If(Type2(input4), ([_3, input5]) => If(Const("else", input5), ([_4, input6]) => If(Type2(input6), ([_5, input7]) => [[_0, _1, _2, _3, _4, _5], input7])))))), ([_0, input2]) => [_0, input2], () => If(If(Const("if", input), ([_0, input2]) => If(Type2(input2), ([_1, input3]) => If(Const("then", input3), ([_2, input4]) => If(Type2(input4), ([_3, input5]) => [[_0, _1, _2, _3], input5])))), ([_0, input2]) => [_0, input2], () => [])), ([_0, input2]) => [DependentMapping(_0), input2]);
+var Dependent2 = (input) => If(If(If(Const("if", input), ([_0, input2]) => If(Type(input2), ([_1, input3]) => If(Const("then", input3), ([_2, input4]) => If(Type(input4), ([_3, input5]) => If(Const("else", input5), ([_4, input6]) => If(Type(input6), ([_5, input7]) => [[_0, _1, _2, _3, _4, _5], input7])))))), ([_0, input2]) => [_0, input2], () => If(If(Const("if", input), ([_0, input2]) => If(Type(input2), ([_1, input3]) => If(Const("then", input3), ([_2, input4]) => If(Type(input4), ([_3, input5]) => [[_0, _1, _2, _3], input5])))), ([_0, input2]) => [_0, input2], () => [])), ([_0, input2]) => [DependentMapping(_0), input2]);
 var LiteralBigInt = (input) => If(BigInt3(input), ([_0, input2]) => [LiteralBigIntMapping(_0), input2]);
 var LiteralBoolean = (input) => If(If(Const("true", input), ([_0, input2]) => [_0, input2], () => If(Const("false", input), ([_0, input2]) => [_0, input2], () => [])), ([_0, input2]) => [LiteralBooleanMapping(_0), input2]);
 var LiteralNumber = (input) => If(Number3(input), ([_0, input2]) => [LiteralNumberMapping(_0), input2]);
 var LiteralString = (input) => If(String3(["'", '"'], input), ([_0, input2]) => [LiteralStringMapping(_0), input2]);
 var KeyOf = (input) => If(If(If(Const("keyof", input), ([_0, input2]) => [[_0], input2]), ([_0, input2]) => [_0, input2], () => If([[], input], ([_0, input2]) => [_0, input2], () => [])), ([_0, input2]) => [KeyOfMapping(_0), input2]);
-var IndexArray_0 = (input, result = []) => If(If(If(Const("[", input), ([_0, input2]) => If(Type2(input2), ([_1, input3]) => If(Const("]", input3), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [_0, input2], () => If(If(Const("[", input), ([_0, input2]) => If(Const("]", input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [_0, input2], () => [])), ([_0, input2]) => IndexArray_0(input2, [...result, _0]), () => [result, input]);
+var IndexArray_0 = (input, result = []) => If(If(If(Const("[", input), ([_0, input2]) => If(Type(input2), ([_1, input3]) => If(Const("]", input3), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [_0, input2], () => If(If(Const("[", input), ([_0, input2]) => If(Const("]", input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [_0, input2], () => [])), ([_0, input2]) => IndexArray_0(input2, [...result, _0]), () => [result, input]);
 var IndexArray = (input) => If(IndexArray_0(input), ([_0, input2]) => [IndexArrayMapping(_0), input2]);
-var Extends2 = (input) => If(If(If(Const("extends", input), ([_0, input2]) => If(Type2(input2), ([_1, input3]) => If(Const("?", input3), ([_2, input4]) => If(Type2(input4), ([_3, input5]) => If(Const(":", input5), ([_4, input6]) => If(Type2(input6), ([_5, input7]) => [[_0, _1, _2, _3, _4, _5], input7])))))), ([_0, input2]) => [_0, input2], () => If([[], input], ([_0, input2]) => [_0, input2], () => [])), ([_0, input2]) => [ExtendsMapping(_0), input2]);
-var Base = (input) => If(If(If(Const("(", input), ([_0, input2]) => If(Type2(input2), ([_1, input3]) => If(Const(")", input3), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [_0, input2], () => If(KeywordString(input), ([_0, input2]) => [_0, input2], () => If(KeywordNumber(input), ([_0, input2]) => [_0, input2], () => If(KeywordBoolean(input), ([_0, input2]) => [_0, input2], () => If(KeywordUndefined(input), ([_0, input2]) => [_0, input2], () => If(KeywordNull(input), ([_0, input2]) => [_0, input2], () => If(KeywordInteger(input), ([_0, input2]) => [_0, input2], () => If(KeywordBigInt(input), ([_0, input2]) => [_0, input2], () => If(KeywordUnknown(input), ([_0, input2]) => [_0, input2], () => If(KeywordAny(input), ([_0, input2]) => [_0, input2], () => If(KeywordObject(input), ([_0, input2]) => [_0, input2], () => If(KeywordNever(input), ([_0, input2]) => [_0, input2], () => If(KeywordSymbol(input), ([_0, input2]) => [_0, input2], () => If(KeywordVoid(input), ([_0, input2]) => [_0, input2], () => If(KeywordThis(input), ([_0, input2]) => [_0, input2], () => If(LiteralBigInt(input), ([_0, input2]) => [_0, input2], () => If(LiteralBoolean(input), ([_0, input2]) => [_0, input2], () => If(LiteralNumber(input), ([_0, input2]) => [_0, input2], () => If(LiteralString(input), ([_0, input2]) => [_0, input2], () => If(TemplateLiteral(input), ([_0, input2]) => [_0, input2], () => If(Dependent2(input), ([_0, input2]) => [_0, input2], () => If(_Object_2(input), ([_0, input2]) => [_0, input2], () => If(_Tuple_(input), ([_0, input2]) => [_0, input2], () => If(_Constructor_(input), ([_0, input2]) => [_0, input2], () => If(_Function_2(input), ([_0, input2]) => [_0, input2], () => If(_Mapped_(input), ([_0, input2]) => [_0, input2], () => If(GenericCall(input), ([_0, input2]) => [_0, input2], () => If(Reference(input), ([_0, input2]) => [_0, input2], () => [])))))))))))))))))))))))))))), ([_0, input2]) => [BaseMapping(_0), input2]);
+var Extends2 = (input) => If(If(If(Const("extends", input), ([_0, input2]) => If(Type(input2), ([_1, input3]) => If(Const("?", input3), ([_2, input4]) => If(Type(input4), ([_3, input5]) => If(Const(":", input5), ([_4, input6]) => If(Type(input6), ([_5, input7]) => [[_0, _1, _2, _3, _4, _5], input7])))))), ([_0, input2]) => [_0, input2], () => If([[], input], ([_0, input2]) => [_0, input2], () => [])), ([_0, input2]) => [ExtendsMapping(_0), input2]);
+var Base = (input) => If(If(If(Const("(", input), ([_0, input2]) => If(Type(input2), ([_1, input3]) => If(Const(")", input3), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [_0, input2], () => If(KeywordString(input), ([_0, input2]) => [_0, input2], () => If(KeywordNumber(input), ([_0, input2]) => [_0, input2], () => If(KeywordBoolean(input), ([_0, input2]) => [_0, input2], () => If(KeywordUndefined(input), ([_0, input2]) => [_0, input2], () => If(KeywordNull(input), ([_0, input2]) => [_0, input2], () => If(KeywordInteger(input), ([_0, input2]) => [_0, input2], () => If(KeywordBigInt(input), ([_0, input2]) => [_0, input2], () => If(KeywordUnknown(input), ([_0, input2]) => [_0, input2], () => If(KeywordAny(input), ([_0, input2]) => [_0, input2], () => If(KeywordObject(input), ([_0, input2]) => [_0, input2], () => If(KeywordNever(input), ([_0, input2]) => [_0, input2], () => If(KeywordSymbol(input), ([_0, input2]) => [_0, input2], () => If(KeywordVoid(input), ([_0, input2]) => [_0, input2], () => If(KeywordThis(input), ([_0, input2]) => [_0, input2], () => If(LiteralBigInt(input), ([_0, input2]) => [_0, input2], () => If(LiteralBoolean(input), ([_0, input2]) => [_0, input2], () => If(LiteralNumber(input), ([_0, input2]) => [_0, input2], () => If(LiteralString(input), ([_0, input2]) => [_0, input2], () => If(TemplateLiteral(input), ([_0, input2]) => [_0, input2], () => If(Dependent2(input), ([_0, input2]) => [_0, input2], () => If(_Object_2(input), ([_0, input2]) => [_0, input2], () => If(_Tuple_(input), ([_0, input2]) => [_0, input2], () => If(_Constructor_(input), ([_0, input2]) => [_0, input2], () => If(_Function_2(input), ([_0, input2]) => [_0, input2], () => If(_Mapped_(input), ([_0, input2]) => [_0, input2], () => If(GenericCall(input), ([_0, input2]) => [_0, input2], () => If(Reference(input), ([_0, input2]) => [_0, input2], () => [])))))))))))))))))))))))))))), ([_0, input2]) => [BaseMapping(_0), input2]);
 var With = (input) => If(If(If(Const("with", input), ([_0, input2]) => If(WithObject(input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [_0, input2], () => If([[], input], ([_0, input2]) => [_0, input2], () => [])), ([_0, input2]) => [WithMapping(_0), input2]);
 var Factor = (input) => If(If(KeyOf(input), ([_0, input2]) => If(Base(input2), ([_1, input3]) => If(IndexArray(input3), ([_2, input4]) => If(Extends2(input4), ([_3, input5]) => If(With(input5), ([_4, input6]) => [[_0, _1, _2, _3, _4], input6]))))), ([_0, input2]) => [FactorMapping(_0), input2]);
 var ExprTermTail = (input) => If(If(If(Const("&", input), ([_0, input2]) => If(Factor(input2), ([_1, input3]) => If(ExprTermTail(input3), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [_0, input2], () => If([[], input], ([_0, input2]) => [_0, input2], () => [])), ([_0, input2]) => [ExprTermTailMapping(_0), input2]);
@@ -4226,9 +2777,9 @@ var ExprTail = (input) => If(If(If(Const("|", input), ([_0, input2]) => If(ExprT
 var Expr = (input) => If(If(ExprTerm(input), ([_0, input2]) => If(ExprTail(input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [ExprMapping(_0), input2]);
 var ExprReadonly = (input) => If(If(Const("readonly", input), ([_0, input2]) => If(Expr(input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [ExprReadonlyMapping(_0), input2]);
 var ExprPipe = (input) => If(If(Const("|", input), ([_0, input2]) => If(Expr(input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [ExprPipeMapping(_0), input2]);
-var GenericType = (input) => If(If(GenericParameters(input), ([_0, input2]) => If(Const("=", input2), ([_1, input3]) => If(Type2(input3), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [GenericTypeMapping(_0), input2]);
+var GenericType = (input) => If(If(GenericParameters(input), ([_0, input2]) => If(Const("=", input2), ([_1, input3]) => If(Type(input3), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [GenericTypeMapping(_0), input2]);
 var InferType = (input) => If(If(If(Const("infer", input), ([_0, input2]) => If(Ident(input2), ([_1, input3]) => If(Const("extends", input3), ([_2, input4]) => If(Expr(input4), ([_3, input5]) => [[_0, _1, _2, _3], input5])))), ([_0, input2]) => [_0, input2], () => If(If(Const("infer", input), ([_0, input2]) => If(Ident(input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [_0, input2], () => [])), ([_0, input2]) => [InferTypeMapping(_0), input2]);
-var Type2 = (input) => If(If(InferType(input), ([_0, input2]) => [_0, input2], () => If(ExprPipe(input), ([_0, input2]) => [_0, input2], () => If(ExprReadonly(input), ([_0, input2]) => [_0, input2], () => If(Expr(input), ([_0, input2]) => [_0, input2], () => [])))), ([_0, input2]) => [TypeMapping(_0), input2]);
+var Type = (input) => If(If(InferType(input), ([_0, input2]) => [_0, input2], () => If(ExprPipe(input), ([_0, input2]) => [_0, input2], () => If(ExprReadonly(input), ([_0, input2]) => [_0, input2], () => If(Expr(input), ([_0, input2]) => [_0, input2], () => [])))), ([_0, input2]) => [TypeMapping(_0), input2]);
 var PropertyKeyNumber = (input) => If(Number3(input), ([_0, input2]) => [PropertyKeyNumberMapping(_0), input2]);
 var PropertyKeyIdent = (input) => If(Ident(input), ([_0, input2]) => [PropertyKeyIdentMapping(_0), input2]);
 var PropertyKeyQuoted = (input) => If(String3(["'", '"'], input), ([_0, input2]) => [PropertyKeyQuotedMapping(_0), input2]);
@@ -4236,32 +2787,32 @@ var PropertyKeyIndex = (input) => If(If(Const("[", input), ([_0, input2]) => If(
 var PropertyKey = (input) => If(If(PropertyKeyNumber(input), ([_0, input2]) => [_0, input2], () => If(PropertyKeyIdent(input), ([_0, input2]) => [_0, input2], () => If(PropertyKeyQuoted(input), ([_0, input2]) => [_0, input2], () => If(PropertyKeyIndex(input), ([_0, input2]) => [_0, input2], () => [])))), ([_0, input2]) => [PropertyKeyMapping(_0), input2]);
 var Readonly2 = (input) => If(If(If(Const("readonly", input), ([_0, input2]) => [[_0], input2]), ([_0, input2]) => [_0, input2], () => If([[], input], ([_0, input2]) => [_0, input2], () => [])), ([_0, input2]) => [ReadonlyMapping(_0), input2]);
 var Optional3 = (input) => If(If(If(Const("?", input), ([_0, input2]) => [[_0], input2]), ([_0, input2]) => [_0, input2], () => If([[], input], ([_0, input2]) => [_0, input2], () => [])), ([_0, input2]) => [OptionalMapping(_0), input2]);
-var Property = (input) => If(If(Readonly2(input), ([_0, input2]) => If(PropertyKey(input2), ([_1, input3]) => If(Optional3(input3), ([_2, input4]) => If(Const(":", input4), ([_3, input5]) => If(Type2(input5), ([_4, input6]) => [[_0, _1, _2, _3, _4], input6]))))), ([_0, input2]) => [PropertyMapping(_0), input2]);
+var Property = (input) => If(If(Readonly2(input), ([_0, input2]) => If(PropertyKey(input2), ([_1, input3]) => If(Optional3(input3), ([_2, input4]) => If(Const(":", input4), ([_3, input5]) => If(Type(input5), ([_4, input6]) => [[_0, _1, _2, _3, _4], input6]))))), ([_0, input2]) => [PropertyMapping(_0), input2]);
 var PropertyDelimiter = (input) => If(If(If(Const(",", input), ([_0, input2]) => If(Const("\n", input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [_0, input2], () => If(If(Const(";", input), ([_0, input2]) => If(Const("\n", input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [_0, input2], () => If(If(Const(",", input), ([_0, input2]) => [[_0], input2]), ([_0, input2]) => [_0, input2], () => If(If(Const(";", input), ([_0, input2]) => [[_0], input2]), ([_0, input2]) => [_0, input2], () => If(If(Const("\n", input), ([_0, input2]) => [[_0], input2]), ([_0, input2]) => [_0, input2], () => []))))), ([_0, input2]) => [PropertyDelimiterMapping(_0), input2]);
 var PropertyList_0 = (input, result = []) => If(If(PropertyDelimiter(input), ([_0, input2]) => If(Property(input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => PropertyList_0(input2, [...result, _0]), () => [result, input]);
 var PropertyList = (input) => If(If(If(Property(input), ([_0, input2]) => If(PropertyList_0(input2), ([_1, input3]) => If(If(PropertyDelimiter(input3), ([_02, input4]) => [[_02], input4], () => [[], input3]), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [_0, input2], () => If([[], input], ([_0, input2]) => [_0, input2], () => [])), ([_0, input2]) => [PropertyListMapping(_0), input2]);
 var Properties = (input) => If(If(Const("{", input), ([_0, input2]) => If(PropertyList(input2), ([_1, input3]) => If(Const("}", input3), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [PropertiesMapping(_0), input2]);
 var _Object_2 = (input) => If(Properties(input), ([_0, input2]) => [_Object_Mapping(_0), input2]);
-var ElementNamed = (input) => If(If(If(Ident(input), ([_0, input2]) => If(Const("?", input2), ([_1, input3]) => If(Const(":", input3), ([_2, input4]) => If(Const("readonly", input4), ([_3, input5]) => If(Type2(input5), ([_4, input6]) => [[_0, _1, _2, _3, _4], input6]))))), ([_0, input2]) => [_0, input2], () => If(If(Ident(input), ([_0, input2]) => If(Const(":", input2), ([_1, input3]) => If(Const("readonly", input3), ([_2, input4]) => If(Type2(input4), ([_3, input5]) => [[_0, _1, _2, _3], input5])))), ([_0, input2]) => [_0, input2], () => If(If(Ident(input), ([_0, input2]) => If(Const("?", input2), ([_1, input3]) => If(Const(":", input3), ([_2, input4]) => If(Type2(input4), ([_3, input5]) => [[_0, _1, _2, _3], input5])))), ([_0, input2]) => [_0, input2], () => If(If(Ident(input), ([_0, input2]) => If(Const(":", input2), ([_1, input3]) => If(Type2(input3), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [_0, input2], () => [])))), ([_0, input2]) => [ElementNamedMapping(_0), input2]);
-var ElementBase = (input) => If(If(ElementNamed(input), ([_0, input2]) => [_0, input2], () => If(If(Readonly2(input), ([_0, input2]) => If(Type2(input2), ([_1, input3]) => If(Optional3(input3), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [_0, input2], () => [])), ([_0, input2]) => [ElementBaseMapping(_0), input2]);
+var ElementNamed = (input) => If(If(If(Ident(input), ([_0, input2]) => If(Const("?", input2), ([_1, input3]) => If(Const(":", input3), ([_2, input4]) => If(Const("readonly", input4), ([_3, input5]) => If(Type(input5), ([_4, input6]) => [[_0, _1, _2, _3, _4], input6]))))), ([_0, input2]) => [_0, input2], () => If(If(Ident(input), ([_0, input2]) => If(Const(":", input2), ([_1, input3]) => If(Const("readonly", input3), ([_2, input4]) => If(Type(input4), ([_3, input5]) => [[_0, _1, _2, _3], input5])))), ([_0, input2]) => [_0, input2], () => If(If(Ident(input), ([_0, input2]) => If(Const("?", input2), ([_1, input3]) => If(Const(":", input3), ([_2, input4]) => If(Type(input4), ([_3, input5]) => [[_0, _1, _2, _3], input5])))), ([_0, input2]) => [_0, input2], () => If(If(Ident(input), ([_0, input2]) => If(Const(":", input2), ([_1, input3]) => If(Type(input3), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [_0, input2], () => [])))), ([_0, input2]) => [ElementNamedMapping(_0), input2]);
+var ElementBase = (input) => If(If(ElementNamed(input), ([_0, input2]) => [_0, input2], () => If(If(Readonly2(input), ([_0, input2]) => If(Type(input2), ([_1, input3]) => If(Optional3(input3), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [_0, input2], () => [])), ([_0, input2]) => [ElementBaseMapping(_0), input2]);
 var Element = (input) => If(If(If(Const("...", input), ([_0, input2]) => If(ElementBase(input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [_0, input2], () => If(If(ElementBase(input), ([_0, input2]) => [[_0], input2]), ([_0, input2]) => [_0, input2], () => [])), ([_0, input2]) => [ElementMapping(_0), input2]);
 var ElementList_0 = (input, result = []) => If(If(Const(",", input), ([_0, input2]) => If(Element(input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => ElementList_0(input2, [...result, _0]), () => [result, input]);
 var ElementList = (input) => If(If(If(Element(input), ([_0, input2]) => If(ElementList_0(input2), ([_1, input3]) => If(If(Const(",", input3), ([_02, input4]) => [[_02], input4], () => [[], input3]), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [_0, input2], () => If([[], input], ([_0, input2]) => [_0, input2], () => [])), ([_0, input2]) => [ElementListMapping(_0), input2]);
 var _Tuple_ = (input) => If(If(Const("[", input), ([_0, input2]) => If(ElementList(input2), ([_1, input3]) => If(Const("]", input3), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [_Tuple_Mapping(_0), input2]);
-var ParameterReadonlyOptional = (input) => If(If(Ident(input), ([_0, input2]) => If(Const("?", input2), ([_1, input3]) => If(Const(":", input3), ([_2, input4]) => If(Const("readonly", input4), ([_3, input5]) => If(Type2(input5), ([_4, input6]) => [[_0, _1, _2, _3, _4], input6]))))), ([_0, input2]) => [ParameterReadonlyOptionalMapping(_0), input2]);
-var ParameterReadonly = (input) => If(If(Ident(input), ([_0, input2]) => If(Const(":", input2), ([_1, input3]) => If(Const("readonly", input3), ([_2, input4]) => If(Type2(input4), ([_3, input5]) => [[_0, _1, _2, _3], input5])))), ([_0, input2]) => [ParameterReadonlyMapping(_0), input2]);
-var ParameterOptional = (input) => If(If(Ident(input), ([_0, input2]) => If(Const("?", input2), ([_1, input3]) => If(Const(":", input3), ([_2, input4]) => If(Type2(input4), ([_3, input5]) => [[_0, _1, _2, _3], input5])))), ([_0, input2]) => [ParameterOptionalMapping(_0), input2]);
-var ParameterType = (input) => If(If(Ident(input), ([_0, input2]) => If(Const(":", input2), ([_1, input3]) => If(Type2(input3), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [ParameterTypeMapping(_0), input2]);
+var ParameterReadonlyOptional = (input) => If(If(Ident(input), ([_0, input2]) => If(Const("?", input2), ([_1, input3]) => If(Const(":", input3), ([_2, input4]) => If(Const("readonly", input4), ([_3, input5]) => If(Type(input5), ([_4, input6]) => [[_0, _1, _2, _3, _4], input6]))))), ([_0, input2]) => [ParameterReadonlyOptionalMapping(_0), input2]);
+var ParameterReadonly = (input) => If(If(Ident(input), ([_0, input2]) => If(Const(":", input2), ([_1, input3]) => If(Const("readonly", input3), ([_2, input4]) => If(Type(input4), ([_3, input5]) => [[_0, _1, _2, _3], input5])))), ([_0, input2]) => [ParameterReadonlyMapping(_0), input2]);
+var ParameterOptional = (input) => If(If(Ident(input), ([_0, input2]) => If(Const("?", input2), ([_1, input3]) => If(Const(":", input3), ([_2, input4]) => If(Type(input4), ([_3, input5]) => [[_0, _1, _2, _3], input5])))), ([_0, input2]) => [ParameterOptionalMapping(_0), input2]);
+var ParameterType = (input) => If(If(Ident(input), ([_0, input2]) => If(Const(":", input2), ([_1, input3]) => If(Type(input3), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [ParameterTypeMapping(_0), input2]);
 var ParameterBase = (input) => If(If(ParameterReadonlyOptional(input), ([_0, input2]) => [_0, input2], () => If(ParameterReadonly(input), ([_0, input2]) => [_0, input2], () => If(ParameterOptional(input), ([_0, input2]) => [_0, input2], () => If(ParameterType(input), ([_0, input2]) => [_0, input2], () => [])))), ([_0, input2]) => [ParameterBaseMapping(_0), input2]);
 var Parameter2 = (input) => If(If(If(Const("...", input), ([_0, input2]) => If(ParameterBase(input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [_0, input2], () => If(If(ParameterBase(input), ([_0, input2]) => [[_0], input2]), ([_0, input2]) => [_0, input2], () => [])), ([_0, input2]) => [ParameterMapping(_0), input2]);
 var ParameterList_0 = (input, result = []) => If(If(Const(",", input), ([_0, input2]) => If(Parameter2(input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => ParameterList_0(input2, [...result, _0]), () => [result, input]);
 var ParameterList = (input) => If(If(If(Parameter2(input), ([_0, input2]) => If(ParameterList_0(input2), ([_1, input3]) => If(If(Const(",", input3), ([_02, input4]) => [[_02], input4], () => [[], input3]), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [_0, input2], () => If([[], input], ([_0, input2]) => [_0, input2], () => [])), ([_0, input2]) => [ParameterListMapping(_0), input2]);
-var _Function_2 = (input) => If(If(Const("(", input), ([_0, input2]) => If(ParameterList(input2), ([_1, input3]) => If(Const(")", input3), ([_2, input4]) => If(Const("=>", input4), ([_3, input5]) => If(Type2(input5), ([_4, input6]) => [[_0, _1, _2, _3, _4], input6]))))), ([_0, input2]) => [_Function_Mapping(_0), input2]);
-var _Constructor_ = (input) => If(If(Const("new", input), ([_0, input2]) => If(Const("(", input2), ([_1, input3]) => If(ParameterList(input3), ([_2, input4]) => If(Const(")", input4), ([_3, input5]) => If(Const("=>", input5), ([_4, input6]) => If(Type2(input6), ([_5, input7]) => [[_0, _1, _2, _3, _4, _5], input7])))))), ([_0, input2]) => [_Constructor_Mapping(_0), input2]);
+var _Function_2 = (input) => If(If(Const("(", input), ([_0, input2]) => If(ParameterList(input2), ([_1, input3]) => If(Const(")", input3), ([_2, input4]) => If(Const("=>", input4), ([_3, input5]) => If(Type(input5), ([_4, input6]) => [[_0, _1, _2, _3, _4], input6]))))), ([_0, input2]) => [_Function_Mapping(_0), input2]);
+var _Constructor_ = (input) => If(If(Const("new", input), ([_0, input2]) => If(Const("(", input2), ([_1, input3]) => If(ParameterList(input3), ([_2, input4]) => If(Const(")", input4), ([_3, input5]) => If(Const("=>", input5), ([_4, input6]) => If(Type(input6), ([_5, input7]) => [[_0, _1, _2, _3, _4, _5], input7])))))), ([_0, input2]) => [_Constructor_Mapping(_0), input2]);
 var MappedReadonly = (input) => If(If(If(Const("+", input), ([_0, input2]) => If(Const("readonly", input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [_0, input2], () => If(If(Const("-", input), ([_0, input2]) => If(Const("readonly", input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [_0, input2], () => If(If(Const("readonly", input), ([_0, input2]) => [[_0], input2]), ([_0, input2]) => [_0, input2], () => If([[], input], ([_0, input2]) => [_0, input2], () => [])))), ([_0, input2]) => [MappedReadonlyMapping(_0), input2]);
 var MappedOptional = (input) => If(If(If(Const("+", input), ([_0, input2]) => If(Const("?", input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [_0, input2], () => If(If(Const("-", input), ([_0, input2]) => If(Const("?", input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [_0, input2], () => If(If(Const("?", input), ([_0, input2]) => [[_0], input2]), ([_0, input2]) => [_0, input2], () => If([[], input], ([_0, input2]) => [_0, input2], () => [])))), ([_0, input2]) => [MappedOptionalMapping(_0), input2]);
-var MappedAs = (input) => If(If(If(Const("as", input), ([_0, input2]) => If(Type2(input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [_0, input2], () => If([[], input], ([_0, input2]) => [_0, input2], () => [])), ([_0, input2]) => [MappedAsMapping(_0), input2]);
-var _Mapped_ = (input) => If(If(Const("{", input), ([_0, input2]) => If(MappedReadonly(input2), ([_1, input3]) => If(Const("[", input3), ([_2, input4]) => If(Ident(input4), ([_3, input5]) => If(Const("in", input5), ([_4, input6]) => If(Type2(input6), ([_5, input7]) => If(MappedAs(input7), ([_6, input8]) => If(Const("]", input8), ([_7, input9]) => If(MappedOptional(input9), ([_8, input10]) => If(Const(":", input10), ([_9, input11]) => If(Type2(input11), ([_10, input12]) => If(OptionalSemiColon(input12), ([_11, input13]) => If(Const("}", input13), ([_12, input14]) => [[_0, _1, _2, _3, _4, _5, _6, _7, _8, _9, _10, _11, _12], input14]))))))))))))), ([_0, input2]) => [_Mapped_Mapping(_0), input2]);
+var MappedAs = (input) => If(If(If(Const("as", input), ([_0, input2]) => If(Type(input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [_0, input2], () => If([[], input], ([_0, input2]) => [_0, input2], () => [])), ([_0, input2]) => [MappedAsMapping(_0), input2]);
+var _Mapped_ = (input) => If(If(Const("{", input), ([_0, input2]) => If(MappedReadonly(input2), ([_1, input3]) => If(Const("[", input3), ([_2, input4]) => If(Ident(input4), ([_3, input5]) => If(Const("in", input5), ([_4, input6]) => If(Type(input6), ([_5, input7]) => If(MappedAs(input7), ([_6, input8]) => If(Const("]", input8), ([_7, input9]) => If(MappedOptional(input9), ([_8, input10]) => If(Const(":", input10), ([_9, input11]) => If(Type(input11), ([_10, input12]) => If(OptionalSemiColon(input12), ([_11, input13]) => If(Const("}", input13), ([_12, input14]) => [[_0, _1, _2, _3, _4, _5, _6, _7, _8, _9, _10, _11, _12], input14]))))))))))))), ([_0, input2]) => [_Mapped_Mapping(_0), input2]);
 var Reference = (input) => If(Ident(input), ([_0, input2]) => [ReferenceMapping(_0), input2]);
 var WithBigInt = (input) => If(BigInt3(input), ([_0, input2]) => [WithBigIntMapping(_0), input2]);
 var WithNumber = (input) => If(Number3(input), ([_0, input2]) => [WithNumberMapping(_0), input2]);
@@ -4289,20 +2840,20 @@ var PatternUnion = (input) => If(If(If(PatternTerm(input), ([_0, input2]) => If(
 var PatternTerm = (input) => If(If(PatternBase(input), ([_0, input2]) => If(PatternBody(input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [PatternTermMapping(_0), input2]);
 var PatternBody = (input) => If(If(PatternUnion(input), ([_0, input2]) => [_0, input2], () => If(PatternTerm(input), ([_0, input2]) => [_0, input2], () => [])), ([_0, input2]) => [PatternBodyMapping(_0), input2]);
 var Pattern = (input) => If(If(Const("^", input), ([_0, input2]) => If(PatternBody(input2), ([_1, input3]) => If(Const("$", input3), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [PatternMapping(_0), input2]);
-var InterfaceDeclarationHeritageList_0 = (input, result = []) => If(If(Const(",", input), ([_0, input2]) => If(Type2(input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => InterfaceDeclarationHeritageList_0(input2, [...result, _0]), () => [result, input]);
-var InterfaceDeclarationHeritageList = (input) => If(If(If(Type2(input), ([_0, input2]) => If(InterfaceDeclarationHeritageList_0(input2), ([_1, input3]) => If(If(Const(",", input3), ([_02, input4]) => [[_02], input4], () => [[], input3]), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [_0, input2], () => If([[], input], ([_0, input2]) => [_0, input2], () => [])), ([_0, input2]) => [InterfaceDeclarationHeritageListMapping(_0), input2]);
+var InterfaceDeclarationHeritageList_0 = (input, result = []) => If(If(Const(",", input), ([_0, input2]) => If(Type(input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => InterfaceDeclarationHeritageList_0(input2, [...result, _0]), () => [result, input]);
+var InterfaceDeclarationHeritageList = (input) => If(If(If(Type(input), ([_0, input2]) => If(InterfaceDeclarationHeritageList_0(input2), ([_1, input3]) => If(If(Const(",", input3), ([_02, input4]) => [[_02], input4], () => [[], input3]), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [_0, input2], () => If([[], input], ([_0, input2]) => [_0, input2], () => [])), ([_0, input2]) => [InterfaceDeclarationHeritageListMapping(_0), input2]);
 var InterfaceDeclarationHeritage = (input) => If(If(If(Const("extends", input), ([_0, input2]) => If(InterfaceDeclarationHeritageList(input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [_0, input2], () => If([[], input], ([_0, input2]) => [_0, input2], () => [])), ([_0, input2]) => [InterfaceDeclarationHeritageMapping(_0), input2]);
 var InterfaceDeclarationGeneric = (input) => If(If(Const("interface", input), ([_0, input2]) => If(Ident(input2), ([_1, input3]) => If(GenericParameters(input3), ([_2, input4]) => If(InterfaceDeclarationHeritage(input4), ([_3, input5]) => If(Properties(input5), ([_4, input6]) => [[_0, _1, _2, _3, _4], input6]))))), ([_0, input2]) => [InterfaceDeclarationGenericMapping(_0), input2]);
 var InterfaceDeclaration = (input) => If(If(Const("interface", input), ([_0, input2]) => If(Ident(input2), ([_1, input3]) => If(InterfaceDeclarationHeritage(input3), ([_2, input4]) => If(Properties(input4), ([_3, input5]) => [[_0, _1, _2, _3], input5])))), ([_0, input2]) => [InterfaceDeclarationMapping(_0), input2]);
-var TypeAliasDeclarationGeneric = (input) => If(If(Const("type", input), ([_0, input2]) => If(Ident(input2), ([_1, input3]) => If(GenericParameters(input3), ([_2, input4]) => If(Const("=", input4), ([_3, input5]) => If(Type2(input5), ([_4, input6]) => [[_0, _1, _2, _3, _4], input6]))))), ([_0, input2]) => [TypeAliasDeclarationGenericMapping(_0), input2]);
-var TypeAliasDeclaration = (input) => If(If(Const("type", input), ([_0, input2]) => If(Ident(input2), ([_1, input3]) => If(Const("=", input3), ([_2, input4]) => If(Type2(input4), ([_3, input5]) => [[_0, _1, _2, _3], input5])))), ([_0, input2]) => [TypeAliasDeclarationMapping(_0), input2]);
+var TypeAliasDeclarationGeneric = (input) => If(If(Const("type", input), ([_0, input2]) => If(Ident(input2), ([_1, input3]) => If(GenericParameters(input3), ([_2, input4]) => If(Const("=", input4), ([_3, input5]) => If(Type(input5), ([_4, input6]) => [[_0, _1, _2, _3, _4], input6]))))), ([_0, input2]) => [TypeAliasDeclarationGenericMapping(_0), input2]);
+var TypeAliasDeclaration = (input) => If(If(Const("type", input), ([_0, input2]) => If(Ident(input2), ([_1, input3]) => If(Const("=", input3), ([_2, input4]) => If(Type(input4), ([_3, input5]) => [[_0, _1, _2, _3], input5])))), ([_0, input2]) => [TypeAliasDeclarationMapping(_0), input2]);
 var ExportKeyword = (input) => If(If(If(Const("export", input), ([_0, input2]) => [[_0], input2]), ([_0, input2]) => [_0, input2], () => If([[], input], ([_0, input2]) => [_0, input2], () => [])), ([_0, input2]) => [ExportKeywordMapping(_0), input2]);
 var ModuleDeclarationDelimiter = (input) => If(If(If(Const(";", input), ([_0, input2]) => If(Const("\n", input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [_0, input2], () => If(If(Const(";", input), ([_0, input2]) => [[_0], input2]), ([_0, input2]) => [_0, input2], () => If(If(Const("\n", input), ([_0, input2]) => [[_0], input2]), ([_0, input2]) => [_0, input2], () => []))), ([_0, input2]) => [ModuleDeclarationDelimiterMapping(_0), input2]);
 var ModuleDeclarationList_0 = (input, result = []) => If(If(ModuleDeclarationDelimiter(input), ([_0, input2]) => If(ModuleDeclaration(input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => ModuleDeclarationList_0(input2, [...result, _0]), () => [result, input]);
 var ModuleDeclarationList = (input) => If(If(If(ModuleDeclaration(input), ([_0, input2]) => If(ModuleDeclarationList_0(input2), ([_1, input3]) => If(If(ModuleDeclarationDelimiter(input3), ([_02, input4]) => [[_02], input4], () => [[], input3]), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [_0, input2], () => If([[], input], ([_0, input2]) => [_0, input2], () => [])), ([_0, input2]) => [ModuleDeclarationListMapping(_0), input2]);
 var ModuleDeclaration = (input) => If(If(ExportKeyword(input), ([_0, input2]) => If(If(InterfaceDeclarationGeneric(input2), ([_02, input3]) => [_02, input3], () => If(InterfaceDeclaration(input2), ([_02, input3]) => [_02, input3], () => If(TypeAliasDeclarationGeneric(input2), ([_02, input3]) => [_02, input3], () => If(TypeAliasDeclaration(input2), ([_02, input3]) => [_02, input3], () => [])))), ([_1, input3]) => If(OptionalSemiColon(input3), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [ModuleDeclarationMapping(_0), input2]);
 var Module = (input) => If(If(ModuleDeclaration(input), ([_0, input2]) => If(ModuleDeclarationList(input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [ModuleMapping(_0), input2]);
-var Script = (input) => If(If(Module(input), ([_0, input2]) => [_0, input2], () => If(GenericType(input), ([_0, input2]) => [_0, input2], () => If(Type2(input), ([_0, input2]) => [_0, input2], () => []))), ([_0, input2]) => [ScriptMapping(_0), input2]);
+var Script = (input) => If(If(Module(input), ([_0, input2]) => [_0, input2], () => If(GenericType(input), ([_0, input2]) => [_0, input2], () => If(Type(input), ([_0, input2]) => [_0, input2], () => []))), ([_0, input2]) => [ScriptMapping(_0), input2]);
 
 // node_modules/typebox/build/type/engine/patterns/template.mjs
 function ParseTemplateIntoTypes(template) {
@@ -4632,14 +3183,14 @@ function ExtendsObject(inferred, left, right) {
 }
 
 // node_modules/typebox/build/type/extends/record.mjs
-function FromObject2(inferred, properties) {
+function FromObject3(inferred, properties) {
   return guard_exports.IsEqual(guard_exports.Keys(properties).length, 0) ? ExtendsTrue(inferred) : ExtendsFalse();
 }
 function FromRecord(inferred, _leftKey, leftValue, _rightKey, rightValue) {
   return ExtendsLeft(inferred, leftValue, rightValue);
 }
 function ExtendsRecord(inferred, leftPattern, leftValue, right) {
-  return IsRecord(right) ? FromRecord(inferred, RecordPatternToType(leftPattern), leftValue, RecordPatternToType(RecordPattern(right)), RecordValue(right)) : IsObject2(right) ? FromObject2(inferred, right.properties) : IsAny(right) ? ExtendsTrue(inferred) : IsUnknown(right) ? ExtendsTrue(inferred) : ExtendsFalse();
+  return IsRecord(right) ? FromRecord(inferred, RecordPatternToType(leftPattern), leftValue, RecordPatternToType(RecordPattern(right)), RecordValue(right)) : IsObject2(right) ? FromObject3(inferred, right.properties) : IsAny(right) ? ExtendsTrue(inferred) : IsUnknown(right) ? ExtendsTrue(inferred) : ExtendsFalse();
 }
 
 // node_modules/typebox/build/type/extends/string.mjs
@@ -5371,7 +3922,7 @@ function FromIntersect(types) {
 }
 
 // node_modules/typebox/build/type/engine/object/from_object.mjs
-function FromObject3(properties) {
+function FromObject4(properties) {
   return properties;
 }
 
@@ -5399,7 +3950,7 @@ function FromUnion3(types) {
 
 // node_modules/typebox/build/type/engine/object/from_type.mjs
 function FromType8(type) {
-  return IsCyclic(type) ? FromCyclic(type.$defs, type.$ref) : IsDependent(type) ? FromDependent(type.if, type.then, type.else) : IsIntersect(type) ? FromIntersect(type.allOf) : IsUnion(type) ? FromUnion3(type.anyOf) : IsTuple(type) ? FromTuple(type.items) : IsObject2(type) ? FromObject3(type.properties) : {};
+  return IsCyclic(type) ? FromCyclic(type.$defs, type.$ref) : IsDependent(type) ? FromDependent(type.if, type.then, type.else) : IsIntersect(type) ? FromIntersect(type.allOf) : IsUnion(type) ? FromUnion3(type.anyOf) : IsTuple(type) ? FromTuple(type.items) : IsObject2(type) ? FromObject4(type.properties) : {};
 }
 
 // node_modules/typebox/build/type/engine/object/collapse.mjs
@@ -5426,7 +3977,7 @@ function NormalizeIndexerTypes(types) {
 function NormalizeIndexer(type) {
   return IsIntersect(type) ? Intersect(NormalizeIndexerTypes(type.allOf)) : IsUnion(type) ? Union(NormalizeIndexerTypes(type.anyOf)) : IsLiteral(type) ? NormalizeLiteral(type.const) : type;
 }
-function FromArray2(type, indexer) {
+function FromArray3(type, indexer) {
   const normalizedIndexer = NormalizeIndexer(indexer);
   const check = Extends({}, normalizedIndexer, Number2());
   const result = (
@@ -5536,7 +4087,7 @@ function FromIndexerNumber(properties) {
   const result = EvaluateUnion(variants);
   return result;
 }
-function FromObject4(properties, indexer) {
+function FromObject5(properties, indexer) {
   const result = IsNumber3(indexer) ? FromIndexerNumber(properties) : FromIndexer(properties, indexer);
   return result;
 }
@@ -5576,7 +4127,7 @@ function FromTuple2(types, indexer) {
 
 // node_modules/typebox/build/type/engine/indexed/from_type.mjs
 function FromType11(type, indexer) {
-  return IsArray2(type) ? FromArray2(type.items, indexer) : IsObject2(type) ? FromObject4(type.properties, indexer) : IsTuple(type) ? FromTuple2(type.items, indexer) : Never();
+  return IsArray2(type) ? FromArray3(type.items, indexer) : IsObject2(type) ? FromObject5(type.properties, indexer) : IsTuple(type) ? FromTuple2(type.items, indexer) : Never();
 }
 
 // node_modules/typebox/build/type/engine/indexed/instantiate.mjs
@@ -5629,7 +4180,7 @@ function FromAny() {
 }
 
 // node_modules/typebox/build/type/engine/keyof/from_array.mjs
-function FromArray3(_type) {
+function FromArray4(_type) {
   return Number2();
 }
 
@@ -5640,7 +4191,7 @@ function FromPropertyKeys(keys) {
   }, []);
   return result;
 }
-function FromObject5(properties) {
+function FromObject6(properties) {
   const propertyKeys = guard_exports.Keys(properties);
   const variants = FromPropertyKeys(propertyKeys);
   const result = EvaluateUnionFast(variants);
@@ -5660,7 +4211,7 @@ function FromTuple3(types) {
 
 // node_modules/typebox/build/type/engine/keyof/from_type.mjs
 function FromType12(type) {
-  return IsAny(type) ? FromAny() : IsArray2(type) ? FromArray3(type.items) : IsObject2(type) ? FromObject5(type.properties) : IsRecord(type) ? FromRecord2(type) : IsTuple(type) ? FromTuple3(type.items) : Never();
+  return IsAny(type) ? FromAny() : IsArray2(type) ? FromArray4(type.items) : IsObject2(type) ? FromObject6(type.properties) : IsRecord(type) ? FromRecord2(type) : IsTuple(type) ? FromTuple3(type.items) : Never();
 }
 
 // node_modules/typebox/build/type/engine/keyof/instantiate.mjs
@@ -5905,7 +4456,7 @@ function FromUnion6(types) {
 }
 
 // node_modules/typebox/build/type/engine/partial/from_object.mjs
-function FromObject6(properties) {
+function FromObject7(properties) {
   const mapped = guard_exports.Keys(properties).reduce((result2, left) => {
     return { ...result2, [left]: AddOptional(properties[left]) };
   }, {});
@@ -5915,7 +4466,7 @@ function FromObject6(properties) {
 
 // node_modules/typebox/build/type/engine/partial/from_type.mjs
 function FromType15(type) {
-  return IsCyclic(type) ? FromCyclic3(type.$defs, type.$ref) : IsDependent(type) ? FromDependent3(type.if, type.then, type.else) : IsIntersect(type) ? FromIntersect3(type.allOf) : IsUnion(type) ? FromUnion6(type.anyOf) : IsObject2(type) ? FromObject6(type.properties) : _Object_({});
+  return IsCyclic(type) ? FromCyclic3(type.$defs, type.$ref) : IsDependent(type) ? FromDependent3(type.if, type.then, type.else) : IsIntersect(type) ? FromIntersect3(type.allOf) : IsUnion(type) ? FromUnion6(type.anyOf) : IsObject2(type) ? FromObject7(type.properties) : _Object_({});
 }
 
 // node_modules/typebox/build/type/engine/partial/instantiate.mjs
@@ -5973,7 +4524,7 @@ function ReadonlyObject(type, options = {}) {
 var ReadonlyType = ReadonlyObject;
 
 // node_modules/typebox/build/type/engine/readonly_object/from_array.mjs
-function FromArray4(type) {
+function FromArray5(type) {
   const result = AddImmutable(_Array_(type));
   return result;
 }
@@ -6001,7 +4552,7 @@ function FromIntersect4(types) {
 }
 
 // node_modules/typebox/build/type/engine/readonly_object/from_object.mjs
-function FromObject7(properties) {
+function FromObject8(properties) {
   const mapped = guard_exports.Keys(properties).reduce((result2, left) => {
     return { ...result2, [left]: AddReadonly(properties[left]) };
   }, {});
@@ -6023,7 +4574,7 @@ function FromUnion7(types) {
 
 // node_modules/typebox/build/type/engine/readonly_object/from_type.mjs
 function FromType17(type) {
-  return IsArray2(type) ? FromArray4(type.items) : IsCyclic(type) ? FromCyclic4(type.$defs, type.$ref) : IsDependent(type) ? FromDependent4(type.if, type.then, type.else) : IsIntersect(type) ? FromIntersect4(type.allOf) : IsObject2(type) ? FromObject7(type.properties) : IsTuple(type) ? FromTuple4(type.items) : IsUnion(type) ? FromUnion7(type.anyOf) : type;
+  return IsArray2(type) ? FromArray5(type.items) : IsCyclic(type) ? FromCyclic4(type.$defs, type.$ref) : IsDependent(type) ? FromDependent4(type.if, type.then, type.else) : IsIntersect(type) ? FromIntersect4(type.allOf) : IsObject2(type) ? FromObject8(type.properties) : IsTuple(type) ? FromTuple4(type.items) : IsUnion(type) ? FromUnion7(type.anyOf) : type;
 }
 
 // node_modules/typebox/build/type/engine/readonly_object/instantiate.mjs
@@ -6070,7 +4621,7 @@ function FromUnion8(types) {
 }
 
 // node_modules/typebox/build/type/engine/required/from_object.mjs
-function FromObject8(properties) {
+function FromObject9(properties) {
   const mapped = guard_exports.Keys(properties).reduce((result2, left) => {
     return { ...result2, [left]: RemoveOptional(properties[left]) };
   }, {});
@@ -6080,7 +4631,7 @@ function FromObject8(properties) {
 
 // node_modules/typebox/build/type/engine/required/from_type.mjs
 function FromType18(type) {
-  return IsCyclic(type) ? FromCyclic5(type.$defs, type.$ref) : IsDependent(type) ? FromDependent5(type.if, type.then, type.else) : IsIntersect(type) ? FromIntersect5(type.allOf) : IsUnion(type) ? FromUnion8(type.anyOf) : IsObject2(type) ? FromObject8(type.properties) : _Object_({});
+  return IsCyclic(type) ? FromCyclic5(type.$defs, type.$ref) : IsDependent(type) ? FromDependent5(type.if, type.then, type.else) : IsIntersect(type) ? FromIntersect5(type.allOf) : IsUnion(type) ? FromUnion8(type.anyOf) : IsObject2(type) ? FromObject9(type.properties) : _Object_({});
 }
 
 // node_modules/typebox/build/type/action/required.mjs
@@ -6153,8 +4704,8 @@ function RestSpread(types) {
 }
 
 // node_modules/typebox/build/type/engine/instantiate.mjs
-function State(callstack, visited) {
-  return { callstack, visited };
+function State(callstack, visited2) {
+  return { callstack, visited: visited2 };
 }
 function CanInstantiate(types) {
   return guard_exports.ShiftLeft(types, (left, right) => IsRef(left) ? false : CanInstantiate(right), () => true);
@@ -6235,6 +4786,22 @@ function ModuleDeferred(declarations, options = {}) {
 }
 function Module2(declarations, options = {}) {
   return ModuleInstantiate({}, State([], []), declarations, options);
+}
+
+// node_modules/typebox/build/type/engine/priority/priority.mjs
+function Comparer(left, right) {
+  const compareResult = Compare(left, right);
+  return guard_exports.IsEqual(compareResult, CompareResultRightInside) ? 1 : guard_exports.IsEqual(compareResult, CompareResultDisjoint) ? 1 : 0;
+}
+function Insert(type, types, result = []) {
+  return guard_exports.ShiftLeft(types, (left, right) => guard_exports.IsEqual(Comparer(type, left), 1) ? Insert(type, right, [...result, left]) : [...result, type, ...types], () => [...result, type]);
+}
+function Sort(types, result = []) {
+  return guard_exports.ShiftLeft(types, (left, right) => Sort(right, Insert(left, result)), () => result);
+}
+function Priority(types) {
+  const result = Sort(types);
+  return result;
 }
 
 // node_modules/typebox/build/type/script/script.mjs
@@ -6371,6 +4938,5624 @@ __export(typebox_exports, {
   With: () => With2
 });
 
+// src/runner/subagent.ts
+import {
+  configure,
+  defineExtension as defineExtension2,
+  defineTool
+} from "@earendil-works/pi-durable";
+
+// src/runner/subagent-docs.ts
+import {
+  AssistantEntry,
+  defineDoc
+} from "@earendil-works/pi-durable";
+var SubagentsDoc = defineDoc({
+  kind: "durable.subagents",
+  version: 1,
+  scope: "conversation",
+  checkpointWhen: () => false,
+  history: "latest",
+  fork: "initial",
+  initial: () => ({ agents: {} })
+});
+function isRecord(value) {
+  return typeof value === "object" && value !== null;
+}
+function extractAssistantText(entry) {
+  if (!isRecord(entry) || !Array.isArray(entry.model) || entry.model.length === 0) return "";
+  const firstMessage = entry.model[0];
+  if (!isRecord(firstMessage) || !Array.isArray(firstMessage.content)) return "";
+  return firstMessage.content.flatMap((p) => isRecord(p) && p.type === "text" && typeof p.text === "string" ? [p.text] : []).join("");
+}
+async function answerText(api, answer, context) {
+  const entry = await api.commit((tx) => tx.entry(AssistantEntry, answer), context);
+  return extractAssistantText(entry);
+}
+
+// src/runner/subagent-delivery.ts
+import {
+  AssistantEntry as AssistantEntry2,
+  defineTask as defineTask2
+} from "@earendil-works/pi-durable";
+
+// src/runner/subagent-courier.ts
+import { defineTask } from "@earendil-works/pi-durable";
+
+// src/runner/watcher-compat.ts
+function isWatchCall(item) {
+  return typeof item === "object" && item !== null && "kind" in item && item.kind === "value" && "value" in item;
+}
+function unwrapWatchValue(item) {
+  if (isWatchCall(item)) {
+    return item.value;
+  }
+  return item;
+}
+
+// src/runner/subagent-courier.ts
+var GATHER_MS = 50;
+var DEFAULT_HOLD_TIMEOUT_MS = 5e3;
+function courierIsIdle(active) {
+  return active === void 0 || active.state.status === "terminal";
+}
+function asExtensionTask(task, extensionName) {
+  return Object.assign(task, { name: extensionName, tasks: [task] });
+}
+function courierFor(admit, holdTimeoutMs = DEFAULT_HOLD_TIMEOUT_MS) {
+  const task = defineTask({
+    name: "durable.subagent-courier",
+    version: 1,
+    initial: () => ({ phase: "gather" }),
+    phases: {
+      gather: (_task, runtime, context) => runtime.sleepUntil(runtime.now() + GATHER_MS, { phase: "next" }, context),
+      next: async (task2, runtime, context) => runtime.commit(async (tx) => {
+        const state = await tx.doc(SubagentsDoc, runtime.conversationId);
+        if (state.deliveryHold !== void 0) return { status: "running", checkpoint: { phase: "hold" } };
+        if (state.sending === void 0) {
+          const reports = state.outbox ?? [];
+          if (reports.length === 0) {
+            if (state.courier === task2.id) delete state.courier;
+            return { status: "terminal", outcome: { status: "completed", result: null } };
+          }
+          const batch = (state.batchNumber ?? 0) + 1;
+          state.batchNumber = batch;
+          state.outbox = [];
+          state.sending = { requestId: `subagent-batch:${task2.id}:${batch}`, reports };
+        } else {
+          const attempt = (state.sending.attempt ?? 0) + 1;
+          state.sending.attempt = attempt;
+          const batch = state.batchNumber ?? 1;
+          state.sending.requestId = `subagent-batch:${task2.id}:${batch}:r${attempt}`;
+        }
+        return { status: "running", checkpoint: { phase: "send" } };
+      }, context),
+      send: async (_task, runtime, context) => {
+        const state = await runtime.snapshot(SubagentsDoc, runtime.conversationId, context);
+        const sending = state?.sending;
+        if (sending === void 0) {
+          await runtime.commit(() => ({ status: "running", checkpoint: { phase: "next" } }), context);
+          return;
+        }
+        const parent = await runtime.conversation(runtime.conversationId, context);
+        try {
+          await admit?.(parent, sending.requestId, context);
+        } catch (error) {
+          if (runtime.signal.aborted || context.abortSignal?.aborted) throw error;
+          const reason = error instanceof Error ? error.message : String(error);
+          await runtime.commit(async (tx) => {
+            const current = await tx.doc(SubagentsDoc, runtime.conversationId);
+            if (current.sending?.requestId === sending.requestId) {
+              current.deliveryHold = { kind: "admission", requestId: sending.requestId, reason };
+            }
+            return { status: "running", checkpoint: { phase: "hold" } };
+          }, context);
+          return;
+        }
+        const prompt = sending.reports.map((r) => r.text).join("\n\n---\n\n");
+        const content = `[Subagent Reports Available]:
+
+${prompt}`;
+        const submission = await parent.submit({ type: "input", content, whenBusy: "followUp", requestId: sending.requestId }, context);
+        const settled = await submission.wait(context);
+        return runtime.commit(async (tx) => {
+          const current = await tx.doc(SubagentsDoc, runtime.conversationId);
+          if (current.sending?.requestId !== sending.requestId) return { status: "running", checkpoint: { phase: "next" } };
+          if (settled.status === "done") delete current.sending;
+          else current.deliveryHold = { kind: "uncertain", requestId: sending.requestId, reason: `Delivery outcome uncertain: ${settled.status}` };
+          return { status: "running", checkpoint: { phase: settled.status === "done" ? "next" : "hold" } };
+        }, context);
+      },
+      hold: async (_task, runtime, context) => {
+        const watch2 = await runtime.watchDoc(SubagentsDoc, runtime.conversationId, context);
+        if (watch2 === void 0 || watch2.value?.deliveryHold === void 0) {
+          await watch2?.stop();
+          return runtime.commit(() => ({ status: "running", checkpoint: { phase: "next" } }), context);
+        }
+        try {
+          await new Promise((resolve3) => {
+            const timer = setTimeout(() => resolve3(), holdTimeoutMs);
+            timer.unref?.();
+            watch2.start((rawCall) => {
+              const v = unwrapWatchValue(rawCall);
+              if (v?.deliveryHold === void 0) {
+                clearTimeout(timer);
+                resolve3();
+              }
+              return Promise.resolve();
+            });
+            void watch2.closed.then(() => {
+              clearTimeout(timer);
+              resolve3();
+            });
+          });
+        } finally {
+          await watch2.stop();
+        }
+        return runtime.commit(async (tx) => {
+          const current = await tx.doc(SubagentsDoc, runtime.conversationId);
+          delete current.deliveryHold;
+          return { status: "running", checkpoint: { phase: "next" } };
+        }, context);
+      }
+    },
+    abort: (_t, rt, ctx) => rt.commit(() => ({ status: "terminal", outcome: { status: "aborted" } }), ctx)
+  });
+  return asExtensionTask(task, "durable.subagent-courier");
+}
+
+// src/runner/subagent-delivery.ts
+var BACKGROUND = { ownership: { kind: "conversation" }, background: true };
+var Anchor = asExtensionTask(
+  defineTask2({
+    name: "durable.subagent-anchor",
+    version: 1,
+    initial: () => ({ phase: "done" }),
+    phases: { done: (_t, rt, ctx) => rt.commit(() => ({ status: "terminal", outcome: { status: "completed", result: null } }), ctx) },
+    abort: (_t, rt, ctx) => rt.commit(() => ({ status: "terminal", outcome: { status: "aborted" } }), ctx)
+  }),
+  "durable.subagent-anchor"
+);
+function reporterFor(courier, admit) {
+  const task = defineTask2({
+    name: "durable.subagent-reporter",
+    version: 1,
+    initial: () => ({ phase: "deliver" }),
+    phases: {
+      deliver: async (task2, runtime, context) => {
+        const child = await runtime.conversation(task2.input.conversationId, context);
+        await admit?.(child, task2.input.requestId, context);
+        const submission = await child.submit({ type: "input", content: task2.input.task, requestId: task2.input.requestId }, context);
+        const settled = await submission.wait(context);
+        return runtime.commit(async (tx) => {
+          const doc = await tx.doc(SubagentsDoc, runtime.conversationId);
+          doc.agents ??= {};
+          const record = doc.agents[task2.input.key] ?? {
+            name: task2.input.task.trim(),
+            conversationId: task2.input.conversationId,
+            requestId: task2.input.requestId,
+            task: task2.input.task,
+            role: "worker",
+            ownerTaskId: task2.id,
+            background: true
+          };
+          doc.agents[task2.input.key] = record;
+          let text = `Subagent ${record.name} failed: ${settled.status}`;
+          if (settled.status === "unanswered") text += ` (${settled.reason ?? "unknown"})`;
+          if (settled.status === "done" && settled.type === "input") {
+            text = `Subagent ${record.name} answered: ` + extractAssistantText(await tx.entry(AssistantEntry2, settled.answer));
+          }
+          record.report = text;
+          record.settled = true;
+          return { status: "running", checkpoint: { phase: "report", text } };
+        }, context);
+      },
+      report: async (task2, runtime, context) => runtime.commit(async (tx) => {
+        const state = await tx.doc(SubagentsDoc, runtime.conversationId);
+        const reportId = String(task2.id);
+        if (!(state.outbox ?? []).some((report) => report.id === reportId)) {
+          const name = state.agents[task2.input.key]?.name ?? task2.input.key;
+          state.outbox = [...state.outbox ?? [], { id: reportId, name, text: task2.state.checkpoint.text }];
+        }
+        const active = state.courier === void 0 ? void 0 : await tx.task(state.courier);
+        if (courierIsIdle(active)) state.courier = await tx.createTask(courier, null, BACKGROUND);
+        return { status: "terminal", outcome: { status: "completed", result: null } };
+      }, context)
+    },
+    abort: (_t, rt, ctx) => rt.commit(() => ({ status: "terminal", outcome: { status: "aborted" } }), ctx)
+  });
+  return asExtensionTask(task, "durable.subagent-reporter");
+}
+var DefaultCourier = courierFor();
+var DefaultReporter = reporterFor(DefaultCourier);
+
+// src/runner/subagent-role.ts
+function buildTechnicalWorkerRole() {
+  return [
+    "You are an isolated worker subagent.",
+    "Your goal is to solve the delegated task using your available tools.",
+    "Execute the assigned task thoroughly, verify your findings, and return your final answer concisely."
+  ].join("\n");
+}
+
+// src/policy/resolver.ts
+import { getSupportedThinkingLevels } from "@earendil-works/pi-ai/models";
+
+// src/shared/model-ref.ts
+function normalizeModelReference(raw, defaultProvider) {
+  if (!raw || typeof raw !== "object") return void 0;
+  const r = raw;
+  const provider = typeof r.provider === "string" && r.provider.trim() ? r.provider.trim() : defaultProvider?.trim();
+  const rawId = typeof r.modelId === "string" && r.modelId.trim() ? r.modelId.trim() : typeof r.id === "string" && r.id.trim() ? r.id.trim() : void 0;
+  if (!provider || !rawId) return void 0;
+  const prefix = `${provider}/`;
+  const cleanModelId = rawId.startsWith(prefix) ? rawId.slice(prefix.length) : rawId;
+  return { provider, modelId: cleanModelId };
+}
+
+// src/policy/errors.ts
+var SubagentPolicyError = class extends Error {
+  cause;
+  constructor(message, options) {
+    super(message);
+    this.name = this.constructor.name;
+    this.cause = options?.cause;
+  }
+};
+var SubagentPolicyInvalidError = class extends SubagentPolicyError {
+  code = "SUBAGENT_POLICY_INVALID";
+  constructor(message, options) {
+    super(message, options);
+  }
+};
+var SubagentModelUnavailableError = class extends SubagentPolicyError {
+  code = "SUBAGENT_MODEL_UNAVAILABLE";
+  constructor(message, options) {
+    super(message, options);
+  }
+};
+var SubagentPolicyLoadError = class extends SubagentPolicyError {
+  code = "SUBAGENT_POLICY_LOAD_ERROR";
+  constructor(message, options) {
+    super(message, options);
+  }
+};
+var SubagentRevisionConflictError = class extends SubagentPolicyError {
+  code = "REVISION_CONFLICT";
+  constructor(message, options) {
+    super(message, options);
+  }
+};
+
+// src/policy/resolver.ts
+function mapBbReasoningToNativeThinking(level) {
+  if (level === "none" || level === void 0) {
+    return "off";
+  }
+  return level;
+}
+function resolveSubagentModelConfiguration(record, parentContext, availableModels) {
+  if (record.policy.mode === "inherit") {
+    const parentModel = normalizeModelReference(parentContext.model);
+    if (!parentModel) {
+      throw new SubagentPolicyInvalidError(
+        "Parent model is required for inherit mode"
+      );
+    }
+    return {
+      model: {
+        provider: parentModel.provider,
+        modelId: parentModel.modelId
+      },
+      thinkingLevel: mapBbReasoningToNativeThinking(parentContext.thinkingLevel),
+      source: "parent_inherited",
+      policyRevision: record.revision
+    };
+  }
+  const targetProfile = record.policy.configuredProfile;
+  const targetModel = normalizeModelReference(targetProfile.model);
+  const foundModel = targetModel ? availableModels.find((m) => {
+    const availableNorm = normalizeModelReference(m, m.provider);
+    return availableNorm && availableNorm.provider === targetModel.provider && availableNorm.modelId === targetModel.modelId;
+  }) : void 0;
+  if (!foundModel || !targetModel) {
+    throw new SubagentModelUnavailableError(
+      `Configured subagent model "${targetProfile.model.provider}/${targetProfile.model.modelId}" is unavailable or unauthenticated. Update the subagent model in Settings \u2192 Installed plugins \u2192 Pi Durable \u2192 Subagents.`
+    );
+  }
+  const supportedLevels = getSupportedThinkingLevels(foundModel);
+  if (!supportedLevels.includes(targetProfile.thinkingLevel)) {
+    throw new SubagentPolicyInvalidError(
+      `Thinking level "${targetProfile.thinkingLevel}" is not supported by model "${targetModel.provider}/${targetModel.modelId}". Supported levels: ${supportedLevels.join(", ")}.`
+    );
+  }
+  return {
+    model: {
+      provider: targetModel.provider,
+      modelId: targetModel.modelId
+    },
+    thinkingLevel: targetProfile.thinkingLevel,
+    source: "user_configured",
+    policyRevision: record.revision
+  };
+}
+
+// src/runner/subagent.ts
+function createSubagentExtension(getPolicy) {
+  return defineExtension2({
+    name: "subagent",
+    tools: [
+      defineTool({
+        name: "subagent",
+        description: "Delegate a self-contained task to an async subagent. Uses the configured runtime subagent model policy (inherits parent model or uses provider-configured model). Runs in the background by default without blocking the conversation.",
+        parameters: typebox_exports.Object({
+          task: typebox_exports.String({ description: "What the subagent should do" }),
+          background: typebox_exports.Optional(
+            typebox_exports.Boolean({
+              description: "Run in background asynchronously (default: true). Set false only if an immediate synchronous answer is strictly required.",
+              default: true
+            })
+          )
+        }),
+        replay: "safe",
+        execute: async (args2, api, context) => {
+          if (api.conversationId !== void 0 && Number(api.conversationId) > 1) {
+            return {
+              output: [
+                {
+                  type: "text",
+                  text: "Subagent recursion blocked: nested subagents are not permitted to spawn further subagents (max depth 1 reached)."
+                }
+              ],
+              isError: true,
+              details: { error: "MAX_DEPTH_EXCEEDED", task: args2.task }
+            };
+          }
+          const isBackground = args2.background !== false;
+          const key = `subagent:${api.taskId}`;
+          const requestId = `subagent:${api.taskId}`;
+          const existingRecord = await api.commit(async (tx) => {
+            const state = await tx.doc(SubagentsDoc, api.conversationId);
+            return state?.agents?.[key];
+          }, context);
+          let childRecord;
+          if (existingRecord) {
+            childRecord = existingRecord;
+          } else {
+            const parentAgent = await api.agent(context);
+            const policySnapshot = getPolicy();
+            const availableModels = policySnapshot.policy.mode === "configured" ? await api.models.getAvailable() : [];
+            const resolved = resolveSubagentModelConfiguration(
+              policySnapshot,
+              {
+                model: normalizeModelReference(parentAgent?.model),
+                thinkingLevel: parentAgent?.thinkingLevel ?? "off"
+              },
+              availableModels
+            );
+            childRecord = await api.commit(async (tx) => {
+              const state = await tx.doc(SubagentsDoc, api.conversationId);
+              if (state?.agents?.[key]) {
+                return state.agents[key];
+              }
+              const existingAnchorId = state?.agents?.[key]?.anchorTaskId;
+              let existingConv = (await tx.scanConversations({ ownerTaskId: api.taskId }, 1)).items[0];
+              if (!existingConv && existingAnchorId !== void 0) {
+                existingConv = (await tx.scanConversations({ ownerTaskId: existingAnchorId }, 1)).items[0];
+              }
+              let childId = existingConv?.id ?? state?.agents?.[key]?.conversationId;
+              let anchorId = existingAnchorId;
+              if (childId === void 0) {
+                if (isBackground) {
+                  anchorId = await tx.createTask(Anchor, null, BACKGROUND);
+                }
+                const ownership = isBackground && anchorId !== void 0 ? { kind: "task", taskId: anchorId } : { kind: "task", taskId: api.taskId };
+                const created = await tx.createConversation({ ownership });
+                await configure(tx, created.id, {
+                  model: resolved.model,
+                  thinkingLevel: resolved.thinkingLevel,
+                  instructions: buildTechnicalWorkerRole()
+                });
+                childId = created.id;
+              }
+              const record = {
+                name: args2.task.trim(),
+                conversationId: childId,
+                requestId,
+                task: args2.task,
+                role: "worker",
+                ownerTaskId: api.taskId,
+                ...anchorId !== void 0 ? { anchorTaskId: anchorId } : {},
+                background: isBackground,
+                actualModel: resolved.model,
+                thinkingLevel: resolved.thinkingLevel,
+                source: resolved.source,
+                policyRevision: resolved.policyRevision
+              };
+              if (isBackground) {
+                record.reporter = await tx.createTask(
+                  DefaultReporter,
+                  { key, conversationId: childId, task: args2.task, requestId },
+                  BACKGROUND
+                );
+              }
+              if (state) {
+                state.agents ??= {};
+                state.agents[key] = record;
+              }
+              return record;
+            }, context);
+          }
+          const detailsPayload = {
+            conversationId: childRecord.conversationId,
+            task: args2.task,
+            background: isBackground
+          };
+          if (childRecord.actualModel) {
+            detailsPayload.actualModel = childRecord.actualModel;
+          }
+          if (childRecord.thinkingLevel) {
+            detailsPayload.thinkingLevel = childRecord.thinkingLevel;
+          }
+          if (childRecord.source) {
+            detailsPayload.source = childRecord.source;
+          }
+          if (childRecord.policyRevision !== void 0) {
+            detailsPayload.policyRevision = childRecord.policyRevision;
+          }
+          await api.details(detailsPayload, context);
+          if (isBackground) {
+            return {
+              output: [
+                {
+                  type: "text",
+                  text: `Subagent spawned in background (conversation ${childRecord.conversationId}). The task is running independently and will report upon completion.`
+                }
+              ],
+              details: detailsPayload
+            };
+          }
+          const handle = await api.conversation(childRecord.conversationId, context);
+          if (!handle) throw new Error(`Failed to access subagent conversation: ${childRecord.conversationId}`);
+          const submission = await handle.submit({ type: "input", content: args2.task, requestId }, context);
+          const settled = await submission.wait(context);
+          if (settled.status !== "done" || settled.type !== "input") {
+            throw new Error(`Subagent ${childRecord.conversationId} failed: ${settled.status}`);
+          }
+          const text = await answerText(api, settled.answer, context);
+          await api.commit(async (tx) => {
+            const state = await tx.doc(SubagentsDoc, api.conversationId);
+            if (state?.agents?.[key]) {
+              state.agents[key].settled = true;
+              state.agents[key].report = text;
+            }
+          }, context);
+          return {
+            output: [{ type: "text", text }],
+            details: detailsPayload
+          };
+        }
+      })
+    ]
+  });
+}
+
+// src/runner/plugins/built-in/subagents.ts
+var subagentsPlugin = {
+  id: "subagents",
+  name: "Subagents",
+  category: "built-in",
+  version: "1.0.0",
+  register(ctx) {
+    if (!ctx.registry) return;
+    if (typeof ctx.getSubagentPolicy === "function") {
+      ctx.registry.install(createSubagentExtension(ctx.getSubagentPolicy));
+    }
+    ctx.registry.install(Anchor);
+    ctx.registry.install(DefaultCourier);
+    ctx.registry.install(DefaultReporter);
+  },
+  teardown() {
+  }
+};
+
+// src/runner/harness-setup.ts
+function configureHarnessHttp(settingsManager) {
+  const proxy = settingsManager.getGlobalSettings()?.httpProxy?.trim();
+  if (proxy) {
+    process.env.HTTP_PROXY ??= proxy;
+    process.env.HTTPS_PROXY ??= proxy;
+  }
+}
+function createHarnessSettings(settingsManager, getActiveModel) {
+  return {
+    get stream() {
+      const provider = settingsManager.getProviderRetrySettings?.() ?? {};
+      const idle = settingsManager.getHttpIdleTimeoutMs?.() ?? 3e5;
+      return {
+        timeoutMs: provider.timeoutMs ?? (idle === 0 ? 2147483647 : idle),
+        maxRetryDelayMs: provider.maxRetryDelayMs,
+        ...provider.maxRetries === void 0 ? {} : { maxRetries: provider.maxRetries }
+      };
+    },
+    get compaction() {
+      const active = getActiveModel?.();
+      const model = active ? { provider: active.provider, id: active.modelId } : (() => {
+        const p = settingsManager.getDefaultProvider();
+        const m = settingsManager.getDefaultModel();
+        return p && m ? { provider: p, id: m } : void 0;
+      })();
+      return settingsManager.getCompactionSettings?.(model) ?? {};
+    },
+    get retry() {
+      return settingsManager.getRetrySettings?.() ?? {};
+    },
+    get steeringMode() {
+      return settingsManager.getSteeringMode?.() ?? "immediate";
+    },
+    get followUpMode() {
+      return settingsManager.getFollowUpMode?.() ?? "queue";
+    }
+  };
+}
+async function createCodingRegistry(settingsManager, cwd, getSubagentPolicy, promptOptions, dynamicNamespaces, customPlugins = []) {
+  const registry = createRegistry();
+  const pluginRegistry = new DurablePluginRegistry();
+  pluginRegistry.register(codingToolsPlugin);
+  pluginRegistry.register(codemodePlugin);
+  pluginRegistry.register(subagentsPlugin);
+  for (const plugin of customPlugins) {
+    pluginRegistry.register(plugin);
+  }
+  const ctx = {
+    registry,
+    settingsManager,
+    cwd,
+    storageDir: cwd,
+    getSubagentPolicy,
+    prompt: promptOptions,
+    dynamicNamespaces
+  };
+  await pluginRegistry.initAll(ctx);
+  registry.install(createToolSearchExtension());
+  registry.install(createPiPrompt(settingsManager, cwd, promptOptions));
+  return Object.assign(registry, { pluginRegistry });
+}
+var ExecutionEnvs = class {
+  #defaultCwd;
+  #envs = /* @__PURE__ */ new Map();
+  constructor(defaultCwd) {
+    this.#defaultCwd = defaultCwd;
+  }
+  env = ({ cwd = this.#defaultCwd }) => {
+    let env = this.#envs.get(cwd);
+    if (env === void 0) {
+      env = new NodeExecutionEnv({ cwd });
+      this.#envs.set(cwd, env);
+    }
+    return env;
+  };
+  async cleanup(context) {
+    const envs = [...this.#envs.values()];
+    this.#envs.clear();
+    for (const env of envs) await env.cleanup(context);
+  }
+};
+async function findInitialAgentModel(settingsManager, modelRuntime, cli) {
+  if (cli?.model !== void 0) {
+    const resolved = resolveCliModel({ cliProvider: cli.provider, cliModel: cli.model, modelRuntime });
+    if (resolved.error !== void 0 || resolved.model === void 0) {
+      throw new Error(`Could not resolve model: ${resolved.error ?? cli.model}`);
+    }
+    return {
+      model: { provider: resolved.model.provider, modelId: resolved.model.id },
+      thinkingLevel: cli.thinking ?? resolved.thinkingLevel ?? "off"
+    };
+  }
+  const defaultProvider = settingsManager.getDefaultProvider?.();
+  const defaultModelId = settingsManager.getDefaultModel?.();
+  const defaultThinkingLevel = settingsManager.getDefaultThinkingLevel?.();
+  if (defaultProvider && defaultModelId) {
+    const models = modelRuntime.getAvailableSnapshot();
+    const matched = models.find((m) => m.provider === defaultProvider && m.id === defaultModelId);
+    if (matched) {
+      return {
+        model: { provider: matched.provider, modelId: matched.id },
+        thinkingLevel: defaultThinkingLevel ?? "off"
+      };
+    }
+  }
+  const available = modelRuntime.getAvailableSnapshot();
+  if (available.length > 0) {
+    return {
+      model: { provider: available[0].provider, modelId: available[0].id },
+      thinkingLevel: "off"
+    };
+  }
+  return {};
+}
+
+// src/runner/session-storage.ts
+import { execFileSync } from "node:child_process";
+import { createHash, randomUUID } from "node:crypto";
+import { mkdir, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { basename, join as join2, resolve as resolve2 } from "node:path";
+import lockfile from "proper-lockfile";
+
+// src/shared/agent-dir.ts
+import { homedir } from "node:os";
+import { join, resolve } from "node:path";
+function getAgentDir(env = process.env) {
+  const override = env.PI_AGENT_DIR?.trim() || env.PI_CODING_AGENT_DIR?.trim();
+  if (override && override.length > 0) return resolve(override);
+  return join(homedir(), ".pi", "agent");
+}
+
+// src/runner/session-storage.ts
+function isProcessAlive(pid) {
+  if (!pid || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return err.code === "EPERM";
+  }
+}
+function isVerifiedRunnerProcess(owner) {
+  if (!isProcessAlive(owner.pid)) return false;
+  try {
+    const output2 = execFileSync("ps", ["-p", String(owner.pid), "-o", "command="], {
+      encoding: "utf8",
+      timeout: 1e3,
+      stdio: ["ignore", "pipe", "ignore"]
+    }).trim();
+    return output2.includes("node") || output2.includes("runner") || output2.includes("durable") || output2.includes("bb");
+  } catch {
+    return false;
+  }
+}
+function logUnexpectedErr(err, allowedCode, context) {
+  if (err?.code !== allowedCode) {
+    console.warn(`[SessionStorage] ${context}: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+async function writeOwnerFile(directory, owner) {
+  await writeFile(join2(directory, "session.owner.json"), JSON.stringify(owner, null, 2), "utf8");
+}
+async function readOwnerFile(directory) {
+  try {
+    const content = await readFile(join2(directory, "session.owner.json"), "utf8");
+    return JSON.parse(content);
+  } catch (err) {
+    logUnexpectedErr(err, "ENOENT", `Corrupted or unreadable session.owner.json in ${directory}`);
+    return null;
+  }
+}
+async function removeOwnerFile(directory) {
+  await rm(join2(directory, "session.owner.json"), { force: true }).catch(
+    (err) => logUnexpectedErr(err, "ENOENT", `Failed to remove owner file in ${directory}`)
+  );
+}
+async function forceUnlock(directory) {
+  await lockfile.unlock(directory, { realpath: false }).catch(
+    (err) => logUnexpectedErr(err, "ENOENT", `unlock warning for ${directory}`)
+  );
+  await rm(`${directory}.lock`, { recursive: true, force: true }).catch(
+    (err) => logUnexpectedErr(err, "ENOENT", `lockfile cleanup warning for ${directory}`)
+  );
+}
+async function acquireSessionLock(directory, cwd, id) {
+  const lockOpts = { realpath: false, retries: { retries: 2, minTimeout: 100, maxTimeout: 200 } };
+  let rawRelease;
+  try {
+    rawRelease = await lockfile.lock(directory, lockOpts);
+  } catch (initialErr) {
+    let owner = await readOwnerFile(directory);
+    if (!owner) {
+      await new Promise((r) => setTimeout(r, 100));
+      owner = await readOwnerFile(directory);
+    }
+    if (!owner) {
+      throw new Error(`Session is already open in another process: ${directory}`, { cause: initialErr });
+    }
+    const isAlive = isProcessAlive(owner.pid);
+    const isRunner = isAlive && isVerifiedRunnerProcess(owner);
+    if (!isAlive || !isRunner) {
+      await forceUnlock(directory);
+      await removeOwnerFile(directory);
+      try {
+        rawRelease = await lockfile.lock(directory, lockOpts);
+      } catch (retryErr) {
+        throw new DurableStorageError(`Session is already open in another process (PID: ${owner.pid}): ${directory}`, retryErr);
+      }
+    } else {
+      throw new DurableStorageError(
+        `Session is already open in another live process (PID: ${owner.pid}): ${directory}`,
+        initialErr
+      );
+    }
+  }
+  await writeOwnerFile(directory, { pid: process.pid, id, cwd, startedAt: Date.now() });
+  let released = false;
+  return async () => {
+    if (released) return;
+    released = true;
+    try {
+      await removeOwnerFile(directory);
+    } finally {
+      await rawRelease();
+    }
+  };
+}
+async function selectSession(cwdInput, continueSession, targetSession) {
+  const cwd = await realpath(resolve2(cwdInput));
+  const root = join2(getAgentDir(), "experimental", "durable-sessions", createHash("sha256").update(cwd).digest("hex").slice(0, 24));
+  await mkdir(root, { recursive: true });
+  let directory;
+  let created = false;
+  if (targetSession) {
+    const clean = targetSession.endsWith(".sqlite") ? resolve2(targetSession, "..") : targetSession;
+    directory = clean.includes("/") || clean.includes("\\") ? resolve2(clean) : join2(root, clean);
+    try {
+      await mkdir(directory, { recursive: true });
+      const entries = await readdir(directory);
+      if (!entries.includes("session.sqlite")) {
+        created = true;
+      }
+    } catch (err) {
+      logUnexpectedErr(err, "ENOENT", `Directory inspection failed in ${directory}`);
+    }
+  } else if (continueSession) {
+    const entries = await readdir(root, { withFileTypes: true });
+    const newest = entries.filter((entry) => entry.isDirectory() && /^\d{13}-[0-9a-f-]{36}$/u.test(entry.name)).map((entry) => entry.name).sort().at(-1);
+    if (!newest) throw new Error(`No durable session exists for ${cwd}`);
+    directory = join2(root, newest);
+  } else {
+    directory = join2(root, `${String(Date.now()).padStart(13, "0")}-${randomUUID()}`);
+    await mkdir(directory);
+    created = true;
+  }
+  const id = basename(directory);
+  const release = await acquireSessionLock(directory, cwd, id);
+  return { id, directory, database: join2(directory, "session.sqlite"), cwd, created, release };
+}
+
+// src/runner/runtime-types.ts
+import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
+import {
+  ROOT_CONVERSATION_ID
+} from "@earendil-works/pi-durable";
+var runtimeContext = BACKGROUND_CONTEXT;
+function agentOf(view) {
+  return view.docs["pi.agent"] ?? {};
+}
+function titleOf(entry) {
+  const message = entry?.model?.[0];
+  if (message?.role !== "user") return {};
+  const text = typeof message.content === "string" ? message.content : message.content.flatMap((block) => block.type === "text" ? [block.text] : []).join(" ");
+  return { title: text.replace(/\s+/g, " ").trim() };
+}
+async function firstInput(harness, id) {
+  if (id === ROOT_CONVERSATION_ID) return {};
+  const conversation = await harness.conversation(id, runtimeContext);
+  let first;
+  let cursor;
+  do {
+    const page = await conversation.entries({}, 256, cursor, runtimeContext);
+    first = [...page.items].reverse().find((entry) => entry.kind === "pi.user") ?? first;
+    cursor = page.next;
+  } while (cursor !== void 0);
+  return titleOf(first);
+}
+
+// src/runner/compaction-hooks.ts
+var CompactionSideEffectError = class extends Error {
+  code;
+  operation;
+  constructor(operation, cause) {
+    const code = operation === "compact_context" ? "CONTEXT_RETRIEVAL_FAILED" : "COMPACTION_HOOK_FAILED";
+    super(`${operation} failed (${code})`, { cause });
+    this.name = "CompactionSideEffectError";
+    this.operation = operation;
+    this.code = code;
+  }
+};
+async function runCompactionSideEffect(operation, action, notice) {
+  try {
+    return { status: "succeeded", value: await action() };
+  } catch (cause) {
+    const error = new CompactionSideEffectError(operation, cause);
+    notice("warning", error.message);
+    return { status: "failed", error };
+  }
+}
+
+// src/runner/runtime-controller.ts
+import { clampThinkingLevel, getSupportedThinkingLevels as getSupportedThinkingLevels2 } from "@earendil-works/pi-ai";
+
+// src/runner/runtime-hydration.ts
+function hydrateSessionActiveTools(rootAgent, activeEnvState) {
+  if (Array.isArray(rootAgent.tools)) {
+    activeEnvState.setActiveTools?.(rootAgent.tools.map((t) => t.name));
+  }
+}
+async function createConversationBinding(conversation, ctx = runtimeContext) {
+  if (typeof conversation.viewState === "function") {
+    return conversation.viewState(ctx);
+  }
+  const watch2 = await conversation.watch(ctx);
+  let currentVal = watch2.value;
+  const subscribers = /* @__PURE__ */ new Set();
+  watch2.start(async ({ value }) => {
+    currentVal = value;
+    for (const sub of subscribers) sub(value);
+  });
+  return {
+    get value() {
+      return currentVal;
+    },
+    subscribe(listener) {
+      subscribers.add(listener);
+      return () => subscribers.delete(listener);
+    },
+    dispose() {
+      void watch2.stop(ctx);
+    }
+  };
+}
+async function createTaskGraphBinding(harness, ctx = runtimeContext) {
+  if (typeof harness.taskGraph === "function") {
+    return harness.taskGraph(ctx);
+  }
+  const watch2 = await harness.watchTaskGraph(ctx);
+  let currentVal = watch2.value;
+  const subscribers = /* @__PURE__ */ new Set();
+  watch2.start(async ({ value }) => {
+    currentVal = value;
+    for (const sub of subscribers) sub(value);
+  });
+  return {
+    get value() {
+      return currentVal;
+    },
+    subscribe(listener) {
+      subscribers.add(listener);
+      return () => subscribers.delete(listener);
+    },
+    dispose() {
+      void watch2.stop(ctx);
+    }
+  };
+}
+async function loadSummaries(harness, rootId) {
+  const summaries = [];
+  let cursor;
+  do {
+    const page = await harness.commit((tx) => tx.scanConversations({}, 256, cursor), runtimeContext);
+    for (const { id } of page.items) summaries.push({ id, label: id === rootId ? "main" : `subagent ${id}`, ...await firstInput(harness, id) });
+    cursor = page.next;
+  } while (cursor !== void 0);
+  return summaries;
+}
+
+// src/runner/runtime-controller.ts
+function createDurableController(ctx) {
+  let queue = Promise.resolve();
+  const command = (operation) => {
+    queue = queue.then(operation).catch(ctx.fail);
+    return queue;
+  };
+  const watchAnswer = (submission) => {
+    void submission.wait(runtimeContext).then(async (settled) => {
+      if (settled.status === "unanswered" && settled.reason !== "aborted") {
+        ctx.notice(
+          "error",
+          `No answer: ${settled.reason}${settled.detail === void 0 ? "" : ` ${JSON.stringify(settled.detail)}`}`
+        );
+      }
+      if (ctx.extensionRunner) {
+        try {
+          await ctx.extensionRunner.emit({ type: "agent_end", messages: [] });
+          await ctx.extensionRunner.emit({ type: "agent_settled", aborted: settled.status === "unanswered" && settled.reason === "aborted" });
+        } catch (err) {
+          ctx.notice("warning", `agent lifecycle hook error: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
+    }, ctx.fail);
+  };
+  const agentModel = () => {
+    const ref = agentOf(ctx.getState().conversation).model;
+    const model = ref === void 0 ? void 0 : ctx.modelRuntime.getModel(ref.provider, ref.modelId);
+    if (model === void 0) {
+      throw new Error(ref === void 0 ? "No model selected" : "Current model is unavailable");
+    }
+    return model;
+  };
+  return {
+    submit: (input, whenBusy) => command(async () => {
+      const isStr = typeof input === "string";
+      const prompt = isStr ? input : input.filter((c) => c.type === "text").map((c) => c.text).join("\n");
+      const images = isStr ? void 0 : input.filter((c) => c.type === "image");
+      if (ctx.extensionRunner) {
+        try {
+          const currentAgent = await ctx.bindings.current.agent(runtimeContext);
+          const activeTools = currentAgent.tools.map((t) => t.name);
+          const hookRes = await ctx.extensionRunner.emitBeforeAgentStart(
+            { messageType: "user", prompt, images: images?.length ? images : void 0 },
+            {
+              cwd: ctx.cwd ?? process.cwd(),
+              selectedTools: activeTools,
+              sections: ctx.dynamicSections?.getSections() ?? {}
+            }
+          );
+          if (hookRes?.systemPromptOptions?.sections && ctx.dynamicSections) {
+            ctx.dynamicSections.updateSections(hookRes.systemPromptOptions.sections);
+          }
+          const selectedTools = hookRes?.systemPromptOptions?.selectedTools;
+          const handlerEdited = selectedTools && (selectedTools.length !== activeTools.length || selectedTools.some((name, i) => name !== activeTools[i]));
+          const nextActiveTools = handlerEdited ? selectedTools : ctx.getActiveTools?.() ?? ctx.extensionRunner?.getActiveTools?.() ?? activeTools;
+          if (handlerEdited && ctx.setActiveTools) ctx.setActiveTools(selectedTools);
+          if (nextActiveTools && (nextActiveTools.length !== activeTools.length || nextActiveTools.some((name, i) => name !== activeTools[i]))) {
+            await ctx.bindings.current.configure({ modelTools: nextActiveTools.map((name) => ({ name })) }, runtimeContext);
+          }
+        } catch (err) {
+          ctx.notice(
+            "warning",
+            `before_agent_start error: ${err instanceof Error ? err.message : String(err)}`
+          );
+        }
+      }
+      return watchAnswer(await ctx.bindings.current.submit({ type: "input", content: input, whenBusy }, runtimeContext));
+    }),
+    compact: (instructions) => command(async () => {
+      const extensionRunner = ctx.extensionRunner;
+      if (extensionRunner) {
+        const context = await runCompactionSideEffect("compact_context", () => ctx.bindings.current.context(runtimeContext), ctx.notice);
+        if (context.status === "succeeded") {
+          const ctxView = context.value;
+          const msgs = [...ctxView.messages], entries = [...ctxView.entries];
+          await runCompactionSideEffect("session_before_compact", () => extensionRunner.emit({
+            type: "session_before_compact",
+            preparation: { firstKeptEntryId: ctxView.head?.id !== void 0 ? String(ctxView.head.id) : "", messagesToSummarize: msgs, turnPrefixMessages: [], isSplitTurn: false, tokensBefore: 0, fileOps: { read: /* @__PURE__ */ new Set(), written: /* @__PURE__ */ new Set(), edited: /* @__PURE__ */ new Set() }, settings: {} },
+            branchEntries: entries,
+            customInstructions: instructions,
+            reason: "manual",
+            willRetry: false,
+            signal: new AbortController().signal
+          }), ctx.notice);
+        }
+      }
+      const id = await ctx.bindings.current.compact(instructions, runtimeContext);
+      void ctx.opened.waitForTask(id, runtimeContext).then(async (receipt) => {
+        const outcome = receipt.state.outcome;
+        if (outcome.status === "completed") {
+          if (extensionRunner) {
+            void runCompactionSideEffect("session_compact", () => extensionRunner.emit({
+              type: "session_compact",
+              compactionEntry: { id: outcome.result?.entryId ?? "", type: "compaction", summary: "", tokensBefore: 0, tokensAfter: 0 },
+              fromExtension: false,
+              reason: "manual",
+              willRetry: false
+            }), ctx.notice).catch(ctx.fail);
+          }
+          const { entryId, submissionId } = outcome.result;
+          const status = submissionId === void 0 ? void 0 : (await (await ctx.opened.submission(submissionId, runtimeContext))?.status(runtimeContext))?.status;
+          const msg = entryId !== void 0 || status === "done" ? "Compacted." : status === "queued" ? "Compaction summary queued; it is placed at the next turn boundary." : status === "unanswered" ? "Compaction summary dropped: the context changed under it." : "Nothing to compact: the context fits in the recent window that is kept verbatim.";
+          ctx.notice("info", msg);
+        } else if (outcome.status === "aborted") {
+          ctx.notice("info", "Compaction aborted.");
+        } else {
+          ctx.notice("error", `Compaction ${outcome.status}: ${outcome.error?.message ?? outcome.reason ?? ""}`);
+        }
+      }).catch(ctx.fail);
+    }),
+    abort: () => command(async () => {
+      await ctx.bindings.current.abort(runtimeContext, { background: true });
+      const childConversationIds = [];
+      await ctx.bindings.current.commit(async (tx) => {
+        const doc = await tx.doc(SubagentsDoc, ctx.bindings.current.id);
+        for (const agent of Object.values(doc?.agents ?? {})) {
+          if (!agent.settled && agent.conversationId) {
+            childConversationIds.push(agent.conversationId);
+          }
+        }
+      }, runtimeContext).catch((err) => {
+        ctx.notice("warning", `Cascade abort read error: ${err}`);
+      });
+      for (const childId of childConversationIds) {
+        const child = await ctx.opened.conversation(childId, runtimeContext).catch((err) => {
+          ctx.notice("warning", `Failed to access subagent: ${err}`);
+          return void 0;
+        });
+        if (child) {
+          await child.abort(runtimeContext, { background: true }).catch((err) => {
+            ctx.notice("warning", `Failed to abort subagent: ${err}`);
+          });
+        }
+      }
+    }),
+    cycleThinking: () => command(async () => {
+      const model = agentModel();
+      if (!model.reasoning) throw new Error("Current model does not support thinking");
+      const levels = getSupportedThinkingLevels2(model), level = agentOf(ctx.getState().conversation).thinkingLevel ?? "off";
+      await ctx.bindings.current.configure({ thinkingLevel: levels[(levels.indexOf(level) + 1) % levels.length] ?? "off" }, runtimeContext);
+    }),
+    setThinkingLevel: (targetLevel) => command(async () => {
+      const model = agentModel();
+      if (!model.reasoning) {
+        if (targetLevel === "off" || targetLevel === "none") {
+          return void await ctx.bindings.current.configure({ thinkingLevel: "off" }, runtimeContext);
+        }
+        throw new Error("Current model does not support thinking");
+      }
+      await ctx.bindings.current.configure({ thinkingLevel: clampThinkingLevel(model, targetLevel) }, runtimeContext);
+    }),
+    setModel: (ref) => command(async () => {
+      const model = ctx.modelRuntime.getModel(ref.provider, ref.modelId);
+      if (model === void 0) throw new Error(`Unknown model: ${ref.provider}/${ref.modelId}`);
+      ctx.setActiveModelRef(ref);
+      const thinking = agentOf(ctx.getState().conversation).thinkingLevel ?? "off";
+      await ctx.bindings.current.configure({ model: ref, thinkingLevel: clampThinkingLevel(model, thinking) }, runtimeContext);
+    }),
+    toggleTasks: () => command(async () => {
+      if (ctx.bindings.tasksOpen) return ctx.bindings.closeTasks();
+      ctx.bindings.attachTasks(await createTaskGraphBinding(ctx.opened, runtimeContext));
+    }),
+    switchConversation: (id) => command(async () => {
+      const next = await ctx.opened.conversation(id, runtimeContext);
+      if (next === void 0) throw new Error(`Conversation ${id} does not exist`);
+      ctx.bindings.bindConversation(next, await createConversationBinding(next, runtimeContext));
+    })
+  };
+}
+
+// src/runner/runtime-bindings.ts
+var RuntimeBindings = class {
+  conversation;
+  view;
+  unsubscribe;
+  tasks;
+  unsubscribeTasks;
+  epoch = 0;
+  taskEpoch = 0;
+  closed = false;
+  update;
+  constructor(conversation, view, update) {
+    this.conversation = conversation;
+    this.view = view;
+    this.update = update;
+    try {
+      this.unsubscribe = view.subscribe((value) => {
+        if (!this.closed && this.epoch === 0) this.update({ conversation: value });
+      });
+    } catch (cause) {
+      try {
+        view.dispose();
+      } catch (cleanup) {
+        throw new AggregateError([cause, cleanup], "SUBSCRIBE_FAILED");
+      }
+      throw new Error("SUBSCRIBE_FAILED", { cause });
+    }
+  }
+  get current() {
+    return this.conversation;
+  }
+  get tasksOpen() {
+    return this.tasks !== void 0;
+  }
+  bindConversation(conversation, view) {
+    if (this.closed) {
+      view.dispose();
+      throw new Error("BINDING_CLOSED");
+    }
+    if (this.view === view) return;
+    const epoch = this.epoch + 1;
+    let unsubscribe;
+    try {
+      unsubscribe = view.subscribe((value) => {
+        if (!this.closed && this.epoch === epoch) this.update({ conversation: value });
+      });
+    } catch (cause) {
+      view.dispose();
+      throw new Error("SUBSCRIBE_FAILED", { cause });
+    }
+    const previous = this.view, previousUnsubscribe = this.unsubscribe;
+    this.view = view;
+    this.conversation = conversation;
+    this.unsubscribe = unsubscribe;
+    this.epoch = epoch;
+    try {
+      previousUnsubscribe();
+    } finally {
+      previous.dispose();
+    }
+    this.update({ conversation: view.value });
+  }
+  attachTasks(view) {
+    if (this.closed) {
+      view.dispose();
+      throw new Error("BINDING_CLOSED");
+    }
+    if (this.tasks === view) return;
+    const epoch = this.taskEpoch + 1;
+    let unsubscribe;
+    try {
+      unsubscribe = view.subscribe((value) => {
+        if (!this.closed && this.taskEpoch === epoch) this.update({ tasks: value });
+      });
+    } catch (cause) {
+      view.dispose();
+      throw new Error("SUBSCRIBE_FAILED", { cause });
+    }
+    const previous = this.tasks, previousUnsubscribe = this.unsubscribeTasks;
+    this.tasks = view;
+    this.unsubscribeTasks = unsubscribe;
+    this.taskEpoch = epoch;
+    try {
+      previousUnsubscribe?.();
+    } finally {
+      previous?.dispose();
+    }
+    this.update({ tasks: view.value });
+  }
+  closeTasks() {
+    if (!this.tasks) return;
+    this.taskEpoch++;
+    const previous = this.tasks, unsubscribe = this.unsubscribeTasks;
+    this.tasks = void 0;
+    this.unsubscribeTasks = void 0;
+    try {
+      unsubscribe?.();
+    } finally {
+      previous.dispose();
+    }
+    if (!this.closed) this.update({ tasks: void 0 });
+  }
+  close() {
+    if (this.closed) return;
+    this.closed = true;
+    this.epoch++;
+    try {
+      this.unsubscribe();
+    } finally {
+      try {
+        this.view.dispose();
+      } finally {
+        this.closeTasks();
+      }
+    }
+  }
+};
+
+// src/runner/runtime-cleanup.ts
+async function closeRuntimeResources(operations) {
+  const failures = [];
+  for (const operation of operations) {
+    try {
+      await operation();
+    } catch (cause) {
+      failures.push(cause);
+    }
+  }
+  if (failures.length) throw new AggregateError(failures, "RUNTIME_CLEANUP_FAILED");
+}
+
+// src/runner/runtime-loader.ts
+import {
+  DefaultResourceLoader,
+  ModelRuntime,
+  SettingsManager,
+  initTheme
+} from "@earendil-works/pi-coding-agent";
+
+// src/shared/extension-runner.ts
+import {
+  createMcpExtension,
+  ExtensionRunner,
+  ModelRegistry,
+  SessionManager
+} from "@earendil-works/pi-coding-agent";
+
+// src/shared/extension-ui-context.ts
+function createExtensionUIContext(onNotice, requestInteraction2) {
+  return {
+    select: async (title, options, dialogOptions) => {
+      if (requestInteraction2) {
+        const res = await requestInteraction2("select", { title, data: { options, dialogOptions } });
+        if (typeof res === "string") return res;
+        if (res && typeof res === "object" && "selected" in res) return res.selected;
+      }
+      return void 0;
+    },
+    confirm: async (title, message, dialogOptions) => {
+      if (requestInteraction2) {
+        const res = await requestInteraction2("confirm", { title, message, data: { dialogOptions } });
+        if (typeof res === "boolean") return res;
+        if (res && typeof res === "object" && "confirmed" in res) return Boolean(res.confirmed);
+      }
+      return false;
+    },
+    input: async (title, placeholder, dialogOptions) => {
+      if (requestInteraction2) {
+        const res = await requestInteraction2("input", { title, data: { placeholder, dialogOptions } });
+        if (typeof res === "string") return res;
+        if (res && typeof res === "object" && "value" in res) return res.value;
+      }
+      return void 0;
+    },
+    notify: (message, type = "info") => {
+      onNotice?.(type, message);
+    },
+    onTerminalInput: () => () => {
+    },
+    setStatus: () => {
+    },
+    setWorkingMessage: () => {
+    },
+    setWorkingVisible: () => {
+    },
+    setWorkingIndicator: () => {
+    },
+    setHiddenThinkingLabel: () => {
+    },
+    setWidget: () => {
+    },
+    setFooter: () => {
+    },
+    setHeader: () => {
+    },
+    setTitle: () => {
+    },
+    custom: async () => void 0,
+    pasteToEditor: () => {
+    },
+    setEditorText: () => {
+    },
+    getEditorText: () => "",
+    editor: async (title, content, dialogOptions) => {
+      if (requestInteraction2) {
+        const res = await requestInteraction2("editor", { title, data: { content, dialogOptions } });
+        if (typeof res === "string") return res;
+        if (res && typeof res === "object" && "content" in res) return res.content;
+      }
+      return void 0;
+    },
+    addAutocompleteProvider: () => {
+    },
+    setEditorComponent: () => {
+    },
+    getEditorComponent: () => void 0,
+    theme: {},
+    getAllThemes: () => [],
+    getTheme: () => void 0,
+    setTheme: () => ({ success: true }),
+    getToolsExpanded: () => false,
+    setToolsExpanded: () => {
+    }
+  };
+}
+
+// src/shared/extension-runner.ts
+function createStandardExtensionFactories() {
+  return [createMcpExtension()];
+}
+function createExtensionActions(options, initialActiveTools = []) {
+  let activeToolNames = [...initialActiveTools];
+  let sessionName;
+  const sendMessage = (message, sendOptions) => {
+    if (sendOptions?.triggerTurn && message?.content) {
+      const text = typeof message.content === "string" ? message.content : JSON.stringify(message.content);
+      void options.onSubmitUserMessage?.(text, sendOptions.deliverAs === "steer" ? "steer" : "followUp");
+    }
+  };
+  const sendUserMessage = (content, sendOptions) => {
+    void options.onSubmitUserMessage?.(content, sendOptions?.deliverAs);
+  };
+  return {
+    getActiveTools: () => activeToolNames,
+    getAllTools: () => {
+      const map = /* @__PURE__ */ new Map();
+      if (options.getCallableTools) {
+        for (const t of options.getCallableTools()) {
+          map.set(t.name, {
+            name: t.name,
+            description: t.description,
+            parameters: t.parameters,
+            exposure: "direct",
+            reachesTools: t.name === "codemode" || t.name === "tool_search"
+          });
+        }
+      }
+      if (options.getRegisteredTools) {
+        for (const t of options.getRegisteredTools()) {
+          map.set(t.definition.name, {
+            name: t.definition.name,
+            description: t.definition.description,
+            parameters: t.definition.parameters,
+            promptGuidelines: t.definition.promptGuidelines,
+            exposure: t.definition.exposure ?? "direct",
+            namespace: t.definition.namespace,
+            annotations: t.definition.annotations,
+            sourceInfo: t.sourceInfo
+          });
+        }
+      }
+      return Array.from(map.values());
+    },
+    getSettings: () => ({
+      ...options.settingsManager?.getGlobalSettings() ?? {},
+      ...options.settingsManager?.getProjectSettings() ?? {}
+    }),
+    setActiveTools: (toolNames) => {
+      activeToolNames = [...toolNames];
+      options.onActiveToolsChanged?.(activeToolNames);
+    },
+    refreshTools: () => {
+      options.onToolsChanged?.();
+    },
+    getThinkingLevel: () => options.settingsManager?.getDefaultThinkingLevel?.() ?? "high",
+    setThinkingLevel: () => {
+    },
+    setModel: async () => false,
+    getCommands: () => [],
+    sendMessage,
+    sendUserMessage,
+    appendEntry: (customType, data) => {
+      options.sessionManager?.appendCustomEntry(customType, data);
+    },
+    setSessionName: (name) => {
+      sessionName = name;
+    },
+    getSessionName: () => sessionName,
+    setLabel: () => {
+    }
+  };
+}
+async function setupExtensionRunner(options) {
+  const sessionManager = SessionManager.create(options.cwd);
+  const modelRegistry = new ModelRegistry(options.modelRuntime);
+  const runner = new ExtensionRunner(options.extensions, options.runtime, options.cwd, sessionManager, modelRegistry);
+  runner.setUIContext(createExtensionUIContext(options.onNotice, options.requestInteraction));
+  const initialActive = options.initialActiveTools ? [...options.initialActiveTools] : options.getCallableTools ? options.getCallableTools().map((t) => t.name) : [];
+  const actions = createExtensionActions({
+    getRegisteredTools: () => runner.getAllRegisteredTools(),
+    getCallableTools: options.getCallableTools,
+    settingsManager: options.settingsManager,
+    onActiveToolsChanged: options.onActiveToolsChanged,
+    onToolsChanged: options.onToolsChanged,
+    sessionManager,
+    onSubmitUserMessage: options.onSubmitUserMessage
+  }, initialActive);
+  const contextActions = {
+    getModel: () => {
+      const active = options.settingsManager?.getDefaultModel?.();
+      const provider = options.settingsManager?.getDefaultProvider?.();
+      if (active && provider) {
+        const found = options.modelRuntime.getModel(provider, active);
+        if (found) return found;
+      }
+      return options.modelRuntime.getAvailableSnapshot()[0];
+    },
+    getScopedModels: () => options.modelRuntime.getAvailableSnapshot().map((model) => ({ model })),
+    isIdle: () => options.isIdle ? options.isIdle() : true,
+    isProjectTrusted: () => true,
+    getSignal: () => void 0,
+    abort: () => {
+      options.onAbort?.();
+    },
+    hasPendingMessages: () => false,
+    shutdown: () => {
+    },
+    getContextUsage: () => {
+      const u = options.getContextUsage?.();
+      if (!u) return void 0;
+      const pct = typeof u.tokens === "number" && u.contextWindow > 0 ? u.tokens / u.contextWindow * 100 : null;
+      return { tokens: u.tokens, contextWindow: u.contextWindow, percent: pct };
+    },
+    compact: (opts) => {
+      options.onCompact?.(typeof opts === "string" ? opts : opts?.customInstructions);
+    },
+    getSystemPrompt: () => "",
+    getSystemPromptOptions: () => ({ cwd: options.cwd }),
+    executeTool: (callerId, name, args2, opts) => options.executeToolFn(callerId, name, args2, opts),
+    getCallableTools: () => options.getCallableTools ? options.getCallableTools() : runner.getAllRegisteredTools().map((t) => ({
+      name: t.definition.name,
+      description: t.definition.description,
+      parameters: t.definition.parameters,
+      promptGuidelines: t.definition.promptGuidelines,
+      exposure: t.definition.exposure,
+      namespace: t.definition.namespace,
+      annotations: t.definition.annotations,
+      sourceInfo: t.sourceInfo
+    }))
+  };
+  runner.bindCore(actions, contextActions);
+  await runner.emit({ type: "session_start", reason: "startup" });
+  return runner;
+}
+
+// src/runner/tool-adapter.ts
+import {
+  createMcpExtension as createMcpExtension2
+} from "@earendil-works/pi-coding-agent";
+import {
+  defineExtension as defineExtension3,
+  defineTool as defineTool2
+} from "@earendil-works/pi-durable";
+
+// node_modules/typebox/build/schema/types/_refine.mjs
+function IsRefine2(value) {
+  return guard_exports.HasPropertyKey(value, "~refine") && guard_exports.IsArray(value["~refine"]) && guard_exports.Every(value["~refine"], 0, (value2) => guard_exports.IsObject(value2) && guard_exports.HasPropertyKey(value2, "check") && guard_exports.HasPropertyKey(value2, "error") && guard_exports.IsFunction(value2.check) && guard_exports.IsFunction(value2.error));
+}
+
+// node_modules/typebox/build/schema/types/schema.mjs
+function IsSchemaObject2(value) {
+  return guard_exports.IsObject(value) && !guard_exports.IsArray(value);
+}
+function IsSchemaBoolean(value) {
+  return guard_exports.IsBoolean(value);
+}
+function IsSchema2(value) {
+  return IsSchemaObject2(value) || IsSchemaBoolean(value);
+}
+
+// node_modules/typebox/build/schema/types/additionalItems.mjs
+function IsAdditionalItems(schema) {
+  return guard_exports.HasPropertyKey(schema, "additionalItems") && IsSchema2(schema.additionalItems);
+}
+
+// node_modules/typebox/build/schema/types/additionalProperties.mjs
+function IsAdditionalProperties(schema) {
+  return guard_exports.HasPropertyKey(schema, "additionalProperties") && IsSchema2(schema.additionalProperties);
+}
+
+// node_modules/typebox/build/schema/types/allOf.mjs
+function IsAllOf(schema) {
+  return guard_exports.HasPropertyKey(schema, "allOf") && guard_exports.IsArray(schema.allOf) && schema.allOf.every((value) => IsSchema2(value));
+}
+
+// node_modules/typebox/build/schema/types/anchor.mjs
+function IsAnchor(schema) {
+  return guard_exports.HasPropertyKey(schema, "$anchor") && guard_exports.IsString(schema.$anchor);
+}
+
+// node_modules/typebox/build/schema/types/anyOf.mjs
+function IsAnyOf(schema) {
+  return guard_exports.HasPropertyKey(schema, "anyOf") && guard_exports.IsArray(schema.anyOf) && schema.anyOf.every((value) => IsSchema2(value));
+}
+
+// node_modules/typebox/build/schema/types/const.mjs
+function IsConst(value) {
+  return guard_exports.HasPropertyKey(value, "const");
+}
+
+// node_modules/typebox/build/schema/types/contains.mjs
+function IsContains(schema) {
+  return guard_exports.HasPropertyKey(schema, "contains") && IsSchema2(schema.contains);
+}
+
+// node_modules/typebox/build/schema/types/default.mjs
+function IsDefault(schema) {
+  return guard_exports.HasPropertyKey(schema, "default");
+}
+
+// node_modules/typebox/build/schema/types/dependencies.mjs
+function IsDependencies(schema) {
+  return guard_exports.HasPropertyKey(schema, "dependencies") && guard_exports.IsObject(schema.dependencies) && Object.values(schema.dependencies).every((value) => IsSchema2(value) || guard_exports.IsArray(value) && value.every((value2) => guard_exports.IsString(value2)));
+}
+
+// node_modules/typebox/build/schema/types/dependentRequired.mjs
+function IsDependentRequired(schema) {
+  return guard_exports.HasPropertyKey(schema, "dependentRequired") && guard_exports.IsObject(schema.dependentRequired) && Object.values(schema.dependentRequired).every((value) => guard_exports.IsArray(value) && value.every((value2) => guard_exports.IsString(value2)));
+}
+
+// node_modules/typebox/build/schema/types/dependentSchemas.mjs
+function IsDependentSchemas(schema) {
+  return guard_exports.HasPropertyKey(schema, "dependentSchemas") && guard_exports.IsObject(schema.dependentSchemas) && Object.values(schema.dependentSchemas).every((value) => IsSchema2(value));
+}
+
+// node_modules/typebox/build/schema/types/dynamicAnchor.mjs
+function IsDynamicAnchor(schema) {
+  return guard_exports.HasPropertyKey(schema, "$dynamicAnchor") && guard_exports.IsString(schema.$dynamicAnchor);
+}
+
+// node_modules/typebox/build/schema/types/dynamicRef.mjs
+function IsDynamicRef(schema) {
+  return guard_exports.HasPropertyKey(schema, "$dynamicRef") && guard_exports.IsString(schema.$dynamicRef);
+}
+
+// node_modules/typebox/build/schema/types/else.mjs
+function IsElse(schema) {
+  return guard_exports.HasPropertyKey(schema, "else") && IsSchema2(schema.else);
+}
+
+// node_modules/typebox/build/schema/types/enum.mjs
+function IsEnum2(schema) {
+  return guard_exports.HasPropertyKey(schema, "enum") && guard_exports.IsArray(schema.enum);
+}
+
+// node_modules/typebox/build/schema/types/exclusiveMaximum.mjs
+function IsExclusiveMaximum(schema) {
+  return guard_exports.HasPropertyKey(schema, "exclusiveMaximum") && (guard_exports.IsNumber(schema.exclusiveMaximum) || guard_exports.IsBigInt(schema.exclusiveMaximum));
+}
+
+// node_modules/typebox/build/schema/types/exclusiveMinimum.mjs
+function IsExclusiveMinimum(schema) {
+  return guard_exports.HasPropertyKey(schema, "exclusiveMinimum") && (guard_exports.IsNumber(schema.exclusiveMinimum) || guard_exports.IsBigInt(schema.exclusiveMinimum));
+}
+
+// node_modules/typebox/build/schema/types/format.mjs
+function IsFormat(schema) {
+  return guard_exports.HasPropertyKey(schema, "format") && guard_exports.IsString(schema.format);
+}
+
+// node_modules/typebox/build/schema/types/id.mjs
+function IsId(schema) {
+  return guard_exports.HasPropertyKey(schema, "$id") && guard_exports.IsString(schema.$id);
+}
+
+// node_modules/typebox/build/schema/types/if.mjs
+function IsIf(schema) {
+  return guard_exports.HasPropertyKey(schema, "if") && IsSchema2(schema.if);
+}
+
+// node_modules/typebox/build/schema/types/items.mjs
+function IsItems(schema) {
+  return guard_exports.HasPropertyKey(schema, "items") && (IsSchema2(schema.items) || guard_exports.IsArray(schema.items) && schema.items.every((value) => {
+    return IsSchema2(value);
+  }));
+}
+function IsItemsSized(schema) {
+  return IsItems(schema) && guard_exports.IsArray(schema.items);
+}
+
+// node_modules/typebox/build/schema/types/maximum.mjs
+function IsMaximum(schema) {
+  return guard_exports.HasPropertyKey(schema, "maximum") && (guard_exports.IsNumber(schema.maximum) || guard_exports.IsBigInt(schema.maximum));
+}
+
+// node_modules/typebox/build/schema/types/maxContains.mjs
+function IsMaxContains(schema) {
+  return guard_exports.HasPropertyKey(schema, "maxContains") && guard_exports.IsNumber(schema.maxContains);
+}
+
+// node_modules/typebox/build/schema/types/maxItems.mjs
+function IsMaxItems(schema) {
+  return guard_exports.HasPropertyKey(schema, "maxItems") && guard_exports.IsNumber(schema.maxItems);
+}
+
+// node_modules/typebox/build/schema/types/maxLength.mjs
+function IsMaxLength3(schema) {
+  return guard_exports.HasPropertyKey(schema, "maxLength") && guard_exports.IsNumber(schema.maxLength);
+}
+
+// node_modules/typebox/build/schema/types/maxProperties.mjs
+function IsMaxProperties(schema) {
+  return guard_exports.HasPropertyKey(schema, "maxProperties") && guard_exports.IsNumber(schema.maxProperties);
+}
+
+// node_modules/typebox/build/schema/types/minimum.mjs
+function IsMinimum(schema) {
+  return guard_exports.HasPropertyKey(schema, "minimum") && (guard_exports.IsNumber(schema.minimum) || guard_exports.IsBigInt(schema.minimum));
+}
+
+// node_modules/typebox/build/schema/types/minContains.mjs
+function IsMinContains(schema) {
+  return guard_exports.HasPropertyKey(schema, "minContains") && guard_exports.IsNumber(schema.minContains);
+}
+
+// node_modules/typebox/build/schema/types/minItems.mjs
+function IsMinItems(schema) {
+  return guard_exports.HasPropertyKey(schema, "minItems") && guard_exports.IsNumber(schema.minItems);
+}
+
+// node_modules/typebox/build/schema/types/minLength.mjs
+function IsMinLength3(schema) {
+  return guard_exports.HasPropertyKey(schema, "minLength") && guard_exports.IsNumber(schema.minLength);
+}
+
+// node_modules/typebox/build/schema/types/minProperties.mjs
+function IsMinProperties(schema) {
+  return guard_exports.HasPropertyKey(schema, "minProperties") && guard_exports.IsNumber(schema.minProperties);
+}
+
+// node_modules/typebox/build/schema/types/multipleOf.mjs
+function IsMultipleOf2(schema) {
+  return guard_exports.HasPropertyKey(schema, "multipleOf") && (guard_exports.IsNumber(schema.multipleOf) || guard_exports.IsBigInt(schema.multipleOf));
+}
+
+// node_modules/typebox/build/schema/types/not.mjs
+function IsNot(schema) {
+  return guard_exports.HasPropertyKey(schema, "not") && IsSchema2(schema.not);
+}
+
+// node_modules/typebox/build/schema/types/oneOf.mjs
+function IsOneOf(schema) {
+  return guard_exports.HasPropertyKey(schema, "oneOf") && guard_exports.IsArray(schema.oneOf) && schema.oneOf.every((value) => IsSchema2(value));
+}
+
+// node_modules/typebox/build/schema/types/pattern.mjs
+function IsPattern(schema) {
+  return guard_exports.HasPropertyKey(schema, "pattern") && (guard_exports.IsString(schema.pattern) || schema.pattern instanceof RegExp);
+}
+
+// node_modules/typebox/build/schema/types/patternProperties.mjs
+function IsPatternProperties(schema) {
+  return guard_exports.HasPropertyKey(schema, "patternProperties") && guard_exports.IsObject(schema.patternProperties) && Object.values(schema.patternProperties).every((value) => IsSchema2(value));
+}
+
+// node_modules/typebox/build/schema/types/prefixItems.mjs
+function IsPrefixItems(schema) {
+  return guard_exports.HasPropertyKey(schema, "prefixItems") && guard_exports.IsArray(schema.prefixItems) && schema.prefixItems.every((schema2) => IsSchema2(schema2));
+}
+
+// node_modules/typebox/build/schema/types/properties.mjs
+function IsProperties(schema) {
+  return guard_exports.HasPropertyKey(schema, "properties") && guard_exports.IsObject(schema.properties) && Object.values(schema.properties).every((value) => IsSchema2(value));
+}
+
+// node_modules/typebox/build/schema/types/propertyNames.mjs
+function IsPropertyNames(schema) {
+  return guard_exports.HasPropertyKey(schema, "propertyNames") && (guard_exports.IsObject(schema.propertyNames) || IsSchema2(schema.propertyNames));
+}
+
+// node_modules/typebox/build/schema/types/recursiveAnchor.mjs
+function IsRecursiveAnchor(schema) {
+  return guard_exports.HasPropertyKey(schema, "$recursiveAnchor") && guard_exports.IsBoolean(schema.$recursiveAnchor);
+}
+function IsRecursiveAnchorTrue(schema) {
+  return IsRecursiveAnchor(schema) && guard_exports.IsEqual(schema.$recursiveAnchor, true);
+}
+
+// node_modules/typebox/build/schema/types/recursiveRef.mjs
+function IsRecursiveRef(schema) {
+  return guard_exports.HasPropertyKey(schema, "$recursiveRef") && guard_exports.IsString(schema.$recursiveRef);
+}
+
+// node_modules/typebox/build/schema/types/ref.mjs
+function IsRef2(schema) {
+  return guard_exports.HasPropertyKey(schema, "$ref") && guard_exports.IsString(schema.$ref);
+}
+
+// node_modules/typebox/build/schema/types/required.mjs
+function IsRequired(schema) {
+  return guard_exports.HasPropertyKey(schema, "required") && guard_exports.IsArray(schema.required) && schema.required.every((value) => guard_exports.IsString(value));
+}
+
+// node_modules/typebox/build/schema/types/then.mjs
+function IsThen(schema) {
+  return guard_exports.HasPropertyKey(schema, "then") && IsSchema2(schema.then);
+}
+
+// node_modules/typebox/build/schema/types/type.mjs
+function IsType(schema) {
+  return guard_exports.HasPropertyKey(schema, "type") && (guard_exports.IsString(schema.type) || guard_exports.IsArray(schema.type) && schema.type.every((value) => guard_exports.IsString(value)));
+}
+
+// node_modules/typebox/build/schema/types/uniqueItems.mjs
+function IsUniqueItems(schema) {
+  return guard_exports.HasPropertyKey(schema, "uniqueItems") && guard_exports.IsBoolean(schema.uniqueItems);
+}
+
+// node_modules/typebox/build/schema/types/unevaluatedItems.mjs
+function IsUnevaluatedItems(schema) {
+  return guard_exports.HasPropertyKey(schema, "unevaluatedItems") && IsSchema2(schema.unevaluatedItems);
+}
+
+// node_modules/typebox/build/schema/types/unevaluatedProperties.mjs
+function IsUnevaluatedProperties(schema) {
+  return guard_exports.HasPropertyKey(schema, "unevaluatedProperties") && IsSchema2(schema.unevaluatedProperties);
+}
+
+// node_modules/typebox/build/schema/engine/_context.mjs
+var CheckContext = class {
+  constructor() {
+    const indices = /* @__PURE__ */ new Set();
+    const keys = /* @__PURE__ */ new Set();
+    this.stack = [{ indices, keys }];
+  }
+  // ----------------------------------------------------------------
+  // Stack
+  // ----------------------------------------------------------------
+  Push() {
+    const indices = /* @__PURE__ */ new Set();
+    const keys = /* @__PURE__ */ new Set();
+    this.stack.push({ indices, keys });
+    return true;
+  }
+  Pop() {
+    this.stack.pop();
+    return true;
+  }
+  // ----------------------------------------------------------------
+  // Top
+  // ----------------------------------------------------------------
+  AddIndex(index) {
+    this.GetIndices().add(index);
+    return true;
+  }
+  AddKey(key) {
+    this.GetKeys().add(key);
+    return true;
+  }
+  GetIndices() {
+    const top = this.stack[this.stack.length - 1];
+    return top.indices;
+  }
+  GetKeys() {
+    const top = this.stack[this.stack.length - 1];
+    return top.keys;
+  }
+  Merge(results) {
+    for (const context of results) {
+      context.GetIndices().forEach((value) => this.GetIndices().add(value));
+      context.GetKeys().forEach((value) => this.GetKeys().add(value));
+    }
+    return true;
+  }
+};
+var ErrorContext = class extends CheckContext {
+  constructor() {
+    super();
+    this.errors = [];
+  }
+  AtCapacity() {
+    return this.errors.length >= settings_exports.Get().maxErrors;
+  }
+  AddError(error) {
+    if (!this.AtCapacity())
+      this.errors.push(error);
+    return false;
+  }
+  GetErrors() {
+    return this.errors;
+  }
+};
+
+// node_modules/typebox/build/schema/engine/_refine.mjs
+function CheckRefine(_stack, _context, schema, value) {
+  return guard_exports.Every(schema["~refine"], 0, (refinement, _) => refinement.check(value));
+}
+function ErrorRefine(_stack, context, schemaPath, instancePath, schema, value) {
+  return guard_exports.EveryAll(schema["~refine"], 0, (refinement, index) => {
+    return refinement.check(value) || context.AddError({
+      keyword: "~refine",
+      schemaPath,
+      instancePath,
+      params: { index, message: refinement.error(value) }
+    });
+  });
+}
+
+// node_modules/typebox/build/schema/engine/additionalItems.mjs
+function IsValid(schema) {
+  return IsItems(schema) && guard_exports.IsArray(schema.items);
+}
+function CheckAdditionalItems(stack, context, schema, value) {
+  if (!IsValid(schema))
+    return true;
+  const isAdditionalItems = guard_exports.Every(value, 0, (item, index) => {
+    return guard_exports.IsLessThan(index, schema.items.length) || CheckSchemaPushStack(stack, context, schema.additionalItems, item) && context.AddIndex(index);
+  });
+  return isAdditionalItems;
+}
+function ErrorAdditionalItems(stack, context, schemaPath, instancePath, schema, value) {
+  if (!IsValid(schema))
+    return true;
+  const isAdditionalItems = guard_exports.Every(value, 0, (item, index) => {
+    const nextSchemaPath = `${schemaPath}/additionalItems`;
+    const nextInstancePath = `${instancePath}/${index}`;
+    return guard_exports.IsLessThan(index, schema.items.length) || ErrorSchemaPushStack(stack, context, nextSchemaPath, nextInstancePath, schema.additionalItems, item) && context.AddIndex(index);
+  });
+  return isAdditionalItems;
+}
+
+// node_modules/typebox/build/schema/engine/_regexp.mjs
+function UnicodeRegExp(pattern) {
+  return new RegExp(pattern, "u");
+}
+
+// node_modules/typebox/build/schema/engine/additionalProperties.mjs
+function GetPropertyKeyAsPattern(key) {
+  const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return `^${escaped}$`;
+}
+function GetPropertiesPattern(schema) {
+  const patterns = [];
+  if (IsPatternProperties(schema))
+    patterns.push(...guard_exports.Keys(schema.patternProperties));
+  if (IsProperties(schema))
+    patterns.push(...guard_exports.Keys(schema.properties).map(GetPropertyKeyAsPattern));
+  return guard_exports.IsEqual(patterns.length, 0) ? "(?!)" : `(${patterns.join("|")})`;
+}
+function CheckAdditionalProperties(stack, context, schema, value) {
+  const regexp = UnicodeRegExp(GetPropertiesPattern(schema));
+  const isAdditionalProperties = guard_exports.Every(guard_exports.Keys(value), 0, (key, _index) => {
+    return regexp.test(key) || CheckSchemaPushStack(stack, context, schema.additionalProperties, value[key]) && context.AddKey(key);
+  });
+  return isAdditionalProperties;
+}
+function ErrorAdditionalProperties(stack, context, schemaPath, instancePath, schema, value) {
+  const regexp = UnicodeRegExp(GetPropertiesPattern(schema));
+  const additionalProperties = [];
+  const isAdditionalProperties = guard_exports.EveryAll(guard_exports.Keys(value), 0, (key, _index) => {
+    const nextSchemaPath = `${schemaPath}/additionalProperties`;
+    const nextInstancePath = `${instancePath}/${key}`;
+    const isAdditionalProperty = regexp.test(key) || ErrorSchemaPushStack(stack, context, nextSchemaPath, nextInstancePath, schema.additionalProperties, value[key]) && context.AddKey(key);
+    if (!isAdditionalProperty)
+      additionalProperties.push(key);
+    return isAdditionalProperty;
+  });
+  return isAdditionalProperties || context.AddError({
+    keyword: "additionalProperties",
+    schemaPath,
+    instancePath,
+    params: { additionalProperties }
+  });
+}
+
+// node_modules/typebox/build/schema/engine/allOf.mjs
+function CheckAllOf(stack, context, schema, value) {
+  const results = schema.allOf.reduce((result, schema2) => {
+    const nextContext = new CheckContext();
+    return CheckSchema(stack, nextContext, schema2, value) ? [...result, nextContext] : result;
+  }, []);
+  return guard_exports.IsEqual(results.length, schema.allOf.length) && context.Merge(results);
+}
+function ErrorAllOf(stack, context, schemaPath, instancePath, schema, value) {
+  const failedContexts = [];
+  const results = schema.allOf.reduce((result, schema2, index) => {
+    const nextSchemaPath = `${schemaPath}/allOf/${index}`;
+    const nextContext = new ErrorContext();
+    const isSchema = ErrorSchema(stack, nextContext, nextSchemaPath, instancePath, schema2, value);
+    if (!isSchema)
+      failedContexts.push(nextContext);
+    return isSchema ? [...result, nextContext] : result;
+  }, []);
+  const isAllOf = guard_exports.IsEqual(results.length, schema.allOf.length) && context.Merge(results);
+  if (!isAllOf)
+    failedContexts.forEach((failed) => failed.GetErrors().forEach((error) => context.AddError(error)));
+  return isAllOf;
+}
+
+// node_modules/typebox/build/schema/engine/anyOf.mjs
+function CheckAnyOf(stack, context, schema, value) {
+  const results = schema.anyOf.reduce((result, schema2) => {
+    const nextContext = new CheckContext();
+    return CheckSchema(stack, nextContext, schema2, value) ? [...result, nextContext] : result;
+  }, []);
+  return guard_exports.IsGreaterThan(results.length, 0) && context.Merge(results);
+}
+function ErrorAnyOf(stack, context, schemaPath, instancePath, schema, value) {
+  const failedContexts = [];
+  const results = schema.anyOf.reduce((result, schema2, index) => {
+    const nextContext = new ErrorContext();
+    const nextSchemaPath = `${schemaPath}/anyOf/${index}`;
+    const isSchema = ErrorSchema(stack, nextContext, nextSchemaPath, instancePath, schema2, value);
+    if (!isSchema)
+      failedContexts.push(nextContext);
+    return isSchema ? [...result, nextContext] : result;
+  }, []);
+  const isAnyOf = guard_exports.IsGreaterThan(results.length, 0) && context.Merge(results);
+  if (!isAnyOf)
+    failedContexts.forEach((failed) => failed.GetErrors().forEach((error) => context.AddError(error)));
+  return isAnyOf || context.AddError({
+    keyword: "anyOf",
+    schemaPath,
+    instancePath,
+    params: {}
+  });
+}
+
+// node_modules/typebox/build/schema/engine/boolean.mjs
+function CheckSchemaBoolean(_stack, _context, schema, _value) {
+  return schema;
+}
+function ErrorSchemaBoolean(stack, context, schemaPath, instancePath, schema, value) {
+  return CheckSchemaBoolean(stack, context, schema, value) || context.AddError({
+    keyword: "boolean",
+    schemaPath,
+    instancePath,
+    params: {}
+  });
+}
+
+// node_modules/typebox/build/schema/engine/const.mjs
+function CheckConst(_stack, _context, schema, value) {
+  return guard_exports.IsValueLike(schema.const) ? guard_exports.IsEqual(value, schema.const) : guard_exports.IsDeepEqual(value, schema.const);
+}
+function ErrorConst(stack, context, schemaPath, instancePath, schema, value) {
+  return CheckConst(stack, context, schema, value) || context.AddError({
+    keyword: "const",
+    schemaPath,
+    instancePath,
+    params: { allowedValue: schema.const }
+  });
+}
+
+// node_modules/typebox/build/schema/engine/contains.mjs
+function IsValid2(schema) {
+  return !(IsMinContains(schema) && guard_exports.IsEqual(schema.minContains, 0));
+}
+function CheckContains(stack, context, schema, value) {
+  if (!IsValid2(schema))
+    return true;
+  return !guard_exports.IsEqual(value.length, 0) && guard_exports.SomeAll(value, (item, index) => {
+    return CheckSchema(stack, context, schema.contains, item) && context.AddIndex(index);
+  });
+}
+function ErrorContains(stack, context, schemaPath, instancePath, schema, value) {
+  return CheckContains(stack, context, schema, value) || context.AddError({
+    keyword: "contains",
+    schemaPath,
+    instancePath,
+    params: { minContains: 1 }
+  });
+}
+
+// node_modules/typebox/build/schema/engine/dependencies.mjs
+function CheckDependencies(stack, context, schema, value) {
+  const isLength = guard_exports.IsEqual(guard_exports.Keys(value).length, 0);
+  const isEvery = guard_exports.Every(guard_exports.Entries(schema.dependencies), 0, ([key, schema2]) => {
+    return !guard_exports.HasPropertyKey(value, key) || (guard_exports.IsArray(schema2) ? schema2.every((key2) => guard_exports.HasPropertyKey(value, key2)) : CheckSchema(stack, context, schema2, value));
+  });
+  return isLength || isEvery;
+}
+function ErrorDependencies(stack, context, schemaPath, instancePath, schema, value) {
+  const isLength = guard_exports.IsEqual(guard_exports.Keys(value).length, 0);
+  const isEvery = guard_exports.EveryAll(guard_exports.Entries(schema.dependencies), 0, ([key, schema2]) => {
+    const nextSchemaPath = `${schemaPath}/dependencies/${key}`;
+    return !guard_exports.HasPropertyKey(value, key) || (guard_exports.IsArray(schema2) ? schema2.every((dependency) => guard_exports.HasPropertyKey(value, dependency) || context.AddError({
+      keyword: "dependencies",
+      schemaPath,
+      instancePath,
+      params: { property: key, dependencies: schema2 }
+    })) : ErrorSchema(stack, context, nextSchemaPath, instancePath, schema2, value));
+  });
+  return isLength || isEvery;
+}
+
+// node_modules/typebox/build/schema/engine/dependentRequired.mjs
+function CheckDependentRequired(_stack, _context, schema, value) {
+  const isLength = guard_exports.IsEqual(guard_exports.Keys(value).length, 0);
+  const isEvery = guard_exports.Every(guard_exports.Entries(schema.dependentRequired), 0, ([key, keys]) => {
+    return !guard_exports.HasPropertyKey(value, key) || keys.every((key2) => guard_exports.HasPropertyKey(value, key2));
+  });
+  return isLength || isEvery;
+}
+function ErrorDependentRequired(_stack, context, schemaPath, instancePath, schema, value) {
+  const isLength = guard_exports.IsEqual(guard_exports.Keys(value).length, 0);
+  const isEveryEntry = guard_exports.EveryAll(guard_exports.Entries(schema.dependentRequired), 0, ([key, keys]) => {
+    return !guard_exports.HasPropertyKey(value, key) || guard_exports.EveryAll(keys, 0, (dependency) => guard_exports.HasPropertyKey(value, dependency) || context.AddError({
+      keyword: "dependentRequired",
+      schemaPath,
+      instancePath,
+      params: { property: key, dependencies: keys }
+    }));
+  });
+  return isLength || isEveryEntry;
+}
+
+// node_modules/typebox/build/schema/engine/dependentSchemas.mjs
+function CheckDependentSchemas(stack, context, schema, value) {
+  const isLength = guard_exports.IsEqual(guard_exports.Keys(value).length, 0);
+  const isEvery = guard_exports.Every(guard_exports.Entries(schema.dependentSchemas), 0, ([key, schema2]) => {
+    return !guard_exports.HasPropertyKey(value, key) || CheckSchema(stack, context, schema2, value);
+  });
+  return isLength || isEvery;
+}
+function ErrorDependentSchemas(stack, context, schemaPath, instancePath, schema, value) {
+  const isLength = guard_exports.IsEqual(guard_exports.Keys(value).length, 0);
+  const isEvery = guard_exports.EveryAll(guard_exports.Entries(schema.dependentSchemas), 0, ([key, schema2]) => {
+    const nextSchemaPath = `${schemaPath}/dependentSchemas/${key}`;
+    return !guard_exports.HasPropertyKey(value, key) || ErrorSchema(stack, context, nextSchemaPath, instancePath, schema2, value);
+  });
+  return isLength || isEvery;
+}
+
+// node_modules/typebox/build/schema/engine/dynamicRef.mjs
+function CheckDynamicRef(stack, context, schema, value) {
+  const target = stack.DynamicRef(schema) ?? false;
+  return IsSchema2(target) && CheckSchema(stack, context, target, value);
+}
+function ErrorDynamicRef(stack, context, _schemaPath, instancePath, schema, value) {
+  const target = stack.DynamicRef(schema) ?? false;
+  return IsSchema2(target) && ErrorSchema(stack, context, "#", instancePath, target, value);
+}
+
+// node_modules/typebox/build/schema/engine/enum.mjs
+function CheckEnum(_stack, _context, schema, value) {
+  return guard_exports.Some(schema.enum, (option) => guard_exports.IsValueLike(option) ? guard_exports.IsEqual(value, option) : guard_exports.IsDeepEqual(value, option));
+}
+function ErrorEnum(stack, context, schemaPath, instancePath, schema, value) {
+  return CheckEnum(stack, context, schema, value) || context.AddError({
+    keyword: "enum",
+    schemaPath,
+    instancePath,
+    params: { allowedValues: schema.enum }
+  });
+}
+
+// node_modules/typebox/build/schema/engine/exclusiveMaximum.mjs
+function CheckExclusiveMaximum(_stack, _context, schema, value) {
+  return guard_exports.IsLessThan(value, schema.exclusiveMaximum);
+}
+function ErrorExclusiveMaximum(stack, context, schemaPath, instancePath, schema, value) {
+  return CheckExclusiveMaximum(stack, context, schema, value) || context.AddError({
+    keyword: "exclusiveMaximum",
+    schemaPath,
+    instancePath,
+    params: { comparison: "<", limit: schema.exclusiveMaximum }
+  });
+}
+
+// node_modules/typebox/build/schema/engine/exclusiveMinimum.mjs
+function CheckExclusiveMinimum(_stack, _context, schema, value) {
+  return guard_exports.IsGreaterThan(value, schema.exclusiveMinimum);
+}
+function ErrorExclusiveMinimum(stack, context, schemaPath, instancePath, schema, value) {
+  return CheckExclusiveMinimum(stack, context, schema, value) || context.AddError({
+    keyword: "exclusiveMinimum",
+    schemaPath,
+    instancePath,
+    params: { comparison: ">", limit: schema.exclusiveMinimum }
+  });
+}
+
+// node_modules/typebox/build/format/format.mjs
+var format_exports = {};
+__export(format_exports, {
+  Clear: () => Clear,
+  Entries: () => Entries2,
+  Get: () => Get3,
+  Has: () => Has,
+  IsDate: () => IsDate2,
+  IsDateTime: () => IsDateTime,
+  IsDuration: () => IsDuration,
+  IsEmail: () => IsEmail,
+  IsHostname: () => IsHostname2,
+  IsIPv4: () => IsIPv4,
+  IsIPv6: () => IsIPv6,
+  IsIdnEmail: () => IsIdnEmail,
+  IsIdnHostname: () => IsIdnHostname2,
+  IsIri: () => IsIri,
+  IsIriReference: () => IsIriReference,
+  IsJsonPointer: () => IsJsonPointer,
+  IsJsonPointerUriFragment: () => IsJsonPointerUriFragment,
+  IsRegex: () => IsRegex,
+  IsRelativeJsonPointer: () => IsRelativeJsonPointer,
+  IsTime: () => IsTime,
+  IsUri: () => IsUri,
+  IsUriReference: () => IsUriReference,
+  IsUriTemplate: () => IsUriTemplate,
+  IsUrl: () => IsUrl,
+  IsUuid: () => IsUuid,
+  Reset: () => Reset2,
+  Set: () => Set3,
+  Test: () => Test
+});
+
+// node_modules/typebox/build/format/date.mjs
+var DAYS = [0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+var DATE = /^(\d\d\d\d)-(\d\d)-(\d\d)$/;
+function IsLeapYear(year) {
+  return year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+}
+function IsDate2(value) {
+  const matches = DATE.exec(value);
+  if (!matches)
+    return false;
+  const year = +matches[1];
+  const month = +matches[2];
+  const day = +matches[3];
+  return month >= 1 && month <= 12 && day >= 1 && day <= (month === 2 && IsLeapYear(year) ? 29 : DAYS[month]);
+}
+
+// node_modules/typebox/build/format/time.mjs
+var TIME = /^(\d\d):(\d\d):(\d\d)(?:\.\d+)?(?:([Zz])|([+-])(\d\d):(\d\d))?$/;
+function IsTime(value, strictTimeZone = true) {
+  const matches = TIME.exec(value);
+  if (!matches)
+    return false;
+  if (strictTimeZone && !matches[4] && !matches[5])
+    return false;
+  const hr = +matches[1];
+  const min = +matches[2];
+  const sec = +matches[3];
+  if (hr > 23 || min > 59 || sec > 60)
+    return false;
+  if (matches[5]) {
+    const tzH2 = +matches[6];
+    const tzM2 = +matches[7];
+    if (tzH2 > 23 || tzM2 > 59)
+      return false;
+  }
+  if (sec < 60)
+    return true;
+  const tzSign = matches[5] === "-" ? -1 : 1;
+  const tzH = +(matches[6] || 0);
+  const tzM = +(matches[7] || 0);
+  const totalUtcMin = hr * 60 + min - tzSign * (tzH * 60 + tzM);
+  return (totalUtcMin % 1440 + 1440) % 1440 === 1439;
+}
+
+// node_modules/typebox/build/format/date_time.mjs
+function IsDateTime(value) {
+  const dateTime = value.split(/T/i);
+  return dateTime.length === 2 && IsDate2(dateTime[0]) && IsTime(dateTime[1]);
+}
+
+// node_modules/typebox/build/format/duration.mjs
+var Duration = /^P((\d+Y(\d+M(\d+D)?)?|\d+M(\d+D)?|\d+D)(T(\d+H(\d+M(\d+S)?)?|\d+M(\d+S)?|\d+S))?|T(\d+H(\d+M(\d+S)?)?|\d+M(\d+S)?|\d+S)|\d+W)$/;
+function IsDuration(value) {
+  return Duration.test(value);
+}
+
+// node_modules/typebox/build/format/email.mjs
+var Email = /^(?:[a-z0-9!#$%&'*+/=?^_`{|}~-]+(?:\.[a-z0-9!#$%&'*+/=?^_`{|}~-]+)*|"(?:[^"\\]|\\[\x20-\x7e])*")@(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*|\[(?:IPv6:[a-f0-9:]+|(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])(?:\.(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])){3})\])$/i;
+function IsEmail(value) {
+  return Email.test(value);
+}
+
+// node_modules/typebox/build/format/idna/pattern/pattern.mjs
+var RE_RULE_HYPHEN_PLACEMENT = /^(?!-).*(?<!-)$/;
+var RE_RULE_NOT_RESERVED_ACE = /^(?!..--)/;
+var RE_ASCII_LDH = /^[a-zA-Z0-9-]*$/;
+var RE_ASCII = new RegExp("^\\p{ASCII}*$", "u");
+var RE_NON_ASCII = /[^\p{ASCII}]/u;
+var RE_ASCII_DIGIT = /[0-9]/;
+var RE_ARABIC_INDIC_DIGIT = /[\u{0660}-\u{0669}]/u;
+var RE_EXT_ARABIC_INDIC_DIGIT = /[\u{06f0}-\u{06f9}]/u;
+var RE_COMMON_SEPARATOR = /[\u{002e}\u{002c}\u{003a}\u{002f}]/u;
+var RE_EUROPEAN_SEPARATOR = /[\u{002d}\u{002b}]/u;
+var RE_MARK_NONSPACING = new RegExp("\\p{Mn}", "u");
+var RE_MARK_SPACING_COMBINING = new RegExp("\\p{Mc}", "u");
+var RE_MARK_ENCLOSING = new RegExp("\\p{Me}", "u");
+var RE_COMBINING_MARK = /[\p{Mn}\p{Mc}\p{Me}]/u;
+var RE_LETTER = new RegExp("\\p{L}", "u");
+var RE_NUMBER_DECIMAL = new RegExp("\\p{Nd}", "u");
+var RE_SCRIPT_GREEK = new RegExp("\\p{Script=Greek}", "u");
+var RE_SCRIPT_HEBREW = new RegExp("\\p{Script=Hebrew}", "u");
+var RE_SCRIPT_JAPANESE = /[\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Han}]/u;
+var RE_SCRIPT_ARABIC_LETTER = /[\p{Script=Arabic}\p{Script=Syriac}\p{Script=Thaana}\p{Script=Mandaic}]/u;
+var RE_VIRAMA = /[\u{094d}\u{09cd}\u{0a4d}\u{0acd}\u{0b4d}\u{0bcd}\u{0c4d}\u{0ccd}\u{0d3b}\u{0d3c}\u{0d4d}\u{0dca}\u{1b44}\u{1baa}\u{1bab}\u{a9c0}\u{11046}\u{1107f}\u{110b9}\u{11133}\u{11134}\u{111c0}\u{11235}\u{1134d}\u{11442}\u{114c2}\u{115bf}\u{1163f}\u{116b6}\u{11c3f}\u{11d44}\u{11d45}]/u;
+var RE_RFC5892_DISALLOWED = /[\u{0640}\u{07fa}\u{302e}\u{302f}\u{3031}\u{3032}\u{3033}\u{3034}\u{3035}\u{303b}]/u;
+var RE_CONTEXTO_EXCEPTIONS = /[\u{00b7}\u{0375}\u{05f3}\u{05f4}\u{200c}\u{200d}\u{30fb}]/u;
+var RE_PVALID_EXCEPTIONS = /[\u{00df}\u{03c2}\u{06fd}\u{06fe}\u{0f0b}\u{3007}]/u;
+var RE_EUROPEAN_NUMBER = new RegExp([
+  RE_ASCII_DIGIT,
+  RE_EXT_ARABIC_INDIC_DIGIT
+].map((regexp) => regexp.source).join("|"), "u");
+var RE_PERMITTED_CATEGORY = new RegExp([
+  RE_LETTER,
+  RE_EUROPEAN_SEPARATOR,
+  RE_COMMON_SEPARATOR,
+  RE_NUMBER_DECIMAL,
+  RE_MARK_NONSPACING,
+  RE_MARK_SPACING_COMBINING,
+  RE_CONTEXTO_EXCEPTIONS,
+  RE_PVALID_EXCEPTIONS
+].map((regexp) => regexp.source).join("|"), "u");
+
+// node_modules/typebox/build/format/idna/label/ascii.mjs
+function IsAsciiLabel(value) {
+  return RE_RULE_HYPHEN_PLACEMENT.test(value) && RE_RULE_NOT_RESERVED_ACE.test(value) && RE_ASCII_LDH.test(value);
+}
+
+// node_modules/typebox/build/format/idna/format/puny.mjs
+var PUNYCODE_BASE = 36;
+var PUNYCODE_TMIN = 1;
+var PUNYCODE_TMAX = 26;
+var PUNYCODE_SKEW = 38;
+var PUNYCODE_DAMP = 700;
+var PUNYCODE_INITIAL_BIAS = 72;
+var PUNYCODE_INITIAL_N = 128;
+function ThrowDontCare() {
+  throw null;
+}
+function IsAcePrefixed(value) {
+  return value.toLowerCase().startsWith("xn--");
+}
+function Adapt(delta, numPoints, firstTime) {
+  delta = firstTime ? Math.floor(delta / PUNYCODE_DAMP) : delta >> 1;
+  delta += Math.floor(delta / numPoints);
+  let k = 0;
+  while (delta > (PUNYCODE_BASE - PUNYCODE_TMIN) * PUNYCODE_TMAX >> 1) {
+    delta = Math.floor(delta / (PUNYCODE_BASE - PUNYCODE_TMIN));
+    k += PUNYCODE_BASE;
+  }
+  return k + Math.floor((PUNYCODE_BASE - PUNYCODE_TMIN + 1) * delta / (delta + PUNYCODE_SKEW));
+}
+function Decode2(value) {
+  const output2 = [];
+  let n = PUNYCODE_INITIAL_N;
+  let i = 0;
+  let bias = PUNYCODE_INITIAL_BIAS;
+  const delimIdx = value.lastIndexOf("-");
+  if (delimIdx > 0) {
+    for (let j = 0; j < delimIdx; j++) {
+      const cp = value.charCodeAt(j);
+      if (cp >= 128)
+        ThrowDontCare();
+      output2.push(cp);
+    }
+  }
+  let inIdx = delimIdx < 0 ? 0 : delimIdx + 1;
+  while (inIdx < value.length) {
+    const oldi = i;
+    let w = 1;
+    let k = PUNYCODE_BASE;
+    while (true) {
+      if (inIdx >= value.length)
+        ThrowDontCare();
+      const ch = value.charCodeAt(inIdx++);
+      let digit;
+      if (ch >= 97 && ch <= 122)
+        digit = ch - 97;
+      else if (ch >= 48 && ch <= 57)
+        digit = ch - 48 + 26;
+      else
+        ThrowDontCare();
+      i += digit * w;
+      const t = k <= bias ? PUNYCODE_TMIN : k >= bias + PUNYCODE_TMAX ? PUNYCODE_TMAX : k - bias;
+      if (digit < t)
+        break;
+      w *= PUNYCODE_BASE - t;
+      k += PUNYCODE_BASE;
+    }
+    const outLen = output2.length + 1;
+    bias = Adapt(i - oldi, outLen, oldi === 0);
+    n += Math.floor(i / outLen);
+    i %= outLen;
+    output2.splice(i, 0, n);
+    i++;
+  }
+  return String.fromCodePoint(...output2);
+}
+function DigitToChar(digit) {
+  return digit < 26 ? String.fromCharCode(digit + 97) : String.fromCharCode(digit - 26 + 48);
+}
+var RE_REPLACE_NON_ASCII = new RegExp(RE_NON_ASCII.source, "gu");
+function Encode2(input) {
+  const basic = input.replace(RE_REPLACE_NON_ASCII, "");
+  const basicLength = basic.length;
+  const result = basicLength > 0 ? [basic, "-"] : [];
+  const codePoints = Array.from(input, (char) => char.codePointAt(0));
+  let n = PUNYCODE_INITIAL_N;
+  let delta = 0;
+  let bias = PUNYCODE_INITIAL_BIAS;
+  let handledCPCount = basicLength;
+  while (handledCPCount < codePoints.length) {
+    let m = Infinity;
+    for (const cp of codePoints) {
+      if (cp >= n && cp < m)
+        m = cp;
+    }
+    delta += (m - n) * (handledCPCount + 1);
+    n = m;
+    for (const cp of codePoints) {
+      if (cp < n)
+        delta++;
+      if (cp === n) {
+        let q = delta;
+        for (let k = PUNYCODE_BASE; ; k += PUNYCODE_BASE) {
+          const t = k <= bias ? PUNYCODE_TMIN : k >= bias + PUNYCODE_TMAX ? PUNYCODE_TMAX : k - bias;
+          if (q < t)
+            break;
+          const digit = t + (q - t) % (PUNYCODE_BASE - t);
+          result.push(DigitToChar(digit));
+          q = Math.floor((q - t) / (PUNYCODE_BASE - t));
+        }
+        result.push(DigitToChar(q));
+        bias = Adapt(delta, handledCPCount + 1, handledCPCount === basicLength);
+        delta = 0;
+        handledCPCount++;
+      }
+    }
+    delta++;
+    n++;
+  }
+  return result.join("");
+}
+
+// node_modules/typebox/build/format/idna/format/bidi.mjs
+var RE_RTL_ALLOWED = /^(?:R|AL|AN|EN|ES|CS|ET|ON|BN|NSM)$/;
+var RE_LTR_ALLOWED = /^(?:L|EN|ES|CS|ET|ON|BN|NSM)$/;
+var RE_RTL_CLASSES = /^(?:R|AL|AN)$/;
+function HasBidiChars(value) {
+  if (IsAcePrefixed(value)) {
+    try {
+      return HasRightToLeftCharacters(Decode2(value.slice(4).toLowerCase()));
+    } catch {
+      return false;
+    }
+  }
+  return HasRightToLeftCharacters(value);
+}
+function GetBidiClass(codePoint) {
+  const char = String.fromCodePoint(codePoint);
+  return RE_EUROPEAN_NUMBER.test(char) ? "EN" : RE_ARABIC_INDIC_DIGIT.test(char) ? "AN" : (
+    // Pattern.RE_EUROPEAN_SEPARATOR.test(char) ? 'ES' : // (no-spec-coverage)
+    // Pattern.RE_COMMON_SEPARATOR.test(char) ? 'CS' : // (no-spec-coverage)
+    RE_MARK_NONSPACING.test(char) ? "NSM" : RE_SCRIPT_HEBREW.test(char) ? "R" : RE_SCRIPT_ARABIC_LETTER.test(char) ? "AL" : RE_LETTER.test(char) ? "L" : "ON"
+  );
+}
+function HasRightToLeftCharacters(value) {
+  for (const ch of value)
+    if (RE_RTL_CLASSES.test(GetBidiClass(ch.codePointAt(0))))
+      return true;
+  return false;
+}
+function SatisfiesBidiRule(value) {
+  let isRtl = false;
+  let allowed = RE_LTR_ALLOWED;
+  let sawEN = false;
+  let sawAN = false;
+  let isFirst = true;
+  for (const ch of value) {
+    const bidiClass = GetBidiClass(ch.codePointAt(0));
+    if (isFirst) {
+      if (bidiClass !== "L" && bidiClass !== "R" && bidiClass !== "AL")
+        return false;
+      isRtl = bidiClass === "R" || bidiClass === "AL";
+      allowed = isRtl ? RE_RTL_ALLOWED : RE_LTR_ALLOWED;
+      isFirst = false;
+    }
+    if (!allowed.test(bidiClass))
+      return false;
+    if (bidiClass === "EN")
+      sawEN = true;
+    else if (bidiClass === "AN")
+      sawAN = true;
+  }
+  if (isRtl && sawEN && sawAN)
+    return false;
+  return true;
+}
+
+// node_modules/typebox/build/format/idna/label/unicode.mjs
+function ExceedsMaxALabelLength(value) {
+  return RE_NON_ASCII.test(value) && Encode2(value).length + 4 > 63;
+}
+function HasInvalidHyphens(chars) {
+  if (chars[0] === "-" || chars[chars.length - 1] === "-")
+    return true;
+  return chars.slice(2).join("").startsWith("--");
+}
+function IsUnicodeLabel(value) {
+  if (ExceedsMaxALabelLength(value))
+    return false;
+  if (HasRightToLeftCharacters(value) && !SatisfiesBidiRule(value))
+    return false;
+  const chars = [...value];
+  const codePoints = chars.map((c) => c.codePointAt(0));
+  const length = codePoints.length;
+  if (HasInvalidHyphens(chars))
+    return false;
+  if (RE_COMBINING_MARK.test(chars[0]))
+    return false;
+  let hasJapanese = false;
+  for (let i = 0; i < length; i++) {
+    const codePoint = codePoints[i];
+    const char = chars[i];
+    if (RE_RFC5892_DISALLOWED.test(char))
+      return false;
+    if (!RE_PERMITTED_CATEGORY.test(char))
+      return false;
+    if (RE_SCRIPT_JAPANESE.test(char))
+      hasJapanese = true;
+    const prev = codePoints[i - 1], next = codePoints[i + 1];
+    switch (codePoint) {
+      case 183:
+        if (prev !== 108 || next !== 108)
+          return false;
+        break;
+      // MIDDLE DOT (Catalan)
+      case 885:
+        if (!next || !RE_SCRIPT_GREEK.test(chars[i + 1]))
+          return false;
+        break;
+      // Greek KERAIA
+      case 1523:
+      case 1524:
+        if (!prev || !RE_SCRIPT_HEBREW.test(chars[i - 1]))
+          return false;
+        break;
+      // Hebrew GERESH
+      case 8204:
+        if (!prev || prev < 128 && !RE_VIRAMA.test(chars[i - 1]))
+          return false;
+        break;
+      case 8205:
+        if (!prev || !RE_VIRAMA.test(chars[i - 1]))
+          return false;
+        break;
+      case 12539:
+        break;
+    }
+  }
+  if (value.includes("\u30FB") && !hasJapanese)
+    return false;
+  return true;
+}
+
+// node_modules/typebox/build/format/idna/label/puny.mjs
+function IsPunyLabel(value) {
+  if (!IsAcePrefixed(value))
+    return false;
+  try {
+    const body = value.slice(4).toLowerCase();
+    if (body.lastIndexOf("-") === 0)
+      return false;
+    const decoded = Decode2(body);
+    if (!RE_NON_ASCII.test(decoded))
+      return false;
+    return IsUnicodeLabel(decoded);
+  } catch {
+    return false;
+  }
+}
+
+// node_modules/typebox/build/format/idna/hostname.mjs
+function IsValidLabelLength(value) {
+  return value.length > 0 && value.length <= 63;
+}
+function IsLabel(value) {
+  return IsValidLabelLength(value) && (IsPunyLabel(value) || IsAsciiLabel(value));
+}
+function IsHostname(value) {
+  if (value.length === 0 || value.length > 253)
+    return false;
+  if (value.charCodeAt(value.length - 1) === 46)
+    return false;
+  return value.split(".").every((label) => IsLabel(label));
+}
+
+// node_modules/typebox/build/format/idna/idn-hostname.mjs
+function IsValidLabelLength2(value) {
+  return value.length > 0 && value.length <= 63;
+}
+function IsLabel2(value) {
+  return IsValidLabelLength2(value) && (IsPunyLabel(value) || IsUnicodeLabel(value));
+}
+function NormalizeHostname(value) {
+  return value.replace(/[\uff01-\uff5e]/g, (char) => String.fromCharCode(char.charCodeAt(0) - 65248)).normalize("NFC").replace(/[\u00ad\u034f\u180b-\u180d\u200b\ufe00-\ufe0f\u{e0100}-\u{e01ef}]/gu, "").replace(/[\u002E\u3002\uFF0E\uFF61]/g, ".");
+}
+function IsIdnHostname(value) {
+  if (value.length === 0 || value.includes(" "))
+    return false;
+  const normalized = NormalizeHostname(value);
+  if (normalized.length > 253)
+    return false;
+  const labels = normalized.split(".");
+  const hasBidiChars = labels.some((label) => HasBidiChars(label));
+  return labels.every((label) => IsLabel2(label) && (!hasBidiChars || SatisfiesBidiRule(label)));
+}
+
+// node_modules/typebox/build/format/hostname.mjs
+function IsHostname2(value) {
+  return IsHostname(value);
+}
+
+// node_modules/typebox/build/format/idn_email.mjs
+var IdnEmail = /^(?:[A-Za-z0-9!#$%&'*+\/=?^_`{|}~\u{0080}-\u{10FFFF}-]+(?:\.[A-Za-z0-9!#$%&'*+\/=?^_`{|}~\u{0080}-\u{10FFFF}-]+)*|"(?:[^"\\]|\\.)*")@[\p{L}\p{N}](?:[\p{L}\p{N}-]{0,62})(?<!-)(?:\.[\p{L}\p{N}](?:[\p{L}\p{N}-]{0,62})(?<!-))*$/iu;
+function IsIdnEmail(value) {
+  return IdnEmail.test(value.normalize("NFC"));
+}
+
+// node_modules/typebox/build/format/idn_hostname.mjs
+function IsIdnHostname2(value) {
+  return IsIdnHostname(value);
+}
+
+// node_modules/typebox/build/format/ipv4.mjs
+var IPv4 = /^(?:(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)$/;
+function IsIPv4(value) {
+  return IPv4.test(value);
+}
+
+// node_modules/typebox/build/format/ipv6.mjs
+var IPv6 = /^(?:(?:(?:[0-9a-f]{1,4}:){6}|::(?:[0-9a-f]{1,4}:){5}|(?:[0-9a-f]{1,4})?::(?:[0-9a-f]{1,4}:){4}|(?:(?:[0-9a-f]{1,4}:)?[0-9a-f]{1,4})?::(?:[0-9a-f]{1,4}:){3}|(?:(?:[0-9a-f]{1,4}:){0,2}[0-9a-f]{1,4})?::(?:[0-9a-f]{1,4}:){2}|(?:(?:[0-9a-f]{1,4}:){0,3}[0-9a-f]{1,4})?::[0-9a-f]{1,4}:|(?:(?:[0-9a-f]{1,4}:){0,4}[0-9a-f]{1,4})?::)(?:[0-9a-f]{1,4}:[0-9a-f]{1,4}|(?:(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d))|(?:(?:[0-9a-f]{1,4}:){0,5}[0-9a-f]{1,4})?::[0-9a-f]{1,4}|(?:(?:[0-9a-f]{1,4}:){0,6}[0-9a-f]{1,4})?::)$/i;
+function IsIPv6(value) {
+  return IPv6.test(value);
+}
+
+// node_modules/typebox/build/format/iri_reference.mjs
+var InvalidIriChars = /[\x00-\x20\x7F\\]|%(?![0-9a-fA-F]{2})/;
+var MalformedScheme = /^[a-zA-Z][a-zA-Z0-9+\-.]*\/\//;
+function IsIriReference(value) {
+  return !InvalidIriChars.test(value) && !MalformedScheme.test(value) && URL.canParse(value, "http://example.com");
+}
+
+// node_modules/typebox/build/format/iri.mjs
+var IpvFutureMatchMaxLength = 2048;
+var IpvFutureMatch = /\[[vV][0-9a-fA-F]+\.[^\]]+\]/;
+var InvalidIriChars2 = /[\x00-\x20<>\^`{|}\\]/;
+var InvalidPercentEncoding = /%(?![0-9a-fA-F]{2})/;
+function NarrowIpvFuture(value) {
+  return value.length < IpvFutureMatchMaxLength ? value.replace(IpvFutureMatch, "[::1]") : value;
+}
+function IsIri(value) {
+  if (InvalidIriChars2.test(value))
+    return false;
+  if (InvalidPercentEncoding.test(value))
+    return false;
+  return URL.canParse(NarrowIpvFuture(value));
+}
+
+// node_modules/typebox/build/format/json_pointer_uri_fragment.mjs
+var JsonPointerUriFragment = /^#(?:\/(?:[a-z0-9_\-.!$&'()*+,;:=@]|%[0-9a-f]{2}|~0|~1)*)*$/i;
+function IsJsonPointerUriFragment(value) {
+  return JsonPointerUriFragment.test(value);
+}
+
+// node_modules/typebox/build/format/json_pointer.mjs
+var JsonPointer = /^(?:\/(?:[^~/]|~0|~1)*)*$/;
+function IsJsonPointer(value) {
+  return JsonPointer.test(value);
+}
+
+// node_modules/typebox/build/format/regex.mjs
+function IsRegex(value) {
+  try {
+    new RegExp(value, "u");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// node_modules/typebox/build/format/relative_json_pointer.mjs
+var RelativeJsonPointer = /^(?:0|[1-9][0-9]*)(?:#|(?:\/(?:[^~/]|~0|~1)*)*)$/;
+function IsRelativeJsonPointer(value) {
+  return RelativeJsonPointer.test(value);
+}
+
+// node_modules/typebox/build/format/uri_reference.mjs
+var UriReference = /^(?:[a-z][a-z0-9+\-.]*:(?:\/\/(?:(?:[-a-z0-9._~!$&'()*+,;=:]|%[0-9a-f]{2})*@)?(?:\[(?:(?:(?:[\da-f]{1,4}:){6}(?:[\da-f]{1,4}:[\da-f]{1,4}|(?:(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d))|::(?:[\da-f]{1,4}:){5}(?:[\da-f]{1,4}:[\da-f]{1,4}|(?:(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d))|(?:[\da-f]{1,4})?::(?:[\da-f]{1,4}:){4}(?:[\da-f]{1,4}:[\da-f]{1,4}|(?:(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d))|(?:(?:[\da-f]{1,4}:){0,1}[\da-f]{1,4})?::(?:[\da-f]{1,4}:){3}(?:[\da-f]{1,4}:[\da-f]{1,4}|(?:(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d))|(?:(?:[\da-f]{1,4}:){0,2}[\da-f]{1,4})?::(?:[\da-f]{1,4}:){2}(?:[\da-f]{1,4}:[\da-f]{1,4}|(?:(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d))|(?:(?:[\da-f]{1,4}:){0,3}[\da-f]{1,4})?::[\da-f]{1,4}:(?:[\da-f]{1,4}:[\da-f]{1,4}|(?:(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d))|(?:(?:[\da-f]{1,4}:){0,4}[\da-f]{1,4})?::(?:[\da-f]{1,4}:[\da-f]{1,4}|(?:(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d))|(?:(?:[\da-f]{1,4}:){0,5}[\da-f]{1,4})?::[\da-f]{1,4}|(?:(?:[\da-f]{1,4}:){0,6}[\da-f]{1,4})?::)|v[0-9a-f]+\.[-a-z0-9._~!$&'()*+,;=:]+)\]|(?:(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)|(?:[-a-z0-9._~!$&'()*+,;=]|%[0-9a-f]{2})*)(?::\d*)?(?:\/(?:[-a-z0-9._~!$&'()*+,;=:@]|%[0-9a-f]{2})*)*|\/(?:(?:[-a-z0-9._~!$&'()*+,;=:@]|%[0-9a-f]{2})+(?:\/(?:[-a-z0-9._~!$&'()*+,;=:@]|%[0-9a-f]{2})*)*)?|(?:[-a-z0-9._~!$&'()*+,;=:@]|%[0-9a-f]{2})+(?:\/(?:[-a-z0-9._~!$&'()*+,;=:@]|%[0-9a-f]{2})*)*)?|(?:\/\/(?:(?:[-a-z0-9._~!$&'()*+,;=:]|%[0-9a-f]{2})*@)?(?:\[(?:(?:(?:[\da-f]{1,4}:){6}(?:[\da-f]{1,4}:[\da-f]{1,4}|(?:(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d))|::(?:[\da-f]{1,4}:){5}(?:[\da-f]{1,4}:[\da-f]{1,4}|(?:(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d))|(?:[\da-f]{1,4})?::(?:[\da-f]{1,4}:){4}(?:[\da-f]{1,4}:[\da-f]{1,4}|(?:(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d))|(?:(?:[\da-f]{1,4}:){0,1}[\da-f]{1,4})?::(?:[\da-f]{1,4}:){3}(?:[\da-f]{1,4}:[\da-f]{1,4}|(?:(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d))|(?:(?:[\da-f]{1,4}:){0,2}[\da-f]{1,4})?::(?:[\da-f]{1,4}:){2}(?:[\da-f]{1,4}:[\da-f]{1,4}|(?:(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d))|(?:(?:[\da-f]{1,4}:){0,3}[\da-f]{1,4})?::[\da-f]{1,4}:(?:[\da-f]{1,4}:[\da-f]{1,4}|(?:(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d))|(?:(?:[\da-f]{1,4}:){0,4}[\da-f]{1,4})?::(?:[\da-f]{1,4}:[\da-f]{1,4}|(?:(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d))|(?:(?:[\da-f]{1,4}:){0,5}[\da-f]{1,4})?::[\da-f]{1,4}|(?:(?:[\da-f]{1,4}:){0,6}[\da-f]{1,4})?::)|v[0-9a-f]+\.[-a-z0-9._~!$&'()*+,;=:]+)\]|(?:(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)|(?:[-a-z0-9._~!$&'()*+,;=]|%[0-9a-f]{2})*)(?::\d*)?(?:\/(?:[-a-z0-9._~!$&'()*+,;=:@]|%[0-9a-f]{2})*)*|\/(?:(?:[-a-z0-9._~!$&'()*+,;=:@]|%[0-9a-f]{2})+(?:\/(?:[-a-z0-9._~!$&'()*+,;=:@]|%[0-9a-f]{2})*)*)?|(?:[-a-z0-9._~!$&'()*+,;=@]|%[0-9a-f]{2})+(?:\/(?:[-a-z0-9._~!$&'()*+,;=:@]|%[0-9a-f]{2})*)*)?)(?:\?(?:[-a-z0-9._~!$&'()*+,;=:@/?]|%[0-9a-f]{2})*)?(?:#(?:[-a-z0-9._~!$&'()*+,;=:@/?]|%[0-9a-f]{2})*)?$/i;
+function IsUriReference(value) {
+  return UriReference.test(value);
+}
+
+// node_modules/typebox/build/format/uri_template.mjs
+var UriTemplate = /^(?:(?:[^\x00-\x20"<>%\\^`{|}\x7f]|%[0-9a-f]{2})|\{[+#./;?&=,!@|]?(?:[a-z0-9_]|%[0-9a-f]{2})+(?:\.(?:[a-z0-9_]|%[0-9a-f]{2})+)*(?::[1-9]\d{0,3}|\*)?(?:,(?:[a-z0-9_]|%[0-9a-f]{2})+(?:\.(?:[a-z0-9_]|%[0-9a-f]{2})+)*(?::[1-9]\d{0,3}|\*)?)*\})*$/i;
+function IsUriTemplate(value) {
+  return UriTemplate.test(value);
+}
+
+// node_modules/typebox/build/format/uri.mjs
+var Uri = /^[a-z][a-z0-9+\-.]*:(?:\/\/(?:(?:[-a-z0-9._~!$&'()*+,;=:]|%[0-9a-f]{2})*@)?(?:\[(?:(?:(?:[\da-f]{1,4}:){6}(?:[\da-f]{1,4}:[\da-f]{1,4}|(?:(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d))|::(?:[\da-f]{1,4}:){5}(?:[\da-f]{1,4}:[\da-f]{1,4}|(?:(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d))|(?:[\da-f]{1,4})?::(?:[\da-f]{1,4}:){4}(?:[\da-f]{1,4}:[\da-f]{1,4}|(?:(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d))|(?:(?:[\da-f]{1,4}:){0,1}[\da-f]{1,4})?::(?:[\da-f]{1,4}:){3}(?:[\da-f]{1,4}:[\da-f]{1,4}|(?:(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d))|(?:(?:[\da-f]{1,4}:){0,2}[\da-f]{1,4})?::(?:[\da-f]{1,4}:){2}(?:[\da-f]{1,4}:[\da-f]{1,4}|(?:(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d))|(?:(?:[\da-f]{1,4}:){0,3}[\da-f]{1,4})?::[\da-f]{1,4}:(?:[\da-f]{1,4}:[\da-f]{1,4}|(?:(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d))|(?:(?:[\da-f]{1,4}:){0,4}[\da-f]{1,4})?::(?:[\da-f]{1,4}:[\da-f]{1,4}|(?:(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d))|(?:(?:[\da-f]{1,4}:){0,5}[\da-f]{1,4})?::[\da-f]{1,4}|(?:(?:[\da-f]{1,4}:){0,6}[\da-f]{1,4})?::)|v[0-9a-f]+\.[-a-z0-9._~!$&'()*+,;=:]+)\]|(?:(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)|(?:[-a-z0-9._~!$&'()*+,;=]|%[0-9a-f]{2})*)(?::\d*)?(?:\/(?:[-a-z0-9._~!$&'()*+,;=:@]|%[0-9a-f]{2})*)*|\/(?:(?:[-a-z0-9._~!$&'()*+,;=:@]|%[0-9a-f]{2})+(?:\/(?:[-a-z0-9._~!$&'()*+,;=:@]|%[0-9a-f]{2})*)*)?|(?:[-a-z0-9._~!$&'()*+,;=:@]|%[0-9a-f]{2})+(?:\/(?:[-a-z0-9._~!$&'()*+,;=:@]|%[0-9a-f]{2})*)*)?(?:\?(?:[-a-z0-9._~!$&'()*+,;=:@/?]|%[0-9a-f]{2})*)?(?:#(?:[-a-z0-9._~!$&'()*+,;=:@/?]|%[0-9a-f]{2})*)?$/i;
+function IsUri(value) {
+  return Uri.test(value);
+}
+
+// node_modules/typebox/build/format/url.mjs
+function IsUrl(value) {
+  return URL.canParse(value);
+}
+
+// node_modules/typebox/build/format/uuid.mjs
+var Uuid = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
+function IsUuid(value) {
+  return Uuid.test(value);
+}
+
+// node_modules/typebox/build/format/_registry.mjs
+var formats = /* @__PURE__ */ new Map();
+function Clear() {
+  formats.clear();
+}
+function Entries2() {
+  return [...formats.entries()];
+}
+function Set3(format, check) {
+  formats.set(format, check);
+}
+function Has(format) {
+  return formats.has(format);
+}
+function Get3(format) {
+  return formats.get(format);
+}
+function Test(format, value) {
+  return formats.get(format)?.(value) ?? true;
+}
+function Reset2() {
+  Clear();
+  formats.set("date-time", IsDateTime);
+  formats.set("date", IsDate2);
+  formats.set("duration", IsDuration);
+  formats.set("email", IsEmail);
+  formats.set("hostname", IsHostname2);
+  formats.set("idn-email", IsIdnEmail);
+  formats.set("idn-hostname", IsIdnHostname2);
+  formats.set("ipv4", IsIPv4);
+  formats.set("ipv6", IsIPv6);
+  formats.set("iri-reference", IsIriReference);
+  formats.set("iri", IsIri);
+  formats.set("json-pointer-uri-fragment", IsJsonPointerUriFragment);
+  formats.set("json-pointer", IsJsonPointer);
+  formats.set("regex", IsRegex);
+  formats.set("relative-json-pointer", IsRelativeJsonPointer);
+  formats.set("time", IsTime);
+  formats.set("uri-reference", IsUriReference);
+  formats.set("uri-template", IsUriTemplate);
+  formats.set("uri", IsUri);
+  formats.set("url", IsUrl);
+  formats.set("uuid", IsUuid);
+}
+Reset2();
+
+// node_modules/typebox/build/schema/engine/format.mjs
+function CheckFormat(_stack, _context, schema, value) {
+  return format_exports.Test(schema.format, value);
+}
+function ErrorFormat(stack, context, schemaPath, instancePath, schema, value) {
+  return CheckFormat(stack, context, schema, value) || context.AddError({
+    keyword: "format",
+    schemaPath,
+    instancePath,
+    params: { format: schema.format }
+  });
+}
+
+// node_modules/typebox/build/schema/engine/if.mjs
+function CheckIf(stack, context, schema, value) {
+  const thenSchema = IsThen(schema) ? schema.then : true;
+  const elseSchema = IsElse(schema) ? schema.else : true;
+  return CheckSchema(stack, context, schema.if, value) ? CheckSchema(stack, context, thenSchema, value) : CheckSchema(stack, context, elseSchema, value);
+}
+function ErrorIf(stack, context, schemaPath, instancePath, schema, value) {
+  const thenSchema = IsThen(schema) ? schema.then : true;
+  const elseSchema = IsElse(schema) ? schema.else : true;
+  const trueContext = new ErrorContext();
+  const isIf = ErrorSchema(stack, trueContext, `${schemaPath}/if`, instancePath, schema.if, value) ? ErrorSchema(stack, trueContext, `${schemaPath}/then`, instancePath, thenSchema, value) || context.AddError({
+    keyword: "if",
+    schemaPath,
+    instancePath,
+    params: { failingKeyword: "then" }
+  }) : ErrorSchema(stack, context, `${schemaPath}/else`, instancePath, elseSchema, value) || context.AddError({
+    keyword: "if",
+    schemaPath,
+    instancePath,
+    params: { failingKeyword: "else" }
+  });
+  if (isIf)
+    context.Merge([trueContext]);
+  return isIf;
+}
+
+// node_modules/typebox/build/schema/engine/items.mjs
+function CheckItemsSized(stack, context, schema, value) {
+  return guard_exports.Every(schema.items, 0, (schema2, index) => {
+    return guard_exports.IsLessEqualThan(value.length, index) || CheckSchemaPushStack(stack, context, schema2, value[index]) && context.AddIndex(index);
+  });
+}
+function ErrorItemsSized(stack, context, schemaPath, instancePath, schema, value) {
+  return guard_exports.EveryAll(schema.items, 0, (schema2, index) => {
+    const nextSchemaPath = `${schemaPath}/items/${index}`;
+    const nextInstancePath = `${instancePath}/${index}`;
+    return guard_exports.IsLessEqualThan(value.length, index) || ErrorSchemaPushStack(stack, context, nextSchemaPath, nextInstancePath, schema2, value[index]) && context.AddIndex(index);
+  });
+}
+function CheckItemsUnsized(stack, context, schema, value) {
+  const offset = IsPrefixItems(schema) ? schema.prefixItems.length : 0;
+  return guard_exports.Every(value, offset, (element, index) => {
+    return CheckSchemaPushStack(stack, context, schema.items, element) && context.AddIndex(index);
+  });
+}
+function ErrorItemsUnsized(stack, context, schemaPath, instancePath, schema, value) {
+  const offset = IsPrefixItems(schema) ? schema.prefixItems.length : 0;
+  return guard_exports.EveryAll(value, offset, (element, index) => {
+    const nextSchemaPath = `${schemaPath}/items`;
+    const nextInstancePath = `${instancePath}/${index}`;
+    return ErrorSchemaPushStack(stack, context, nextSchemaPath, nextInstancePath, schema.items, element) && context.AddIndex(index);
+  });
+}
+function CheckItems(stack, context, schema, value) {
+  return IsItemsSized(schema) ? CheckItemsSized(stack, context, schema, value) : CheckItemsUnsized(stack, context, schema, value);
+}
+function ErrorItems(stack, context, schemaPath, instancePath, schema, value) {
+  return IsItemsSized(schema) ? ErrorItemsSized(stack, context, schemaPath, instancePath, schema, value) : ErrorItemsUnsized(stack, context, schemaPath, instancePath, schema, value);
+}
+
+// node_modules/typebox/build/schema/engine/maxContains.mjs
+function IsValid3(schema) {
+  return IsContains(schema);
+}
+function CheckMaxContains(stack, context, schema, value) {
+  if (!IsValid3(schema))
+    return true;
+  const count = guard_exports.Counted(value, (item) => CheckSchema(stack, context, schema.contains, item));
+  return guard_exports.IsLessEqualThan(count, schema.maxContains);
+}
+function ErrorMaxContains(stack, context, schemaPath, instancePath, schema, value) {
+  const minContains = IsMinContains(schema) ? schema.minContains : 1;
+  return CheckMaxContains(stack, context, schema, value) || context.AddError({
+    keyword: "contains",
+    schemaPath,
+    instancePath,
+    params: { minContains, maxContains: schema.maxContains }
+  });
+}
+
+// node_modules/typebox/build/schema/engine/maximum.mjs
+function CheckMaximum(_stack, _context, schema, value) {
+  return guard_exports.IsLessEqualThan(value, schema.maximum);
+}
+function ErrorMaximum(stack, context, schemaPath, instancePath, schema, value) {
+  return CheckMaximum(stack, context, schema, value) || context.AddError({
+    keyword: "maximum",
+    schemaPath,
+    instancePath,
+    params: { comparison: "<=", limit: schema.maximum }
+  });
+}
+
+// node_modules/typebox/build/schema/engine/maxItems.mjs
+function CheckMaxItems(_stack, _context, schema, value) {
+  return guard_exports.IsLessEqualThan(value.length, schema.maxItems);
+}
+function ErrorMaxItems(stack, context, schemaPath, instancePath, schema, value) {
+  return CheckMaxItems(stack, context, schema, value) || context.AddError({
+    keyword: "maxItems",
+    schemaPath,
+    instancePath,
+    params: { limit: schema.maxItems }
+  });
+}
+
+// node_modules/typebox/build/schema/engine/maxLength.mjs
+function CheckMaxLength(_stack, _context, schema, value) {
+  return guard_exports.IsMaxLength(value, schema.maxLength);
+}
+function ErrorMaxLength(stack, context, schemaPath, instancePath, schema, value) {
+  return CheckMaxLength(stack, context, schema, value) || context.AddError({
+    keyword: "maxLength",
+    schemaPath,
+    instancePath,
+    params: { limit: schema.maxLength }
+  });
+}
+
+// node_modules/typebox/build/schema/engine/maxProperties.mjs
+function CheckMaxProperties(_stack, _context, schema, value) {
+  return guard_exports.IsLessEqualThan(guard_exports.Keys(value).length, schema.maxProperties);
+}
+function ErrorMaxProperties(stack, context, schemaPath, instancePath, schema, value) {
+  return CheckMaxProperties(stack, context, schema, value) || context.AddError({
+    keyword: "maxProperties",
+    schemaPath,
+    instancePath,
+    params: { limit: schema.maxProperties }
+  });
+}
+
+// node_modules/typebox/build/schema/engine/minContains.mjs
+function IsValid4(schema) {
+  return IsContains(schema);
+}
+function CheckMinContains(stack, context, schema, value) {
+  if (!IsValid4(schema))
+    return true;
+  const count = guard_exports.Counted(value, (item, index) => CheckSchema(stack, context, schema.contains, item) && context.AddIndex(index));
+  return guard_exports.IsGreaterEqualThan(count, schema.minContains);
+}
+function ErrorMinContains(stack, context, schemaPath, instancePath, schema, value) {
+  return CheckMinContains(stack, context, schema, value) || context.AddError({
+    keyword: "contains",
+    schemaPath,
+    instancePath,
+    params: { minContains: schema.minContains }
+  });
+}
+
+// node_modules/typebox/build/schema/engine/minimum.mjs
+function CheckMinimum(_stack, _context, schema, value) {
+  return guard_exports.IsGreaterEqualThan(value, schema.minimum);
+}
+function ErrorMinimum(stack, context, schemaPath, instancePath, schema, value) {
+  return CheckMinimum(stack, context, schema, value) || context.AddError({
+    keyword: "minimum",
+    schemaPath,
+    instancePath,
+    params: { comparison: ">=", limit: schema.minimum }
+  });
+}
+
+// node_modules/typebox/build/schema/engine/minItems.mjs
+function CheckMinItems(_stack, _context, schema, value) {
+  return guard_exports.IsGreaterEqualThan(value.length, schema.minItems);
+}
+function ErrorMinItems(stack, context, schemaPath, instancePath, schema, value) {
+  return CheckMinItems(stack, context, schema, value) || context.AddError({
+    keyword: "minItems",
+    schemaPath,
+    instancePath,
+    params: { limit: schema.minItems }
+  });
+}
+
+// node_modules/typebox/build/schema/engine/minLength.mjs
+function CheckMinLength(_stack, _context, schema, value) {
+  return guard_exports.IsMinLength(value, schema.minLength);
+}
+function ErrorMinLength(stack, context, schemaPath, instancePath, schema, value) {
+  return CheckMinLength(stack, context, schema, value) || context.AddError({
+    keyword: "minLength",
+    schemaPath,
+    instancePath,
+    params: { limit: schema.minLength }
+  });
+}
+
+// node_modules/typebox/build/schema/engine/minProperties.mjs
+function CheckMinProperties(_stack, _context, schema, value) {
+  return guard_exports.IsGreaterEqualThan(guard_exports.Keys(value).length, schema.minProperties);
+}
+function ErrorMinProperties(stack, context, schemaPath, instancePath, schema, value) {
+  return CheckMinProperties(stack, context, schema, value) || context.AddError({
+    keyword: "minProperties",
+    schemaPath,
+    instancePath,
+    params: { limit: schema.minProperties }
+  });
+}
+
+// node_modules/typebox/build/schema/engine/multipleOf.mjs
+function CheckMultipleOf(_stack, _context, schema, value) {
+  return guard_exports.IsMultipleOf(value, schema.multipleOf);
+}
+function ErrorMultipleOf(stack, context, schemaPath, instancePath, schema, value) {
+  return CheckMultipleOf(stack, context, schema, value) || context.AddError({
+    keyword: "multipleOf",
+    schemaPath,
+    instancePath,
+    params: { multipleOf: schema.multipleOf }
+  });
+}
+
+// node_modules/typebox/build/schema/engine/not.mjs
+function CheckNot(stack, context, schema, value) {
+  const nextContext = new CheckContext();
+  const isSchema = !CheckSchema(stack, nextContext, schema.not, value);
+  const isNot = isSchema && context.Merge([nextContext]);
+  return isNot;
+}
+function ErrorNot(stack, context, schemaPath, instancePath, schema, value) {
+  return CheckNot(stack, context, schema, value) || context.AddError({
+    keyword: "not",
+    schemaPath,
+    instancePath,
+    params: {}
+  });
+}
+
+// node_modules/typebox/build/schema/engine/oneOf.mjs
+function CheckOneOf(stack, context, schema, value) {
+  const passedContexts = schema.oneOf.reduce((result, schema2) => {
+    const nextContext = new CheckContext();
+    return CheckSchema(stack, nextContext, schema2, value) ? [...result, nextContext] : result;
+  }, []);
+  return guard_exports.IsEqual(passedContexts.length, 1) && context.Merge(passedContexts);
+}
+function ErrorOneOf(stack, context, schemaPath, instancePath, schema, value) {
+  const failedContexts = [];
+  const passingSchemas = [];
+  const passedContexts = schema.oneOf.reduce((result, schema2, index) => {
+    const nextContext = new ErrorContext();
+    const nextSchemaPath = `${schemaPath}/oneOf/${index}`;
+    const isSchema = ErrorSchema(stack, nextContext, nextSchemaPath, instancePath, schema2, value);
+    if (isSchema)
+      passingSchemas.push(index);
+    if (!isSchema)
+      failedContexts.push(nextContext);
+    return isSchema ? [...result, nextContext] : result;
+  }, []);
+  const isOneOf = guard_exports.IsEqual(passedContexts.length, 1) && context.Merge(passedContexts);
+  if (!isOneOf && guard_exports.IsEqual(passingSchemas.length, 0))
+    failedContexts.forEach((failed) => failed.GetErrors().forEach((error) => context.AddError(error)));
+  return isOneOf || context.AddError({
+    keyword: "oneOf",
+    schemaPath,
+    instancePath,
+    params: { passingSchemas }
+  });
+}
+
+// node_modules/typebox/build/schema/engine/pattern.mjs
+function CheckPattern(_stack, _context, schema, value) {
+  const regexp = guard_exports.IsString(schema.pattern) ? UnicodeRegExp(schema.pattern) : schema.pattern;
+  return regexp.test(value);
+}
+function ErrorPattern(stack, context, schemaPath, instancePath, schema, value) {
+  return CheckPattern(stack, context, schema, value) || context.AddError({
+    keyword: "pattern",
+    schemaPath,
+    instancePath,
+    params: { pattern: schema.pattern }
+  });
+}
+
+// node_modules/typebox/build/schema/engine/patternProperties.mjs
+function CheckPatternProperties(stack, context, schema, value) {
+  return guard_exports.Every(guard_exports.Entries(schema.patternProperties), 0, ([pattern, schema2]) => {
+    const regexp = UnicodeRegExp(pattern);
+    return guard_exports.Every(guard_exports.Entries(value), 0, ([key, prop]) => {
+      return !regexp.test(key) || CheckSchemaPushStack(stack, context, schema2, prop) && context.AddKey(key);
+    });
+  });
+}
+function ErrorPatternProperties(stack, context, schemaPath, instancePath, schema, value) {
+  return guard_exports.EveryAll(guard_exports.Entries(schema.patternProperties), 0, ([pattern, schema2]) => {
+    const nextSchemaPath = `${schemaPath}/patternProperties/${pattern}`;
+    const regexp = UnicodeRegExp(pattern);
+    return guard_exports.EveryAll(guard_exports.Entries(value), 0, ([key, value2]) => {
+      const nextInstancePath = `${instancePath}/${key}`;
+      const notKey = !regexp.test(key);
+      return notKey || ErrorSchemaPushStack(stack, context, nextSchemaPath, nextInstancePath, schema2, value2) && context.AddKey(key);
+    });
+  });
+}
+
+// node_modules/typebox/build/schema/engine/prefixItems.mjs
+function CheckPrefixItems(stack, context, schema, value) {
+  return guard_exports.IsEqual(value.length, 0) || guard_exports.Every(schema.prefixItems, 0, (schema2, index) => {
+    return guard_exports.IsLessEqualThan(value.length, index) || CheckSchemaPushStack(stack, context, schema2, value[index]) && context.AddIndex(index);
+  });
+}
+function ErrorPrefixItems(stack, context, schemaPath, instancePath, schema, value) {
+  return guard_exports.IsEqual(value.length, 0) || guard_exports.EveryAll(schema.prefixItems, 0, (schema2, index) => {
+    const nextSchemaPath = `${schemaPath}/prefixItems/${index}`;
+    const nextInstancePath = `${instancePath}/${index}`;
+    return guard_exports.IsLessEqualThan(value.length, index) || ErrorSchemaPushStack(stack, context, nextSchemaPath, nextInstancePath, schema2, value[index]) && context.AddIndex(index);
+  });
+}
+
+// node_modules/typebox/build/schema/engine/_exact_optional.mjs
+function IsExactOptional(required, key) {
+  return required.includes(key) || settings_exports.Get().exactOptionalPropertyTypes;
+}
+function InexactOptionalCheck(value, key) {
+  return guard_exports.IsUndefined(value[key]);
+}
+
+// node_modules/typebox/build/schema/engine/properties.mjs
+function CheckProperties(stack, context, schema, value) {
+  const required = IsRequired(schema) ? schema.required : [];
+  const isProperties = guard_exports.Every(guard_exports.Entries(schema.properties), 0, ([key, schema2]) => {
+    const isProperty = !guard_exports.HasPropertyKey(value, key) || CheckSchemaPushStack(stack, context, schema2, value[key]) && context.AddKey(key);
+    return IsExactOptional(required, key) ? isProperty : InexactOptionalCheck(value, key) || isProperty;
+  });
+  return isProperties;
+}
+function ErrorProperties(stack, context, schemaPath, instancePath, schema, value) {
+  const required = IsRequired(schema) ? schema.required : [];
+  const isProperties = guard_exports.EveryAll(guard_exports.Entries(schema.properties), 0, ([key, schema2]) => {
+    const nextSchemaPath = `${schemaPath}/properties/${key}`;
+    const nextInstancePath = `${instancePath}/${key}`;
+    const isProperty = () => !guard_exports.HasPropertyKey(value, key) || ErrorSchemaPushStack(stack, context, nextSchemaPath, nextInstancePath, schema2, value[key]) && context.AddKey(key);
+    return IsExactOptional(required, key) ? isProperty() : InexactOptionalCheck(value, key) || isProperty();
+  });
+  return isProperties;
+}
+
+// node_modules/typebox/build/schema/engine/propertyNames.mjs
+function CheckPropertyNames(stack, context, schema, value) {
+  return guard_exports.Every(guard_exports.Keys(value), 0, (key, _index) => CheckSchema(stack, context, schema.propertyNames, key));
+}
+function ErrorPropertyNames(stack, context, schemaPath, instancePath, schema, value) {
+  const propertyNames = [];
+  const isPropertyNames = guard_exports.EveryAll(guard_exports.Keys(value), 0, (key, _index) => {
+    const nextInstancePath = `${instancePath}/${key}`;
+    const nextSchemaPath = `${schemaPath}/propertyNames`;
+    const isPropertyName = ErrorSchema(stack, context, nextSchemaPath, nextInstancePath, schema.propertyNames, key);
+    if (!isPropertyName)
+      propertyNames.push(key);
+    return isPropertyName;
+  });
+  return isPropertyNames || context.AddError({
+    keyword: "propertyNames",
+    schemaPath,
+    instancePath,
+    params: { propertyNames }
+  });
+}
+
+// node_modules/typebox/build/schema/engine/recursiveRef.mjs
+function CheckRecursiveRef(stack, context, schema, value) {
+  const target = stack.RecursiveRef(schema) ?? false;
+  return IsSchema2(target) && CheckSchema(stack, context, target, value);
+}
+function ErrorRecursiveRef(stack, context, _schemaPath, instancePath, schema, value) {
+  const target = stack.RecursiveRef(schema) ?? false;
+  return IsSchema2(target) && ErrorSchema(stack, context, "#", instancePath, target, value);
+}
+
+// node_modules/typebox/build/schema/engine/ref.mjs
+function CheckRef(stack, context, schema, value) {
+  const target = stack.Ref(schema) ?? false;
+  const nextContext = new CheckContext();
+  const result = IsSchema2(target) && CheckSchema(stack, nextContext, target, value);
+  if (result)
+    context.Merge([nextContext]);
+  return result;
+}
+function ErrorRef(stack, context, _schemaPath, instancePath, schema, value) {
+  const target = stack.Ref(schema) ?? false;
+  const nextContext = new ErrorContext();
+  const result = IsSchema2(target) && ErrorSchema(stack, nextContext, "#", instancePath, target, value);
+  if (result)
+    context.Merge([nextContext]);
+  if (!result)
+    nextContext.GetErrors().forEach((error) => context.AddError(error));
+  return result;
+}
+
+// node_modules/typebox/build/schema/engine/required.mjs
+function CheckRequired(_stack, _context, schema, value) {
+  return guard_exports.Every(schema.required, 0, (key) => guard_exports.HasPropertyKey(value, key));
+}
+function ErrorRequired(_stack, context, schemaPath, instancePath, schema, value) {
+  const requiredProperties = [];
+  const isRequired = guard_exports.EveryAll(schema.required, 0, (key) => {
+    const hasKey = guard_exports.HasPropertyKey(value, key);
+    if (!hasKey)
+      requiredProperties.push(key);
+    return hasKey;
+  });
+  return isRequired || context.AddError({
+    keyword: "required",
+    schemaPath,
+    instancePath,
+    params: { requiredProperties }
+  });
+}
+
+// node_modules/typebox/build/schema/engine/type.mjs
+function CheckTypeName(_stack, _context, type, _schema, value) {
+  return (
+    // jsonschema
+    guard_exports.IsEqual(type, "object") ? guard_exports.IsObjectNotArray(value) : guard_exports.IsEqual(type, "array") ? guard_exports.IsArray(value) : guard_exports.IsEqual(type, "boolean") ? guard_exports.IsBoolean(value) : guard_exports.IsEqual(type, "integer") ? guard_exports.IsInteger(value) : guard_exports.IsEqual(type, "number") ? guard_exports.IsNumber(value) : guard_exports.IsEqual(type, "null") ? guard_exports.IsNull(value) : guard_exports.IsEqual(type, "string") ? guard_exports.IsString(value) : (
+      // xschema
+      guard_exports.IsEqual(type, "bigint") ? guard_exports.IsBigInt(value) : guard_exports.IsEqual(type, "constructor") ? guard_exports.IsConstructor(value) : guard_exports.IsEqual(type, "function") ? guard_exports.IsFunction(value) : guard_exports.IsEqual(type, "symbol") ? guard_exports.IsSymbol(value) : guard_exports.IsEqual(type, "undefined") ? guard_exports.IsUndefined(value) : guard_exports.IsEqual(type, "void") ? guard_exports.IsUndefined(value) : true
+    )
+  );
+}
+function CheckTypeNames(stack, context, types, schema, value) {
+  return guard_exports.Some(types, (type) => CheckTypeName(stack, context, type, schema, value));
+}
+function CheckType(stack, context, schema, value) {
+  return guard_exports.IsArray(schema.type) ? CheckTypeNames(stack, context, schema.type, schema, value) : CheckTypeName(stack, context, schema.type, schema, value);
+}
+function ErrorType(stack, context, schemaPath, instancePath, schema, value) {
+  const isType = guard_exports.IsArray(schema.type) ? CheckTypeNames(stack, context, schema.type, schema, value) : CheckTypeName(stack, context, schema.type, schema, value);
+  return isType || context.AddError({
+    keyword: "type",
+    schemaPath,
+    instancePath,
+    params: { type: schema.type }
+  });
+}
+
+// node_modules/typebox/build/schema/engine/unevaluatedItems.mjs
+function CheckUnevaluatedItems(stack, context, schema, value) {
+  const indices = context.GetIndices();
+  return guard_exports.Every(value, 0, (item, index) => {
+    return (indices.has(index) || CheckSchema(stack, context, schema.unevaluatedItems, item)) && context.AddIndex(index);
+  });
+}
+function ErrorUnevaluatedItems(stack, context, schemaPath, instancePath, schema, value) {
+  const indices = context.GetIndices();
+  const unevaluatedItems = [];
+  const isUnevaluatedItems = guard_exports.EveryAll(value, 0, (item, index) => {
+    const nextContext = new ErrorContext();
+    const isEvaluatedItem = (indices.has(index) || ErrorSchema(stack, nextContext, schemaPath, instancePath, schema.unevaluatedItems, item)) && context.AddIndex(index);
+    if (!isEvaluatedItem)
+      unevaluatedItems.push(index);
+    return isEvaluatedItem;
+  });
+  return isUnevaluatedItems || context.AddError({
+    keyword: "unevaluatedItems",
+    schemaPath,
+    instancePath,
+    params: { unevaluatedItems }
+  });
+}
+
+// node_modules/typebox/build/schema/engine/unevaluatedProperties.mjs
+function CheckUnevaluatedProperties(stack, context, schema, value) {
+  const keys = context.GetKeys();
+  return guard_exports.Every(guard_exports.Entries(value), 0, ([key, prop]) => {
+    return keys.has(key) || CheckSchema(stack, context, schema.unevaluatedProperties, prop) && context.AddKey(key);
+  });
+}
+function ErrorUnevaluatedProperties(stack, context, schemaPath, instancePath, schema, value) {
+  const keys = context.GetKeys();
+  const unevaluatedProperties = [];
+  const isUnevaluatedProperties = guard_exports.EveryAll(guard_exports.Entries(value), 0, ([key, prop]) => {
+    const nextContext = new ErrorContext();
+    const isEvaluatedProperty = keys.has(key) || ErrorSchema(stack, nextContext, schemaPath, instancePath, schema.unevaluatedProperties, prop) && context.AddKey(key);
+    if (!isEvaluatedProperty)
+      unevaluatedProperties.push(key);
+    return isEvaluatedProperty;
+  });
+  return isUnevaluatedProperties || context.AddError({
+    keyword: "unevaluatedProperties",
+    schemaPath,
+    instancePath,
+    params: { unevaluatedProperties }
+  });
+}
+
+// node_modules/typebox/build/schema/engine/uniqueItems.mjs
+function IsValid5(schema) {
+  return !guard_exports.IsEqual(schema.uniqueItems, false);
+}
+function CheckUniqueItems(_stack, _context, schema, value) {
+  if (!IsValid5(schema))
+    return true;
+  const set = new Set(value.map(hash_exports.Hash)).size;
+  const isLength = value.length;
+  return guard_exports.IsEqual(set, isLength);
+}
+function ErrorUniqueItems(_stack, context, schemaPath, instancePath, schema, value) {
+  if (!IsValid5(schema))
+    return true;
+  const set = /* @__PURE__ */ new Set();
+  const duplicateItems = value.reduce((result, value2, index) => {
+    const hash = hash_exports.Hash(value2);
+    if (set.has(hash))
+      return [...result, index];
+    set.add(hash);
+    return result;
+  }, []);
+  const isUniqueItems = guard_exports.IsEqual(duplicateItems.length, 0);
+  return isUniqueItems || context.AddError({
+    keyword: "uniqueItems",
+    schemaPath,
+    instancePath,
+    params: { duplicateItems }
+  });
+}
+
+// node_modules/typebox/build/schema/engine/schema.mjs
+function CheckSchemaPushStack(stack, context, schema, value) {
+  return context.Push() && CheckSchema(stack, context, schema, value) && context.Pop();
+}
+function CheckSchema(stack, context, schema, value) {
+  stack.Push(schema);
+  const result = IsSchemaBoolean(schema) ? CheckSchemaBoolean(stack, context, schema, value) : (!IsType(schema) || CheckType(stack, context, schema, value)) && (!(guard_exports.IsObject(value) && !guard_exports.IsArray(value)) || (!IsRequired(schema) || CheckRequired(stack, context, schema, value)) && (!IsAdditionalProperties(schema) || CheckAdditionalProperties(stack, context, schema, value)) && (!IsDependencies(schema) || CheckDependencies(stack, context, schema, value)) && (!IsDependentRequired(schema) || CheckDependentRequired(stack, context, schema, value)) && (!IsDependentSchemas(schema) || CheckDependentSchemas(stack, context, schema, value)) && (!IsPatternProperties(schema) || CheckPatternProperties(stack, context, schema, value)) && (!IsProperties(schema) || CheckProperties(stack, context, schema, value)) && (!IsPropertyNames(schema) || CheckPropertyNames(stack, context, schema, value)) && (!IsMinProperties(schema) || CheckMinProperties(stack, context, schema, value)) && (!IsMaxProperties(schema) || CheckMaxProperties(stack, context, schema, value))) && (!guard_exports.IsArray(value) || (!IsAdditionalItems(schema) || CheckAdditionalItems(stack, context, schema, value)) && (!IsContains(schema) || CheckContains(stack, context, schema, value)) && (!IsItems(schema) || CheckItems(stack, context, schema, value)) && (!IsMaxContains(schema) || CheckMaxContains(stack, context, schema, value)) && (!IsMaxItems(schema) || CheckMaxItems(stack, context, schema, value)) && (!IsMinContains(schema) || CheckMinContains(stack, context, schema, value)) && (!IsMinItems(schema) || CheckMinItems(stack, context, schema, value)) && (!IsPrefixItems(schema) || CheckPrefixItems(stack, context, schema, value)) && (!IsUniqueItems(schema) || CheckUniqueItems(stack, context, schema, value))) && (!guard_exports.IsString(value) || (!IsMaxLength3(schema) || CheckMaxLength(stack, context, schema, value)) && (!IsMinLength3(schema) || CheckMinLength(stack, context, schema, value)) && (!IsFormat(schema) || CheckFormat(stack, context, schema, value)) && (!IsPattern(schema) || CheckPattern(stack, context, schema, value))) && (!(guard_exports.IsNumber(value) || guard_exports.IsBigInt(value)) || (!IsExclusiveMaximum(schema) || CheckExclusiveMaximum(stack, context, schema, value)) && (!IsExclusiveMinimum(schema) || CheckExclusiveMinimum(stack, context, schema, value)) && (!IsMaximum(schema) || CheckMaximum(stack, context, schema, value)) && (!IsMinimum(schema) || CheckMinimum(stack, context, schema, value)) && (!IsMultipleOf2(schema) || CheckMultipleOf(stack, context, schema, value))) && (!IsRef2(schema) || CheckRef(stack, context, schema, value)) && (!IsRecursiveRef(schema) || CheckRecursiveRef(stack, context, schema, value)) && (!IsDynamicRef(schema) || CheckDynamicRef(stack, context, schema, value)) && (!IsConst(schema) || CheckConst(stack, context, schema, value)) && (!IsEnum2(schema) || CheckEnum(stack, context, schema, value)) && (!IsIf(schema) || CheckIf(stack, context, schema, value)) && (!IsNot(schema) || CheckNot(stack, context, schema, value)) && (!IsAllOf(schema) || CheckAllOf(stack, context, schema, value)) && (!IsAnyOf(schema) || CheckAnyOf(stack, context, schema, value)) && (!IsOneOf(schema) || CheckOneOf(stack, context, schema, value)) && (!IsUnevaluatedItems(schema) || (!guard_exports.IsArray(value) || CheckUnevaluatedItems(stack, context, schema, value))) && (!IsUnevaluatedProperties(schema) || (!guard_exports.IsObject(value) || CheckUnevaluatedProperties(stack, context, schema, value))) && (!IsRefine2(schema) || CheckRefine(stack, context, schema, value));
+  stack.Pop(schema);
+  return result;
+}
+function ErrorSchemaPushStack(stack, context, schemaPath, instancePath, schema, value) {
+  return context.Push() && ErrorSchema(stack, context, schemaPath, instancePath, schema, value) && context.Pop();
+}
+function ErrorSchema(stack, context, schemaPath, instancePath, schema, value) {
+  if (context.AtCapacity())
+    return false;
+  stack.Push(schema);
+  const result = IsSchemaBoolean(schema) ? ErrorSchemaBoolean(stack, context, schemaPath, instancePath, schema, value) : !!(+(!IsType(schema) || ErrorType(stack, context, schemaPath, instancePath, schema, value)) & +(!(guard_exports.IsObject(value) && !guard_exports.IsArray(value)) || !!(+(!IsRequired(schema) || ErrorRequired(stack, context, schemaPath, instancePath, schema, value)) & +(!IsAdditionalProperties(schema) || ErrorAdditionalProperties(stack, context, schemaPath, instancePath, schema, value)) & +(!IsDependencies(schema) || ErrorDependencies(stack, context, schemaPath, instancePath, schema, value)) & +(!IsDependentRequired(schema) || ErrorDependentRequired(stack, context, schemaPath, instancePath, schema, value)) & +(!IsDependentSchemas(schema) || ErrorDependentSchemas(stack, context, schemaPath, instancePath, schema, value)) & +(!IsPatternProperties(schema) || ErrorPatternProperties(stack, context, schemaPath, instancePath, schema, value)) & +(!IsProperties(schema) || ErrorProperties(stack, context, schemaPath, instancePath, schema, value)) & +(!IsPropertyNames(schema) || ErrorPropertyNames(stack, context, schemaPath, instancePath, schema, value)) & +(!IsMinProperties(schema) || ErrorMinProperties(stack, context, schemaPath, instancePath, schema, value)) & +(!IsMaxProperties(schema) || ErrorMaxProperties(stack, context, schemaPath, instancePath, schema, value)))) & +(!guard_exports.IsArray(value) || !!(+(!IsAdditionalItems(schema) || ErrorAdditionalItems(stack, context, schemaPath, instancePath, schema, value)) & +(!IsContains(schema) || ErrorContains(stack, context, schemaPath, instancePath, schema, value)) & +(!IsItems(schema) || ErrorItems(stack, context, schemaPath, instancePath, schema, value)) & +(!IsMaxContains(schema) || ErrorMaxContains(stack, context, schemaPath, instancePath, schema, value)) & +(!IsMaxItems(schema) || ErrorMaxItems(stack, context, schemaPath, instancePath, schema, value)) & +(!IsMinContains(schema) || ErrorMinContains(stack, context, schemaPath, instancePath, schema, value)) & +(!IsMinItems(schema) || ErrorMinItems(stack, context, schemaPath, instancePath, schema, value)) & +(!IsPrefixItems(schema) || ErrorPrefixItems(stack, context, schemaPath, instancePath, schema, value)) & +(!IsUniqueItems(schema) || ErrorUniqueItems(stack, context, schemaPath, instancePath, schema, value)))) & +(!guard_exports.IsString(value) || !!(+(!IsMaxLength3(schema) || ErrorMaxLength(stack, context, schemaPath, instancePath, schema, value)) & +(!IsMinLength3(schema) || ErrorMinLength(stack, context, schemaPath, instancePath, schema, value)) & +(!IsFormat(schema) || ErrorFormat(stack, context, schemaPath, instancePath, schema, value)) & +(!IsPattern(schema) || ErrorPattern(stack, context, schemaPath, instancePath, schema, value)))) & +(!(guard_exports.IsNumber(value) || guard_exports.IsBigInt(value)) || !!(+(!IsExclusiveMaximum(schema) || ErrorExclusiveMaximum(stack, context, schemaPath, instancePath, schema, value)) & +(!IsExclusiveMinimum(schema) || ErrorExclusiveMinimum(stack, context, schemaPath, instancePath, schema, value)) & +(!IsMaximum(schema) || ErrorMaximum(stack, context, schemaPath, instancePath, schema, value)) & +(!IsMinimum(schema) || ErrorMinimum(stack, context, schemaPath, instancePath, schema, value)) & +(!IsMultipleOf2(schema) || ErrorMultipleOf(stack, context, schemaPath, instancePath, schema, value)))) & +(!IsRef2(schema) || ErrorRef(stack, context, schemaPath, instancePath, schema, value)) & +(!IsRecursiveRef(schema) || ErrorRecursiveRef(stack, context, schemaPath, instancePath, schema, value)) & +(!IsDynamicRef(schema) || ErrorDynamicRef(stack, context, schemaPath, instancePath, schema, value)) & +(!IsConst(schema) || ErrorConst(stack, context, schemaPath, instancePath, schema, value)) & +(!IsEnum2(schema) || ErrorEnum(stack, context, schemaPath, instancePath, schema, value)) & +(!IsIf(schema) || ErrorIf(stack, context, schemaPath, instancePath, schema, value)) & +(!IsNot(schema) || ErrorNot(stack, context, schemaPath, instancePath, schema, value)) & +(!IsAllOf(schema) || ErrorAllOf(stack, context, schemaPath, instancePath, schema, value)) & +(!IsAnyOf(schema) || ErrorAnyOf(stack, context, schemaPath, instancePath, schema, value)) & +(!IsOneOf(schema) || ErrorOneOf(stack, context, schemaPath, instancePath, schema, value)) & +(!IsUnevaluatedItems(schema) || (!guard_exports.IsArray(value) || ErrorUnevaluatedItems(stack, context, schemaPath, instancePath, schema, value))) & +(!IsUnevaluatedProperties(schema) || (!guard_exports.IsObject(value) || ErrorUnevaluatedProperties(stack, context, schemaPath, instancePath, schema, value)))) && (!IsRefine2(schema) || ErrorRefine(stack, context, schemaPath, instancePath, schema, value));
+  stack.Pop(schema);
+  return result;
+}
+
+// node_modules/typebox/build/schema/resolve/resolve.mjs
+var resolve_exports = {};
+__export(resolve_exports, {
+  Base: () => Base2,
+  DefaultBase: () => DefaultBase,
+  DynamicRef: () => DynamicRef,
+  Ref: () => Ref2,
+  ResolveDynamicRef: () => ResolveDynamicRef,
+  ResolveRecursiveRef: () => ResolveRecursiveRef,
+  ResolveRef: () => ResolveRef,
+  Resource: () => Resource
+});
+
+// node_modules/typebox/build/schema/pointer/pointer.mjs
+var pointer_exports = {};
+__export(pointer_exports, {
+  Delete: () => Delete,
+  Get: () => Get4,
+  Has: () => Has2,
+  Indices: () => Indices,
+  Set: () => Set4
+});
+function AssertNotRoot(indices) {
+  if (indices.length === 0)
+    throw Error("Cannot set root");
+}
+function AssertCanSet(value) {
+  if (!guard_exports.IsObject(value))
+    throw Error("Cannot set value");
+}
+function AssertIndex(index) {
+  if (guard_exports.IsUnsafePropertyKey(index))
+    throw Error("Pointer contains unsafe property key");
+}
+function AssertIndices(indices) {
+  for (const index of indices)
+    AssertIndex(index);
+}
+function IsNumericIndex(index) {
+  return /^(0|[1-9]\d*)$/.test(index);
+}
+function TakeIndexRight(indices) {
+  return [
+    indices.slice(0, indices.length - 1),
+    indices.slice(indices.length - 1)[0]
+  ];
+}
+function HasIndex(index, value) {
+  return guard_exports.IsObject(value) && guard_exports.HasPropertyKey(value, index);
+}
+function GetIndex(index, value) {
+  return guard_exports.IsObject(value) && !guard_exports.IsUnsafePropertyKey(index) ? value[index] : void 0;
+}
+function GetIndices(indices, value) {
+  return indices.reduce((value2, index) => GetIndex(index, value2), value);
+}
+function Indices(pointer) {
+  if (guard_exports.IsEqual(pointer.length, 0))
+    return [];
+  const indices = pointer.split("/").map((index) => index.replace(/~1/g, "/").replace(/~0/g, "~"));
+  return indices.length > 0 && indices[0] === "" ? indices.slice(1) : indices;
+}
+function Has2(value, pointer) {
+  let current = value;
+  return Indices(pointer).every((index) => {
+    if (!HasIndex(index, current))
+      return false;
+    current = current[index];
+    return true;
+  });
+}
+function Get4(value, pointer) {
+  const indices = Indices(pointer);
+  return GetIndices(indices, value);
+}
+function Set4(value, pointer, next) {
+  const indices = Indices(pointer);
+  AssertNotRoot(indices);
+  AssertIndices(indices);
+  const [head, index] = TakeIndexRight(indices);
+  const parent = GetIndices(head, value);
+  AssertCanSet(parent);
+  parent[index] = next;
+  return value;
+}
+function Delete(value, pointer) {
+  const indices = Indices(pointer);
+  AssertNotRoot(indices);
+  AssertIndices(indices);
+  const [head, index] = TakeIndexRight(indices);
+  const parent = GetIndices(head, value);
+  AssertCanSet(parent);
+  if (guard_exports.IsArray(parent) && IsNumericIndex(index)) {
+    parent.splice(+index, 1);
+  } else {
+    delete parent[index];
+  }
+  return value;
+}
+
+// node_modules/typebox/build/schema/resolve/resolve.mjs
+var DefaultBase = "https://json-schema.org";
+function FindDynamicAnchor(schema, name) {
+  if (guard_exports.IsObject(schema) && IsDynamicAnchor(schema) && guard_exports.IsEqual(schema.$dynamicAnchor, name)) {
+    return schema;
+  }
+  if (guard_exports.IsObject(schema)) {
+    for (const key of guard_exports.Keys(schema)) {
+      const result = FindDynamicAnchor(schema[key], name);
+      if (result)
+        return result;
+    }
+  }
+  return void 0;
+}
+function FindBase(schema, base, target) {
+  if (guard_exports.IsEqual(schema, target))
+    return base.href;
+  const nextBase = IsSchemaObject2(schema) && IsId(schema) ? new URL(schema.$id, base.href) : base;
+  if (guard_exports.IsArray(schema)) {
+    for (const item of schema) {
+      const result = FindBase(item, nextBase, target);
+      if (!guard_exports.IsUndefined(result))
+        return result;
+    }
+  } else if (guard_exports.IsObject(schema)) {
+    for (const key of guard_exports.Keys(schema)) {
+      const result = FindBase(schema[key], nextBase, target);
+      if (!guard_exports.IsUndefined(result))
+        return result;
+    }
+  }
+  return void 0;
+}
+function MatchId(schema, base, ref) {
+  if (guard_exports.IsEqual(schema.$id, ref.hash))
+    return schema;
+  const absoluteRef = new URL(ref.href, base.href);
+  if (guard_exports.IsEqual(base.pathname, absoluteRef.pathname))
+    return ref.hash.startsWith("#") ? MatchHash(schema, ref) : schema;
+  return void 0;
+}
+function MatchAnchor(schema, base, ref) {
+  const absoluteAnchor = new URL(`#${schema.$anchor}`, base.href);
+  const absoluteRef = new URL(ref.href, base.href);
+  return guard_exports.IsEqual(absoluteAnchor.href, absoluteRef.href) ? schema : void 0;
+}
+function MatchDynamicAnchor(schema, base, ref) {
+  const absoluteAnchor = new URL(`#${schema.$dynamicAnchor}`, base.href);
+  const absoluteRef = new URL(ref.href, base.href);
+  const isMatch = guard_exports.IsEqual(absoluteAnchor.href, absoluteRef.href);
+  return isMatch ? schema : void 0;
+}
+function MatchHash(schema, ref) {
+  if (ref.href.endsWith("#"))
+    return schema;
+  if (!ref.hash.startsWith("#"))
+    return void 0;
+  const fragment = decodeURIComponent(ref.hash.slice(1));
+  if (!fragment.startsWith("/"))
+    return void 0;
+  const result = pointer_exports.Get(schema, fragment);
+  return result;
+}
+function Match4(schema, base, ref) {
+  if (IsId(schema)) {
+    const result = MatchId(schema, base, ref);
+    if (!guard_exports.IsUndefined(result))
+      return result;
+  }
+  if (IsAnchor(schema)) {
+    const result = MatchAnchor(schema, base, ref);
+    if (!guard_exports.IsUndefined(result))
+      return result;
+  }
+  if (IsDynamicAnchor(schema)) {
+    const result = MatchDynamicAnchor(schema, base, ref);
+    if (!guard_exports.IsUndefined(result))
+      return result;
+  }
+  return MatchHash(schema, ref);
+}
+function FromArray6(schema, base, ref) {
+  return schema.reduce((result, item) => {
+    const match = FromValue3(item, base, ref);
+    return !guard_exports.IsUndefined(match) ? match : result;
+  }, void 0);
+}
+function SkipProperty(key) {
+  return guard_exports.IsEqual(key, "const") || guard_exports.IsEqual(key, "enum");
+}
+function FromObject10(schema, base, ref) {
+  return guard_exports.Keys(schema).reduce((result, key) => {
+    if (SkipProperty(key))
+      return result;
+    const match = FromValue3(schema[key], base, ref);
+    return !guard_exports.IsUndefined(match) ? match : result;
+  }, void 0);
+}
+function FromValue3(schema, base, ref) {
+  const nextBase = IsSchemaObject2(schema) && IsId(schema) ? new URL(schema.$id, base.href) : base;
+  if (IsSchemaObject2(schema)) {
+    const result = Match4(schema, nextBase, ref);
+    if (!guard_exports.IsUndefined(result))
+      return result;
+  }
+  if (guard_exports.IsArray(schema))
+    return FromArray6(schema, nextBase, ref);
+  if (guard_exports.IsObject(schema))
+    return FromObject10(schema, nextBase, ref);
+  return void 0;
+}
+function Base2(schema, base, target) {
+  return FindBase(schema, new URL(base || ".", DefaultBase), target);
+}
+function Resource(context, schema, base, ref) {
+  const result = Ref2(context, schema, base, ref, false);
+  return IsSchemaObject2(result) && IsId(result) ? result : void 0;
+}
+function CanonicalHref(url) {
+  return url.href.split("#")[0];
+}
+function RefContext(context, ref) {
+  return guard_exports.HasPropertyKey(context, ref) ? context[ref] : void 0;
+}
+function RefLocal(schema, base, ref) {
+  return FromValue3(schema, base, ref);
+}
+function RefRemote(context, base, ref) {
+  const canonicalHref = CanonicalHref(ref);
+  if (guard_exports.IsEqual(canonicalHref, CanonicalHref(base)))
+    return void 0;
+  if (!guard_exports.HasPropertyKey(context, canonicalHref))
+    return void 0;
+  const remoteSchema = context[canonicalHref];
+  const remoteBase = IsSchemaObject2(remoteSchema) && IsId(remoteSchema) ? new URL(remoteSchema.$id, canonicalHref) : new URL(canonicalHref);
+  const result = guard_exports.IsEqual(ref.hash, "") ? remoteSchema : FromValue3(remoteSchema, remoteBase, ref);
+  return result;
+}
+function LegacyRetrievedResource(root, lexicalSchema, referenceBase, ref, schema) {
+  if (!ref.$ref.startsWith("#"))
+    return void 0;
+  if (guard_exports.HasPropertyKey(root, "$schema"))
+    return void 0;
+  const targetBase = Base2(lexicalSchema, referenceBase, schema);
+  if (guard_exports.IsUndefined(targetBase) || guard_exports.IsEqual(targetBase, referenceBase))
+    return void 0;
+  return { target: schema, base: targetBase, root: lexicalSchema };
+}
+function RemoteRetrievedResource(context, canonical, schema) {
+  const remoteRoot = context[canonical];
+  if (!IsSchemaObject2(remoteRoot))
+    return void 0;
+  return { target: schema, base: canonical, root: remoteRoot };
+}
+function FindRetrievedResource(stackframe, ref, schema, canonical, isRemote) {
+  const remote = isRemote ? RemoteRetrievedResource(stackframe.context, canonical, schema) : void 0;
+  if (!guard_exports.IsUndefined(remote))
+    return remote;
+  return LegacyRetrievedResource(stackframe.root, stackframe.lexicalSchema, stackframe.referenceBase, ref, schema);
+}
+function FindResolvedResource(context, root, referenceBase, canonical, schema, ids) {
+  if (IsId(schema))
+    return void 0;
+  const resource = Resource(context, root, referenceBase, canonical);
+  if (!resource || ids.includes(resource))
+    return void 0;
+  return { target: schema, resource };
+}
+function Ref2(remotes, schema, base, ref, applySchemaId = true) {
+  const initialBase = new URL(base || ".", DefaultBase);
+  const resolvedBase = applySchemaId && IsId(schema) ? new URL(schema.$id, initialBase) : initialBase;
+  const initialRef = new URL(ref, resolvedBase.href);
+  return RefContext(remotes, ref) ?? RefLocal(schema, resolvedBase, initialRef) ?? RefRemote(remotes, resolvedBase, initialRef);
+}
+function DynamicRef(context, root, base, schema, dynamicRef, dynamicAnchors) {
+  const initialBase = new URL(base || ".", DefaultBase);
+  const fragmentRoot = dynamicRef.$dynamicRef.startsWith("#") ? schema : root;
+  const fragmentTarget = Ref2(context, fragmentRoot, base, dynamicRef.$dynamicRef, false);
+  if (guard_exports.IsUndefined(fragmentTarget)) {
+    const fragment2 = new URL(dynamicRef.$dynamicRef, initialBase).hash;
+    if (!fragment2.startsWith("#/") && fragment2.startsWith("#")) {
+      const name = decodeURIComponent(fragment2.slice(1));
+      const anchorTarget2 = dynamicAnchors.find((anchor) => guard_exports.IsEqual(anchor.$dynamicAnchor, name)) ?? FindDynamicAnchor(root, name);
+      return anchorTarget2;
+    }
+    return void 0;
+  }
+  if (!IsSchemaObject2(fragmentTarget) || !IsDynamicAnchor(fragmentTarget))
+    return fragmentTarget;
+  const fragment = new URL(dynamicRef.$dynamicRef, initialBase).hash;
+  if (fragment.startsWith("#/"))
+    return fragmentTarget;
+  const anchorTarget = dynamicAnchors.find((anchor) => guard_exports.IsEqual(anchor.$dynamicAnchor, fragmentTarget.$dynamicAnchor));
+  return anchorTarget ?? fragmentTarget;
+}
+function ResolveRef(stackframe, ref) {
+  const source = stackframe.inRetrievedFrame ? stackframe.lexicalSchema : stackframe.root;
+  const refRoot = ref.$ref.startsWith("#") ? stackframe.lexicalSchema : source;
+  const schema = Ref2(stackframe.context, refRoot, stackframe.referenceBase, ref.$ref, false);
+  if (!schema || !IsSchemaObject2(schema))
+    return { schema };
+  const canonical = new URL(ref.$ref, stackframe.referenceBase).href.split("#")[0];
+  const isRemote = !guard_exports.IsEqual(canonical, stackframe.resourceBase);
+  const retrievedResource = FindRetrievedResource(stackframe, ref, schema, canonical, isRemote);
+  const resolvedResource = isRemote ? FindResolvedResource(stackframe.context, stackframe.root, stackframe.referenceBase, canonical, schema, stackframe.ids) : void 0;
+  return { schema, retrievedResource, resolvedResource };
+}
+function ResolveRecursiveRef(stackframe, recursiveRef) {
+  const refRoot = IsRecursiveAnchorTrue(stackframe.lexicalSchema) ? stackframe.recursiveAnchors[0] : stackframe.lexicalSchema;
+  return Ref2(stackframe.context, refRoot, stackframe.lexicalBase, recursiveRef.$recursiveRef, false);
+}
+function ResolveDynamicRef(stackframe, dynamicRef) {
+  return DynamicRef(stackframe.context, stackframe.root, stackframe.lexicalBase, stackframe.lexicalSchema, dynamicRef, stackframe.dynamicAnchors);
+}
+
+// node_modules/typebox/build/schema/engine/_stack.mjs
+var __classPrivateFieldGet = function(receiver, state, kind, f) {
+  if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a getter");
+  if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot read private member from an object whose class did not declare it");
+  return kind === "m" ? f : kind === "a" ? f.call(receiver) : f ? f.value : state.get(receiver);
+};
+var _Stack_instances;
+var _Stack_StackFrame;
+var _Stack_ApplyRefResult;
+var _Stack_BuildBase;
+var _Stack_ResourceBaseURL;
+var _Stack_ReferenceBaseURL;
+var _Stack_LexicalSchema;
+var _Stack_RegisterResourceAnchorArray;
+var _Stack_UnregisterResourceAnchorArray;
+var _Stack_RegisterResourceAnchors;
+var _Stack_UnregisterResourceAnchors;
+var _Stack_RegisterResource;
+var _Stack_UnregisterResource;
+var _Stack_EnterResolvedResource;
+var _Stack_ExitResolvedResource;
+var Stack = class {
+  constructor(context, schema) {
+    _Stack_instances.add(this);
+    this.context = context;
+    this.schema = schema;
+    this.ids = [];
+    this.resourceIds = [];
+    this.anchors = [];
+    this.recursiveAnchors = [];
+    this.dynamicAnchors = [];
+    this.retrievedResources = /* @__PURE__ */ new Map();
+    this.retrievedFrames = [];
+    this.resolvedResources = /* @__PURE__ */ new Map();
+    this.pendingResource = true;
+  }
+  // ----------------------------------------------------------------
+  // LexicalBaseURL
+  // ----------------------------------------------------------------
+  LexicalBaseURL() {
+    return __classPrivateFieldGet(this, _Stack_instances, "m", _Stack_BuildBase).call(this, this.ids);
+  }
+  // ----------------------------------------------------------------
+  // Push
+  // ----------------------------------------------------------------
+  Push(schema) {
+    if (!IsSchemaObject2(schema))
+      return;
+    if (IsId(schema))
+      __classPrivateFieldGet(this, _Stack_instances, "m", _Stack_RegisterResource).call(this, schema);
+    if (IsAnchor(schema))
+      this.anchors.push(schema);
+    if (IsRecursiveAnchorTrue(schema))
+      this.recursiveAnchors.push(schema);
+    if (IsDynamicAnchor(schema))
+      this.dynamicAnchors.push(schema);
+    const retrievedResource = this.retrievedResources.get(schema);
+    if (retrievedResource) {
+      this.retrievedFrames.push({
+        schema: retrievedResource.root,
+        base: retrievedResource.base,
+        idDepth: this.ids.length,
+        resourceDepth: this.resourceIds.length
+      });
+    }
+  }
+  // ----------------------------------------------------------------
+  // Pop
+  // ----------------------------------------------------------------
+  Pop(schema) {
+    if (!IsSchemaObject2(schema))
+      return;
+    if (IsId(schema))
+      __classPrivateFieldGet(this, _Stack_instances, "m", _Stack_UnregisterResource).call(this, schema);
+    if (IsAnchor(schema))
+      this.anchors.pop();
+    if (IsRecursiveAnchorTrue(schema))
+      this.recursiveAnchors.pop();
+    if (IsDynamicAnchor(schema))
+      this.dynamicAnchors.pop();
+    if (this.retrievedResources.has(schema))
+      this.retrievedFrames.pop();
+    __classPrivateFieldGet(this, _Stack_instances, "m", _Stack_ExitResolvedResource).call(this, schema);
+  }
+  // ----------------------------------------------------------------
+  // Ref
+  // ----------------------------------------------------------------
+  Ref(ref) {
+    const result = resolve_exports.ResolveRef(__classPrivateFieldGet(this, _Stack_instances, "m", _Stack_StackFrame).call(this), ref);
+    __classPrivateFieldGet(this, _Stack_instances, "m", _Stack_ApplyRefResult).call(this, result);
+    return result.schema;
+  }
+  // ----------------------------------------------------------------
+  // RecursiveRef
+  // ----------------------------------------------------------------
+  RecursiveRef(recursiveRef) {
+    const result = resolve_exports.ResolveRecursiveRef(__classPrivateFieldGet(this, _Stack_instances, "m", _Stack_StackFrame).call(this), recursiveRef);
+    if (result)
+      this.pendingResource = true;
+    return result;
+  }
+  // ----------------------------------------------------------------
+  // DynamicRef
+  // ----------------------------------------------------------------
+  DynamicRef(dynamicRef) {
+    const result = resolve_exports.ResolveDynamicRef(__classPrivateFieldGet(this, _Stack_instances, "m", _Stack_StackFrame).call(this), dynamicRef);
+    if (result)
+      this.pendingResource = true;
+    return result;
+  }
+};
+_Stack_instances = /* @__PURE__ */ new WeakSet(), _Stack_StackFrame = function _Stack_StackFrame2() {
+  return {
+    context: this.context,
+    root: this.schema,
+    ids: this.ids,
+    lexicalSchema: __classPrivateFieldGet(this, _Stack_instances, "m", _Stack_LexicalSchema).call(this),
+    lexicalBase: this.LexicalBaseURL(),
+    referenceBase: __classPrivateFieldGet(this, _Stack_instances, "m", _Stack_ReferenceBaseURL).call(this),
+    resourceBase: __classPrivateFieldGet(this, _Stack_instances, "m", _Stack_ResourceBaseURL).call(this),
+    recursiveAnchors: this.recursiveAnchors,
+    dynamicAnchors: this.dynamicAnchors,
+    inRetrievedFrame: this.retrievedFrames.length > 0
+  };
+}, _Stack_ApplyRefResult = function _Stack_ApplyRefResult2(result) {
+  if (!guard_exports.IsUndefined(result.schema))
+    this.pendingResource = true;
+  if (!guard_exports.IsUndefined(result.resolvedResource)) {
+    __classPrivateFieldGet(this, _Stack_instances, "m", _Stack_EnterResolvedResource).call(this, result.resolvedResource.target, result.resolvedResource.resource);
+  }
+  if (!guard_exports.IsUndefined(result.retrievedResource)) {
+    this.retrievedResources.set(result.retrievedResource.target, {
+      base: result.retrievedResource.base,
+      root: result.retrievedResource.root
+    });
+  }
+}, _Stack_BuildBase = function _Stack_BuildBase2(stack) {
+  const frame = this.retrievedFrames[this.retrievedFrames.length - 1];
+  const base = frame ? new URL(frame.base) : new URL(resolve_exports.DefaultBase);
+  const scoped = frame ? stack.slice(frame.idDepth) : stack;
+  return scoped.reduce((result, schema) => new URL(schema.$id, result), base).href;
+}, _Stack_ResourceBaseURL = function _Stack_ResourceBaseURL2() {
+  const frame = this.retrievedFrames[this.retrievedFrames.length - 1];
+  if (!frame)
+    return __classPrivateFieldGet(this, _Stack_instances, "m", _Stack_BuildBase).call(this, this.resourceIds);
+  return this.resourceIds.slice(frame.resourceDepth).reduce((result, schema) => new URL(schema.$id, result), new URL(frame.base)).href;
+}, _Stack_ReferenceBaseURL = function _Stack_ReferenceBaseURL2() {
+  if (this.retrievedFrames.length > 0)
+    return __classPrivateFieldGet(this, _Stack_instances, "m", _Stack_ResourceBaseURL).call(this);
+  const lexical = this.ids[this.ids.length - 1];
+  if (lexical && !/^[A-Za-z][A-Za-z0-9+.-]*:/.test(lexical.$id))
+    return this.LexicalBaseURL();
+  return __classPrivateFieldGet(this, _Stack_instances, "m", _Stack_ResourceBaseURL).call(this);
+}, _Stack_LexicalSchema = function _Stack_LexicalSchema2() {
+  const frame = this.retrievedFrames[this.retrievedFrames.length - 1];
+  if (frame)
+    return this.ids.length > frame.idDepth ? this.ids[this.ids.length - 1] : frame.schema;
+  return this.ids.length > 0 ? this.ids[this.ids.length - 1] : this.schema;
+}, _Stack_RegisterResourceAnchorArray = function _Stack_RegisterResourceAnchorArray2(schema) {
+  schema.forEach((schema2) => __classPrivateFieldGet(this, _Stack_instances, "m", _Stack_RegisterResourceAnchors).call(this, schema2, false));
+}, _Stack_UnregisterResourceAnchorArray = function _Stack_UnregisterResourceAnchorArray2(schema) {
+  schema.forEach((schema2) => __classPrivateFieldGet(this, _Stack_instances, "m", _Stack_UnregisterResourceAnchors).call(this, schema2, false));
+}, _Stack_RegisterResourceAnchors = function _Stack_RegisterResourceAnchors2(schema, isRoot = true) {
+  if (IsSchemaBoolean(schema))
+    return;
+  if (guard_exports.IsArray(schema))
+    return __classPrivateFieldGet(this, _Stack_instances, "m", _Stack_RegisterResourceAnchorArray).call(this, schema);
+  if (!IsSchemaObject2(schema))
+    return;
+  const current = schema;
+  if (!isRoot && IsId(current))
+    return;
+  if (!isRoot && IsDynamicAnchor(current))
+    this.dynamicAnchors.push(current);
+  for (const key of guard_exports.Keys(current))
+    __classPrivateFieldGet(this, _Stack_instances, "m", _Stack_RegisterResourceAnchors2).call(this, current[key], false);
+}, _Stack_UnregisterResourceAnchors = function _Stack_UnregisterResourceAnchors2(schema, isRoot = true) {
+  if (IsSchemaBoolean(schema))
+    return;
+  if (guard_exports.IsArray(schema))
+    return __classPrivateFieldGet(this, _Stack_instances, "m", _Stack_UnregisterResourceAnchorArray).call(this, schema);
+  if (!IsSchemaObject2(schema))
+    return;
+  const current = schema;
+  if (!isRoot && IsId(current))
+    return;
+  if (!isRoot && IsDynamicAnchor(current))
+    this.dynamicAnchors.pop();
+  for (const key of guard_exports.Keys(current))
+    __classPrivateFieldGet(this, _Stack_instances, "m", _Stack_UnregisterResourceAnchors2).call(this, current[key], false);
+}, _Stack_RegisterResource = function _Stack_RegisterResource2(schema) {
+  this.ids.push(schema);
+  const isResource = this.pendingResource;
+  this.pendingResource = false;
+  if (isResource)
+    this.resourceIds.push(schema);
+  __classPrivateFieldGet(this, _Stack_instances, "m", _Stack_RegisterResourceAnchors).call(this, schema, true);
+}, _Stack_UnregisterResource = function _Stack_UnregisterResource2(schema) {
+  this.ids.pop();
+  const isResource = this.resourceIds.length > 0 && guard_exports.IsEqual(this.resourceIds[this.resourceIds.length - 1], schema);
+  if (isResource)
+    this.resourceIds.pop();
+  __classPrivateFieldGet(this, _Stack_instances, "m", _Stack_UnregisterResourceAnchors).call(this, schema, true);
+}, _Stack_EnterResolvedResource = function _Stack_EnterResolvedResource2(target, resource) {
+  __classPrivateFieldGet(this, _Stack_instances, "m", _Stack_RegisterResource).call(this, resource);
+  this.resolvedResources.set(target, resource);
+}, _Stack_ExitResolvedResource = function _Stack_ExitResolvedResource2(target) {
+  if (!this.resolvedResources.has(target))
+    return;
+  const resource = this.resolvedResources.get(target);
+  __classPrivateFieldGet(this, _Stack_instances, "m", _Stack_UnregisterResource).call(this, resource);
+  this.resolvedResources.delete(target);
+};
+
+// node_modules/typebox/build/schema/errors.mjs
+function Errors(...args2) {
+  const [context, schema, value] = arguments_exports.Match(args2, {
+    3: (context2, schema2, value2) => [context2, schema2, value2],
+    2: (schema2, value2) => [{}, schema2, value2]
+  });
+  const stack = new Stack(context, schema);
+  const errorContext = new ErrorContext();
+  const result = ErrorSchema(stack, errorContext, "#", "", schema, value);
+  const errors = errorContext.GetErrors();
+  const locale2 = Get2();
+  const localized = errors.map((error) => ({ ...error, message: locale2(error) }));
+  return [result, localized];
+}
+
+// node_modules/typebox/build/schema/check.mjs
+function Check(...args2) {
+  const [context, schema, value] = arguments_exports.Match(args2, {
+    3: (context2, schema2, value2) => [context2, schema2, value2],
+    2: (schema2, value2) => [{}, schema2, value2]
+  });
+  const stack = new Stack(context, schema);
+  const checkContext = new CheckContext();
+  return CheckSchema(stack, checkContext, schema, value);
+}
+
+// node_modules/typebox/build/value/check/check.mjs
+function Check2(...args2) {
+  const [context, type, value] = arguments_exports.Match(args2, {
+    3: (context2, type2, value2) => [context2, type2, value2],
+    2: (type2, value2) => [{}, type2, value2]
+  });
+  return Check(context, type, value);
+}
+
+// node_modules/typebox/build/value/errors/errors.mjs
+function Errors2(...args2) {
+  const [context, type, value] = arguments_exports.Match(args2, {
+    3: (context2, type2, value2) => [context2, type2, value2],
+    2: (type2, value2) => [{}, type2, value2]
+  });
+  const [_, errors] = Errors(context, type, value);
+  return errors;
+}
+
+// node_modules/typebox/build/value/assert/assert.mjs
+var AssertError = class extends Error {
+  constructor(source, value, errors) {
+    super(source);
+    Object.defineProperty(this, "cause", {
+      value: { source, errors, value },
+      writable: false,
+      configurable: false,
+      enumerable: false
+    });
+  }
+};
+function Assert(...args2) {
+  const [context, type, value] = arguments_exports.Match(args2, {
+    3: (context2, type2, value2) => [context2, type2, value2],
+    2: (type2, value2) => [{}, type2, value2]
+  });
+  const check = Check2(context, type, value);
+  if (!check)
+    throw new AssertError("Assert", value, Errors2(context, type, value));
+}
+
+// node_modules/typebox/build/value/clean/from_array.mjs
+function FromArray7(context, type, value) {
+  if (!guard_exports.IsArray(value))
+    return value;
+  return value.map((value2) => FromType19(context, type.items, value2));
+}
+
+// node_modules/typebox/build/value/clean/from_cyclic.mjs
+function FromCyclic6(context, type, value) {
+  return FromType19({ ...context, ...type.$defs }, Ref(type.$ref), value);
+}
+
+// node_modules/typebox/build/value/clean/from_intersect.mjs
+function EvaluateIntersection(context, type) {
+  const additionalProperties = guard_exports.HasPropertyKey(type, "unevaluatedProperties") ? { additionalProperties: type.unevaluatedProperties } : {};
+  const instantiated = Instantiate(context, type);
+  const evaluated = Evaluate(instantiated);
+  return IsObject2(evaluated) ? With2(evaluated, additionalProperties) : evaluated;
+}
+function FromIntersect6(context, type, value) {
+  const evaluated = EvaluateIntersection(context, type);
+  return FromType19(context, evaluated, value);
+}
+
+// node_modules/typebox/build/value/clean/additional.mjs
+function GetAdditionalProperties(type) {
+  const additionalProperties = guard_exports.HasPropertyKey(type, "additionalProperties") ? type.additionalProperties : void 0;
+  return additionalProperties;
+}
+
+// node_modules/typebox/build/value/clean/from_object.mjs
+function FromObject11(context, type, value) {
+  if (!guard_exports.IsObject(value) || guard_exports.IsArray(value))
+    return value;
+  const additionalProperties = GetAdditionalProperties(type);
+  for (const key of guard_exports.Keys(value)) {
+    if (guard_exports.HasPropertyKey(type.properties, key)) {
+      value[key] = FromType19(context, type.properties[key], value[key]);
+      continue;
+    }
+    const unknownCheck = (
+      // 1. additionalProperties: true
+      guard_exports.IsBoolean(additionalProperties) && guard_exports.IsEqual(additionalProperties, true) || IsSchema(additionalProperties) && Check2(context, additionalProperties, value[key])
+    );
+    if (unknownCheck) {
+      value[key] = FromType19(context, additionalProperties, value[key]);
+      continue;
+    }
+    delete value[key];
+  }
+  return value;
+}
+
+// node_modules/typebox/build/value/clean/from_record.mjs
+function FromRecord3(context, type, value) {
+  if (!guard_exports.IsObject(value))
+    return value;
+  const additionalProperties = GetAdditionalProperties(type);
+  const [recordPattern, recordValue] = [new RegExp(RecordPattern(type)), RecordValue(type)];
+  for (const key of guard_exports.Keys(value)) {
+    if (recordPattern.test(key)) {
+      value[key] = FromType19(context, recordValue, value[key]);
+      continue;
+    }
+    const unknownCheck = (
+      // 1. additionalProperties: true
+      guard_exports.IsBoolean(additionalProperties) && guard_exports.IsEqual(additionalProperties, true) || IsSchema(additionalProperties) && Check2(context, additionalProperties, value[key])
+    );
+    if (unknownCheck) {
+      value[key] = FromType19(context, additionalProperties, value[key]);
+      continue;
+    }
+    delete value[key];
+  }
+  return value;
+}
+
+// node_modules/typebox/build/value/clean/from_ref.mjs
+function FromRef5(context, type, value) {
+  return guard_exports.HasPropertyKey(context, type.$ref) ? FromType19(context, context[type.$ref], value) : value;
+}
+
+// node_modules/typebox/build/value/clean/from_tuple.mjs
+function FromTuple5(context, schema, value) {
+  if (!guard_exports.IsArray(value))
+    return value;
+  const length = Math.min(value.length, schema.items.length);
+  for (let index = 0; index < length; index++) {
+    value[index] = FromType19(context, schema.items[index], value[index]);
+  }
+  return guard_exports.IsGreaterThan(value.length, length) ? value.slice(0, length) : value;
+}
+
+// node_modules/typebox/build/value/clone/clone.mjs
+function Clone2(value) {
+  return Clone(value);
+}
+
+// node_modules/typebox/build/value/clean/from_union.mjs
+function FromUnion9(context, type, value) {
+  for (const schema of type.anyOf) {
+    const clean = FromType19(context, schema, Clone2(value));
+    if (Check2(context, schema, clean))
+      return clean;
+  }
+  return value;
+}
+
+// node_modules/typebox/build/value/clean/from_type.mjs
+function FromType19(context, type, value) {
+  return IsArray2(type) ? FromArray7(context, type, value) : IsCyclic(type) ? FromCyclic6(context, type, value) : IsIntersect(type) ? FromIntersect6(context, type, value) : IsObject2(type) ? FromObject11(context, type, value) : IsRecord(type) ? FromRecord3(context, type, value) : IsRef(type) ? FromRef5(context, type, value) : IsTuple(type) ? FromTuple5(context, type, value) : IsUnion(type) ? FromUnion9(context, type, value) : value;
+}
+
+// node_modules/typebox/build/value/shared/union_priority_sort.mjs
+function Modifiers(type, next) {
+  for (const key of guard_default.Keys(type)) {
+    if (guard_default.HasPropertyKey(next, key))
+      continue;
+    next[key] = type[key];
+  }
+  return next;
+}
+function FromProperties4(properties) {
+  const result = {};
+  for (const key of guard_default.Keys(properties))
+    result[key] = FromType20(properties[key]);
+  return result;
+}
+function FromPriorityTypes(types) {
+  return FromTypes6(Priority(types));
+}
+function FromTypes6(types) {
+  return types.map((type) => FromType20(type));
+}
+function FromType20(type) {
+  const next = IsArray2(type) ? _Array_(FromType20(type.items), ArrayOptions(type)) : IsIntersect(type) ? Intersect(FromTypes6(type.allOf)) : IsUnion(type) ? Union(FromPriorityTypes(type.anyOf)) : IsObject2(type) ? _Object_(FromProperties4(type.properties)) : IsRecord(type) ? Record(RecordKey(type), FromType20(RecordValue(type))) : IsTuple(type) ? Tuple(FromTypes6(type.items)) : type;
+  return Modifiers(type, next);
+}
+function UnionPrioritySort(type) {
+  const result = FromType20(type);
+  return result;
+}
+
+// node_modules/typebox/build/value/clean/clean.mjs
+function Clean(...args2) {
+  const [context, type, value] = arguments_exports.Match(args2, {
+    3: (context2, type2, value2) => [context2, type2, value2],
+    2: (type2, value2) => [{}, type2, value2]
+  });
+  const sorted = settings_exports.Get().unionPrioritySort ? UnionPrioritySort(type) : type;
+  return FromType19(context, sorted, value);
+}
+
+// node_modules/typebox/build/value/convert/try/try.mjs
+var try_exports = {};
+__export(try_exports, {
+  Fail: () => Fail,
+  IsOk: () => IsOk,
+  Ok: () => Ok,
+  TryArray: () => TryArray,
+  TryBigInt: () => TryBigInt,
+  TryBoolean: () => TryBoolean,
+  TryNull: () => TryNull,
+  TryNumber: () => TryNumber,
+  TryString: () => TryString,
+  TryUndefined: () => TryUndefined
+});
+
+// node_modules/typebox/build/value/convert/try/try_result.mjs
+function IsOk(value) {
+  return guard_exports.IsObject(value) && guard_exports.HasPropertyKey(value, "value");
+}
+function Ok(value) {
+  return { value };
+}
+function Fail() {
+  return void 0;
+}
+
+// node_modules/typebox/build/value/convert/try/try_array.mjs
+function TryArray(value) {
+  return guard_exports.IsArray(value) ? Ok(value) : Ok([value]);
+}
+
+// node_modules/typebox/build/value/convert/try/try_bigint.mjs
+function FromBoolean2(value) {
+  return guard_exports.IsEqual(value, true) ? Ok(BigInt(1)) : Ok(BigInt(0));
+}
+var bigintPattern = /^-?(0|[1-9]\d*)n$/;
+var decimalPattern = /^-?(0|[1-9]\d*)\.\d+$/;
+var integerPattern = /^-?(0|[1-9]\d*)$/;
+function IsStringBigIntLike(value) {
+  return bigintPattern.test(value);
+}
+function IsStringDecimalLike(value) {
+  return decimalPattern.test(value);
+}
+function IsStringIntegerLike(value) {
+  return integerPattern.test(value);
+}
+function FromString2(value) {
+  const lowercase = value.toLowerCase();
+  return IsStringBigIntLike(value) ? Ok(BigInt(value.slice(0, value.length - 1))) : IsStringDecimalLike(value) ? Ok(BigInt(value.split(".")[0])) : IsStringIntegerLike(value) ? Ok(BigInt(value)) : guard_exports.IsEqual(lowercase, "false") ? Ok(BigInt(0)) : guard_exports.IsEqual(lowercase, "true") ? Ok(BigInt(1)) : Fail();
+}
+function TryBigInt(value) {
+  return guard_exports.IsBigInt(value) ? Ok(value) : guard_exports.IsBoolean(value) ? FromBoolean2(value) : guard_exports.IsNumber(value) ? Ok(BigInt(Math.trunc(value))) : guard_exports.IsNull(value) ? Ok(BigInt(0)) : guard_exports.IsString(value) ? FromString2(value) : guard_exports.IsUndefined(value) ? Ok(BigInt(0)) : Fail();
+}
+
+// node_modules/typebox/build/value/convert/try/try_boolean.mjs
+function FromBigInt2(value) {
+  return guard_exports.IsEqual(value, BigInt(0)) ? Ok(false) : guard_exports.IsEqual(value, BigInt(1)) ? Ok(true) : Fail();
+}
+function FromNumber2(value) {
+  return guard_exports.IsEqual(value, 0) ? Ok(false) : guard_exports.IsEqual(value, 1) ? Ok(true) : Fail();
+}
+function FromString3(value) {
+  return guard_exports.IsEqual(value.toLowerCase(), "false") ? Ok(false) : guard_exports.IsEqual(value.toLowerCase(), "true") ? Ok(true) : guard_exports.IsEqual(value, "0") ? Ok(false) : guard_exports.IsEqual(value, "1") ? Ok(true) : Fail();
+}
+function TryBoolean(value) {
+  return guard_exports.IsBigInt(value) ? FromBigInt2(value) : guard_exports.IsBoolean(value) ? Ok(value) : guard_exports.IsNumber(value) ? FromNumber2(value) : guard_exports.IsNull(value) ? Ok(false) : guard_exports.IsString(value) ? FromString3(value) : guard_exports.IsUndefined(value) ? Ok(false) : Fail();
+}
+
+// node_modules/typebox/build/value/convert/try/try_null.mjs
+function FromBigInt3(value) {
+  return guard_exports.IsEqual(value, BigInt(0)) ? Ok(null) : Fail();
+}
+function FromBoolean3(value) {
+  return guard_exports.IsEqual(value, false) ? Ok(null) : Fail();
+}
+function FromNumber3(value) {
+  return guard_exports.IsEqual(value, 0) ? Ok(null) : Fail();
+}
+function FromString4(value) {
+  const lowercase = value.toLowerCase();
+  const predicate = guard_exports.IsEqual(lowercase, "undefined") || guard_exports.IsEqual(lowercase, "null") || guard_exports.IsEqual(value, "") || guard_exports.IsEqual(value, "0");
+  return predicate ? Ok(null) : Fail();
+}
+function TryNull(value) {
+  return guard_exports.IsBigInt(value) ? FromBigInt3(value) : guard_exports.IsBoolean(value) ? FromBoolean3(value) : guard_exports.IsNumber(value) ? FromNumber3(value) : guard_exports.IsNull(value) ? Ok(null) : guard_exports.IsString(value) ? FromString4(value) : guard_exports.IsUndefined(value) ? Ok(null) : Fail();
+}
+
+// node_modules/typebox/build/value/convert/try/try_number.mjs
+var maxBigInt = BigInt(Number.MAX_SAFE_INTEGER);
+var minBigInt = BigInt(Number.MIN_SAFE_INTEGER);
+function FromBigInt4(value) {
+  return value <= maxBigInt && value >= minBigInt ? Ok(Number(value)) : Fail();
+}
+function FromBoolean4(value) {
+  return Ok(value ? 1 : 0);
+}
+function FromString5(value) {
+  const coerced = +value;
+  if (guard_exports.IsNumber(coerced))
+    return Ok(coerced);
+  const lowercase = value.toLowerCase();
+  if (guard_exports.IsEqual(lowercase, "false"))
+    return Ok(0);
+  if (guard_exports.IsEqual(lowercase, "true"))
+    return Ok(1);
+  const result = TryBigInt(value);
+  if (IsOk(result))
+    return result.value <= maxBigInt && result.value >= minBigInt ? Ok(Number(result.value)) : Fail();
+  return Fail();
+}
+function TryNumber(value) {
+  return guard_exports.IsBigInt(value) ? FromBigInt4(value) : guard_exports.IsBoolean(value) ? FromBoolean4(value) : guard_exports.IsNumber(value) ? Ok(value) : guard_exports.IsNull(value) ? Ok(0) : guard_exports.IsString(value) ? FromString5(value) : guard_exports.IsUndefined(value) ? Ok(0) : Fail();
+}
+
+// node_modules/typebox/build/value/convert/try/try_string.mjs
+function TryString(value) {
+  return guard_exports.IsBigInt(value) ? Ok(value.toString()) : guard_exports.IsBoolean(value) ? Ok(value.toString()) : guard_exports.IsNumber(value) ? Ok(value.toString()) : guard_exports.IsNull(value) ? Ok("null") : guard_exports.IsString(value) ? Ok(value) : guard_exports.IsUndefined(value) ? Ok("") : Fail();
+}
+
+// node_modules/typebox/build/value/convert/try/try_undefined.mjs
+function FromBigInt5(value) {
+  return guard_exports.IsEqual(value, BigInt(0)) ? Ok(void 0) : Fail();
+}
+function FromBoolean5(value) {
+  return guard_exports.IsEqual(value, false) ? Ok(void 0) : Fail();
+}
+function FromNumber4(value) {
+  return guard_exports.IsEqual(value, 0) ? Ok(void 0) : Fail();
+}
+function FromString6(value) {
+  const lowercase = value.toLowerCase();
+  const predicate = guard_exports.IsEqual(lowercase, "undefined") || guard_exports.IsEqual(lowercase, "null") || guard_exports.IsEqual(value, "") || guard_exports.IsEqual(value, "0");
+  return predicate ? Ok(void 0) : Fail();
+}
+function TryUndefined(value) {
+  return guard_exports.IsBigInt(value) ? FromBigInt5(value) : guard_exports.IsBoolean(value) ? FromBoolean5(value) : guard_exports.IsNumber(value) ? FromNumber4(value) : guard_exports.IsNull(value) ? Ok(void 0) : guard_exports.IsString(value) ? FromString6(value) : guard_exports.IsUndefined(value) ? Ok(value) : Fail();
+}
+
+// node_modules/typebox/build/value/convert/from_array.mjs
+function FromArray8(context, type, value) {
+  const result = try_exports.TryArray(value);
+  return result.value.map((value2) => FromType21(context, type.items, value2));
+}
+
+// node_modules/typebox/build/value/convert/from_bigint.mjs
+function FromBigInt6(_context, _type, value) {
+  const result = try_exports.TryBigInt(value);
+  return try_exports.IsOk(result) ? result.value : value;
+}
+
+// node_modules/typebox/build/value/convert/from_boolean.mjs
+function FromBoolean6(_context, _type, value) {
+  const result = try_exports.TryBoolean(value);
+  return try_exports.IsOk(result) ? result.value : value;
+}
+
+// node_modules/typebox/build/value/convert/from_cyclic.mjs
+function FromCyclic7(context, type, value) {
+  return FromType21({ ...context, ...type.$defs }, Ref(type.$ref), value);
+}
+
+// node_modules/typebox/build/value/convert/from_enum.mjs
+function FromEnum3(context, type, value) {
+  return FromType21(context, Evaluate(type), value);
+}
+
+// node_modules/typebox/build/value/convert/from_integer.mjs
+function FromInteger(_context, _type, value) {
+  const result = try_exports.TryNumber(value);
+  return try_exports.IsOk(result) ? Math.trunc(result.value) : value;
+}
+
+// node_modules/typebox/build/value/convert/from_intersect.mjs
+function FromIntersect7(context, type, value) {
+  const instantiated = Instantiate(context, type);
+  const evaluated = Evaluate(instantiated);
+  return FromType21(context, evaluated, value);
+}
+
+// node_modules/typebox/build/value/convert/from_literal.mjs
+function FromLiteralBigInt(_context, type, value) {
+  const result = try_exports.TryBigInt(value);
+  return try_exports.IsOk(result) && guard_exports.IsEqual(type.const, result.value) ? result.value : value;
+}
+function FromLiteralBoolean(_context, type, value) {
+  const result = try_exports.TryBoolean(value);
+  return try_exports.IsOk(result) && guard_exports.IsEqual(type.const, result.value) ? result.value : value;
+}
+function FromLiteralNumber(_context, type, value) {
+  const result = try_exports.TryNumber(value);
+  return try_exports.IsOk(result) && guard_exports.IsEqual(type.const, result.value) ? result.value : value;
+}
+function FromLiteralString(_context, type, value) {
+  const result = try_exports.TryString(value);
+  return try_exports.IsOk(result) && guard_exports.IsEqual(type.const, result.value) ? result.value : value;
+}
+function FromLiteral6(context, type, value) {
+  if (guard_exports.IsEqual(type.const, value))
+    return value;
+  return IsLiteralBigInt(type) ? FromLiteralBigInt(context, type, value) : IsLiteralBoolean(type) ? FromLiteralBoolean(context, type, value) : IsLiteralNumber(type) ? FromLiteralNumber(context, type, value) : IsLiteralString(type) ? FromLiteralString(context, type, value) : Unreachable();
+}
+
+// node_modules/typebox/build/value/convert/from_null.mjs
+function FromNull2(_context, _type, value) {
+  const result = try_exports.TryNull(value);
+  return try_exports.IsOk(result) ? result.value : value;
+}
+
+// node_modules/typebox/build/value/convert/from_number.mjs
+function FromNumber5(_context, _type, value) {
+  const result = try_exports.TryNumber(value);
+  return try_exports.IsOk(result) ? result.value : value;
+}
+
+// node_modules/typebox/build/value/convert/from_additional.mjs
+function FromAdditionalProperties(context, entries, additionalProperties, value) {
+  const keys = guard_exports.Keys(value);
+  for (const [regexp, _] of entries) {
+    for (const key of keys) {
+      if (!regexp.test(key)) {
+        value[key] = FromType21(context, additionalProperties, value[key]);
+      }
+    }
+  }
+  return value;
+}
+
+// node_modules/typebox/build/value/shared/optional_undefined.mjs
+function IsOptionalUndefined(property, key, value) {
+  return IsOptional(property) && guard_exports.IsUndefined(value[key]);
+}
+
+// node_modules/typebox/build/value/convert/from_object.mjs
+function FromProperties5(context, type, value) {
+  const entries = guard_exports.EntriesRegExp(type.properties);
+  const keys = guard_exports.Keys(value);
+  for (const [regexp, property] of entries) {
+    for (const key of keys) {
+      if (!regexp.test(key) || IsOptionalUndefined(property, key, value))
+        continue;
+      value[key] = FromType21(context, property, value[key]);
+    }
+  }
+  return guard_exports.HasPropertyKey(type, "additionalProperties") && guard_exports.IsObject(type.additionalProperties) ? FromAdditionalProperties(context, entries, type.additionalProperties, value) : value;
+}
+function FromObject12(context, type, value) {
+  return guard_exports.IsObjectNotArray(value) ? FromProperties5(context, type, value) : value;
+}
+
+// node_modules/typebox/build/value/convert/from_record.mjs
+function FromPatternProperties(context, type, value) {
+  const entries = guard_exports.EntriesRegExp(type.patternProperties);
+  const keys = guard_exports.Keys(value);
+  for (const [regexp, schema] of entries) {
+    for (const key of keys) {
+      if (regexp.test(key)) {
+        value[key] = FromType21(context, schema, value[key]);
+      }
+    }
+  }
+  return guard_exports.HasPropertyKey(type, "additionalProperties") && guard_exports.IsObject(type.additionalProperties) ? FromAdditionalProperties(context, entries, type.additionalProperties, value) : value;
+}
+function FromRecord4(context, type, value) {
+  return guard_exports.IsObjectNotArray(value) ? FromPatternProperties(context, type, value) : value;
+}
+
+// node_modules/typebox/build/value/convert/from_ref.mjs
+function FromRef6(context, type, value) {
+  return guard_exports.HasPropertyKey(context, type.$ref) ? FromType21(context, context[type.$ref], value) : value;
+}
+
+// node_modules/typebox/build/value/convert/from_string.mjs
+function FromString7(_context, _type, value) {
+  const result = try_exports.TryString(value);
+  return try_exports.IsOk(result) ? result.value : value;
+}
+
+// node_modules/typebox/build/value/convert/from_template_literal.mjs
+function FromTemplateLiteral4(context, type, value) {
+  return FromType21(context, Evaluate(type), value);
+}
+
+// node_modules/typebox/build/value/convert/from_tuple.mjs
+function FromTuple6(context, type, value) {
+  if (!guard_exports.IsArray(value))
+    return value;
+  for (let index = 0; index < Math.min(type.items.length, value.length); index++) {
+    value[index] = FromType21(context, type.items[index], value[index]);
+  }
+  return value;
+}
+
+// node_modules/typebox/build/value/convert/from_undefined.mjs
+function FromUndefined2(_context, _type, value) {
+  const result = try_exports.TryUndefined(value);
+  return try_exports.IsOk(result) ? result.value : value;
+}
+
+// node_modules/typebox/build/value/convert/from_union.mjs
+function FromUnion10(context, type, value) {
+  const matched = type.anyOf.some((type2) => Check2(context, type2, value));
+  if (matched)
+    return value;
+  const candidates = type.anyOf.map((type2) => FromType21(context, type2, Clone2(value)));
+  const selected = candidates.find((value2) => Check2(context, type, value2));
+  return guard_exports.IsUndefined(selected) ? value : selected;
+}
+
+// node_modules/typebox/build/value/convert/from_void.mjs
+function FromVoid(_context, _type, value) {
+  const result = try_exports.TryUndefined(value);
+  return try_exports.IsOk(result) ? void 0 : value;
+}
+
+// node_modules/typebox/build/value/convert/from_type.mjs
+function FromType21(context, type, value) {
+  return IsArray2(type) ? FromArray8(context, type, value) : IsBigInt2(type) ? FromBigInt6(context, type, value) : IsBoolean3(type) ? FromBoolean6(context, type, value) : IsCyclic(type) ? FromCyclic7(context, type, value) : IsEnum(type) ? FromEnum3(context, type, value) : IsInteger2(type) ? FromInteger(context, type, value) : IsIntersect(type) ? FromIntersect7(context, type, value) : IsLiteral(type) ? FromLiteral6(context, type, value) : IsNull2(type) ? FromNull2(context, type, value) : IsNumber3(type) ? FromNumber5(context, type, value) : IsObject2(type) ? FromObject12(context, type, value) : IsRecord(type) ? FromRecord4(context, type, value) : IsRef(type) ? FromRef6(context, type, value) : IsString3(type) ? FromString7(context, type, value) : IsTemplateLiteral(type) ? FromTemplateLiteral4(context, type, value) : IsTuple(type) ? FromTuple6(context, type, value) : IsUndefined2(type) ? FromUndefined2(context, type, value) : IsUnion(type) ? FromUnion10(context, type, value) : IsVoid(type) ? FromVoid(context, type, value) : value;
+}
+
+// node_modules/typebox/build/value/convert/convert.mjs
+function Convert(...args2) {
+  const [context, type, value] = arguments_exports.Match(args2, {
+    3: (context2, type2, value2) => [context2, type2, value2],
+    2: (type2, value2) => [{}, type2, value2]
+  });
+  return FromType21(context, type, value);
+}
+
+// node_modules/typebox/build/value/default/from_array.mjs
+function FromArray9(context, type, value) {
+  if (!guard_exports.IsArray(value))
+    return value;
+  for (let i = 0; i < value.length; i++) {
+    value[i] = FromType22(context, type.items, value[i]);
+  }
+  return value;
+}
+
+// node_modules/typebox/build/value/default/from_cyclic.mjs
+function FromCyclic8(context, type, value) {
+  return FromType22({ ...context, ...type.$defs }, Ref(type.$ref), value);
+}
+
+// node_modules/typebox/build/value/default/from_default.mjs
+function FromDefault(type, value) {
+  if (!guard_exports.IsUndefined(value))
+    return value;
+  return guard_exports.IsFunction(type.default) ? type.default() : Clone2(type.default);
+}
+
+// node_modules/typebox/build/value/default/from_intersect.mjs
+function FromIntersect8(context, type, value) {
+  const instantiated = Instantiate(context, type);
+  const evaluated = Evaluate(instantiated);
+  return FromType22(context, evaluated, value);
+}
+
+// node_modules/typebox/build/value/default/from_object.mjs
+function FromObject13(context, type, value) {
+  if (!guard_exports.IsObject(value))
+    return value;
+  const knownPropertyKeys = guard_exports.Keys(type.properties);
+  for (const key of knownPropertyKeys) {
+    const propertyValue = FromType22(context, type.properties[key], value[key]);
+    const isUnassignableUndefined = guard_exports.IsUndefined(propertyValue) && (IsOptional(type.properties[key]) || !guard_exports.HasPropertyKey(type.properties[key], "default"));
+    if (isUnassignableUndefined)
+      continue;
+    value[key] = propertyValue;
+  }
+  if (!IsAdditionalProperties(type) || guard_exports.IsBoolean(type.additionalProperties))
+    return value;
+  for (const key of guard_exports.Keys(value)) {
+    if (knownPropertyKeys.includes(key))
+      continue;
+    value[key] = FromType22(context, type.additionalProperties, value[key]);
+  }
+  return value;
+}
+
+// node_modules/typebox/build/value/default/from_record.mjs
+function FromRecord5(context, type, value) {
+  if (!guard_exports.IsObject(value))
+    return value;
+  const [recordKey, recordValue] = [new RegExp(RecordPattern(type)), RecordValue(type)];
+  for (const key of guard_exports.Keys(value)) {
+    if (!(recordKey.test(key) && IsDefault(recordValue)))
+      continue;
+    value[key] = FromType22(context, recordValue, value[key]);
+  }
+  if (!IsAdditionalProperties(type))
+    return value;
+  for (const key of guard_exports.Keys(value)) {
+    if (recordKey.test(key))
+      continue;
+    value[key] = FromType22(context, type.additionalProperties, value[key]);
+  }
+  return value;
+}
+
+// node_modules/typebox/build/value/default/from_ref.mjs
+function FromRef7(context, type, value) {
+  return guard_exports.HasPropertyKey(context, type.$ref) ? FromType22(context, context[type.$ref], value) : value;
+}
+
+// node_modules/typebox/build/value/default/from_tuple.mjs
+function FromTuple7(context, schema, value) {
+  if (!guard_exports.IsArray(value))
+    return value;
+  const [items, max] = [schema.items, Math.max(schema.items.length, value.length)];
+  for (let i = 0; i < max; i++) {
+    if (i < items.length)
+      value[i] = FromType22(context, items[i], value[i]);
+  }
+  return value;
+}
+
+// node_modules/typebox/build/value/default/from_union.mjs
+function FromUnion11(context, schema, value) {
+  for (const inner of schema.anyOf) {
+    const result = FromType22(context, inner, Clone2(value));
+    if (Check2(context, inner, result)) {
+      return result;
+    }
+  }
+  return value;
+}
+
+// node_modules/typebox/build/value/default/from_type.mjs
+function FromType22(context, type, value) {
+  const defaulted = IsDefault(type) ? FromDefault(type, value) : value;
+  return IsArray2(type) ? FromArray9(context, type, defaulted) : IsCyclic(type) ? FromCyclic8(context, type, defaulted) : IsIntersect(type) ? FromIntersect8(context, type, defaulted) : IsObject2(type) ? FromObject13(context, type, defaulted) : IsRecord(type) ? FromRecord5(context, type, defaulted) : IsRef(type) ? FromRef7(context, type, defaulted) : IsTuple(type) ? FromTuple7(context, type, defaulted) : IsUnion(type) ? FromUnion11(context, type, defaulted) : defaulted;
+}
+
+// node_modules/typebox/build/value/default/default.mjs
+function Default(...args2) {
+  const [context, type, value] = arguments_exports.Match(args2, {
+    3: (context2, type2, value2) => [context2, type2, value2],
+    2: (type2, value2) => [{}, type2, value2]
+  });
+  return FromType22(context, type, value);
+}
+
+// node_modules/typebox/build/value/pipeline/pipeline.mjs
+function Pipeline(pipeline) {
+  return (...args2) => {
+    const [context, type, value] = arguments_exports.Match(args2, {
+      3: (context2, type2, value2) => [context2, type2, value2],
+      2: (type2, value2) => [{}, type2, value2]
+    });
+    return pipeline.reduce((result, func) => func(context, type, result), value);
+  };
+}
+
+// node_modules/typebox/build/value/codec/callback.mjs
+function Decode3(_context, type, value) {
+  return type["~codec"].decode(value);
+}
+function Encode3(_context, type, value) {
+  return type["~codec"].encode(value);
+}
+function Callback(direction, context, type, value) {
+  if (!IsCodec(type))
+    return value;
+  return guard_exports.IsEqual(direction, "Decode") ? Decode3(context, type, value) : Encode3(context, type, value);
+}
+
+// node_modules/typebox/build/value/codec/from_array.mjs
+function Decode4(direction, context, type, value) {
+  if (!guard_exports.IsArray(value))
+    return value;
+  for (let i = 0; i < value.length; i++) {
+    value[i] = FromType23(direction, context, type.items, value[i]);
+  }
+  return Callback(direction, context, type, value);
+}
+function Encode4(direction, context, type, value) {
+  const exterior = Callback(direction, context, type, value);
+  if (!guard_exports.IsArray(exterior))
+    return exterior;
+  for (let i = 0; i < exterior.length; i++) {
+    exterior[i] = FromType23(direction, context, type.items, exterior[i]);
+  }
+  return exterior;
+}
+function FromArray10(direction, context, type, value) {
+  return guard_exports.IsEqual(direction, "Decode") ? Decode4(direction, context, type, value) : Encode4(direction, context, type, value);
+}
+
+// node_modules/typebox/build/value/codec/from_cyclic.mjs
+function FromCyclic9(direction, context, type, value) {
+  value = FromType23(direction, { ...context, ...type.$defs }, Ref(type.$ref), value);
+  return Callback(direction, context, type, value);
+}
+
+// node_modules/typebox/build/value/codec/from_intersect.mjs
+function MergeInteriors(interiors) {
+  return interiors.reduce((results, interior) => ({ ...results, ...interior }), {});
+}
+function NonMatchingInterior(value, interiors) {
+  for (const interior of interiors)
+    if (!guard_exports.IsDeepEqual(value, interior))
+      return interior;
+  return value;
+}
+function Decode5(direction, context, type, value) {
+  if (guard_exports.IsEqual(type.allOf.length, 0))
+    return Callback(direction, context, type, value);
+  const interiors = type.allOf.map((schema) => FromType23(direction, context, schema, Clean(schema, Clone2(value))));
+  const structural = interiors.every((result) => guard_exports.IsObject(result));
+  const exterior = structural ? MergeInteriors(interiors) : NonMatchingInterior(value, interiors);
+  return Callback(direction, context, type, exterior);
+}
+function Encode5(direction, context, type, value) {
+  if (guard_exports.IsEqual(type.allOf.length, 0))
+    return Callback(direction, context, type, value);
+  const exterior = Callback(direction, context, type, value);
+  const interiors = type.allOf.map((schema) => FromType23(direction, context, schema, Clean(schema, Clone2(exterior))));
+  const structural = interiors.every((result) => guard_exports.IsObject(result));
+  if (structural)
+    return MergeInteriors(interiors);
+  return NonMatchingInterior(exterior, interiors);
+}
+function FromIntersect9(direction, context, type, value) {
+  return guard_exports.IsEqual(direction, "Decode") ? Decode5(direction, context, type, value) : Encode5(direction, context, type, value);
+}
+
+// node_modules/typebox/build/value/codec/from_object.mjs
+function Decode6(direction, context, type, value) {
+  if (!guard_exports.IsObjectNotArray(value))
+    return value;
+  for (const key of guard_exports.Keys(type.properties)) {
+    if (!guard_exports.HasPropertyKey(value, key) || IsOptionalUndefined(type.properties[key], key, value))
+      continue;
+    value[key] = FromType23(direction, context, type.properties[key], value[key]);
+  }
+  return Callback(direction, context, type, value);
+}
+function Encode6(direction, context, type, value) {
+  const exterior = Callback(direction, context, type, value);
+  if (!guard_exports.IsObjectNotArray(exterior))
+    return exterior;
+  for (const key of guard_exports.Keys(type.properties)) {
+    if (!guard_exports.HasPropertyKey(exterior, key) || IsOptionalUndefined(type.properties[key], key, exterior))
+      continue;
+    exterior[key] = FromType23(direction, context, type.properties[key], exterior[key]);
+  }
+  return exterior;
+}
+function FromObject14(direction, context, type, value) {
+  return guard_exports.IsEqual(direction, "Decode") ? Decode6(direction, context, type, value) : Encode6(direction, context, type, value);
+}
+
+// node_modules/typebox/build/value/codec/from_record.mjs
+function Decode7(direction, context, type, value) {
+  if (!guard_exports.IsObjectNotArray(value))
+    return value;
+  const regexp = new RegExp(RecordPattern(type));
+  for (const key of guard_exports.Keys(value)) {
+    if (!regexp.test(key))
+      continue;
+    value[key] = FromType23(direction, context, RecordValue(type), value[key]);
+  }
+  return Callback(direction, context, type, value);
+}
+function Encode7(direction, context, type, value) {
+  const exterior = Callback(direction, context, type, value);
+  if (!guard_exports.IsObjectNotArray(exterior))
+    return exterior;
+  const regexp = new RegExp(RecordPattern(type));
+  for (const key of guard_exports.Keys(exterior)) {
+    if (!regexp.test(key))
+      continue;
+    exterior[key] = FromType23(direction, context, RecordValue(type), exterior[key]);
+  }
+  return exterior;
+}
+function FromRecord6(direction, context, type, value) {
+  return guard_exports.IsEqual(direction, "Decode") ? Decode7(direction, context, type, value) : Encode7(direction, context, type, value);
+}
+
+// node_modules/typebox/build/value/codec/from_ref.mjs
+function ResolveRef2(direction, context, type, value) {
+  return guard_exports.HasPropertyKey(context, type.$ref) ? FromType23(direction, context, context[type.$ref], value) : value;
+}
+function FromRef8(direction, context, type, value) {
+  return guard_exports.IsEqual(direction, "Decode") ? Callback(direction, context, type, ResolveRef2(direction, context, type, value)) : ResolveRef2(direction, context, type, Callback(direction, context, type, value));
+}
+
+// node_modules/typebox/build/value/codec/from_tuple.mjs
+function Decode8(direction, context, type, value) {
+  if (!guard_exports.IsArray(value))
+    return value;
+  for (let i = 0; i < Math.min(type.items.length, value.length); i++) {
+    value[i] = FromType23(direction, context, type.items[i], value[i]);
+  }
+  return Callback(direction, context, type, value);
+}
+function Encode8(direction, context, type, value) {
+  const exterior = Callback(direction, context, type, value);
+  if (!guard_exports.IsArray(exterior))
+    return value;
+  for (let i = 0; i < Math.min(type.items.length, exterior.length); i++) {
+    exterior[i] = FromType23(direction, context, type.items[i], exterior[i]);
+  }
+  return exterior;
+}
+function FromTuple8(direction, context, type, value) {
+  return guard_exports.IsEqual(direction, "Decode") ? Decode8(direction, context, type, value) : Encode8(direction, context, type, value);
+}
+
+// node_modules/typebox/build/value/codec/from_union.mjs
+function Decode9(direction, context, type, value) {
+  for (const schema of type.anyOf) {
+    if (!Check2(context, schema, value))
+      continue;
+    const variant = FromType23(direction, context, schema, value);
+    return Callback(direction, context, type, variant);
+  }
+  return value;
+}
+function Encode9(direction, context, type, value) {
+  const exterior = Callback(direction, context, type, value);
+  for (const schema of type.anyOf) {
+    const variant = FromType23(direction, context, schema, Clone2(exterior));
+    if (!Check2(context, schema, variant))
+      continue;
+    return variant;
+  }
+  return exterior;
+}
+function FromUnion12(direction, context, type, value) {
+  return guard_exports.IsEqual(direction, "Decode") ? Decode9(direction, context, type, value) : Encode9(direction, context, type, value);
+}
+
+// node_modules/typebox/build/value/codec/from_type.mjs
+function FromType23(direction, context, type, value) {
+  return IsArray2(type) ? FromArray10(direction, context, type, value) : IsCyclic(type) ? FromCyclic9(direction, context, type, value) : IsIntersect(type) ? FromIntersect9(direction, context, type, value) : IsObject2(type) ? FromObject14(direction, context, type, value) : IsRecord(type) ? FromRecord6(direction, context, type, value) : IsRef(type) ? FromRef8(direction, context, type, value) : IsTuple(type) ? FromTuple8(direction, context, type, value) : IsUnion(type) ? FromUnion12(direction, context, type, value) : Callback(direction, context, type, value);
+}
+
+// node_modules/typebox/build/value/codec/decode.mjs
+var DecodeError = class extends AssertError {
+  constructor(value, errors) {
+    super("Decode", value, errors);
+  }
+};
+function Assert2(context, type, value) {
+  if (!Check2(context, type, value))
+    throw new DecodeError(value, Errors2(context, type, value));
+  return value;
+}
+function DecodeUnsafe(context, type, value) {
+  const sorted = settings_exports.Get().unionPrioritySort ? UnionPrioritySort(type) : type;
+  return FromType23("Decode", context, sorted, value);
+}
+var Decoder = Pipeline([
+  (_context, _type, value) => Clone2(value),
+  (context, type, value) => Default(context, type, value),
+  (context, type, value) => Convert(context, type, value),
+  (context, type, value) => Clean(context, type, value),
+  (context, type, value) => Assert2(context, type, value),
+  (context, type, value) => DecodeUnsafe(context, type, value)
+]);
+function Decode10(...args2) {
+  const [context, type, value] = arguments_exports.Match(args2, {
+    3: (context2, type2, value2) => [context2, type2, value2],
+    2: (type2, value2) => [{}, type2, value2]
+  });
+  return Decoder(context, type, value);
+}
+
+// node_modules/typebox/build/value/codec/encode.mjs
+var EncodeError = class extends AssertError {
+  constructor(value, errors) {
+    super("Encode", value, errors);
+  }
+};
+function Assert3(context, type, value) {
+  if (!Check2(context, type, value))
+    throw new EncodeError(value, Errors2(context, type, value));
+  return value;
+}
+function EncodeUnsafe(context, type, value) {
+  const sorted = settings_exports.Get().unionPrioritySort ? UnionPrioritySort(type) : type;
+  return FromType23("Encode", context, sorted, value);
+}
+var Encoder = Pipeline([
+  (_context, _type, value) => Clone2(value),
+  (context, type, value) => EncodeUnsafe(context, type, value),
+  (context, type, value) => Default(context, type, value),
+  (context, type, value) => Convert(context, type, value),
+  (context, type, value) => Clean(context, type, value),
+  (context, type, value) => Assert3(context, type, value)
+]);
+function Encode10(...args2) {
+  const [context, type, value] = arguments_exports.Match(args2, {
+    3: (context2, type2, value2) => [context2, type2, value2],
+    2: (type2, value2) => [{}, type2, value2]
+  });
+  return Encoder(context, type, value);
+}
+
+// node_modules/typebox/build/value/codec/has.mjs
+function FromArray11(context, type) {
+  return IsCodec(type) || FromType24(context, type.items);
+}
+function FromCyclic10(context, type) {
+  return IsCodec(type) || FromRef9({ ...context, ...type.$defs }, Ref(type.$ref));
+}
+function FromIntersect10(context, type) {
+  return IsCodec(type) || type.allOf.some((type2) => FromType24(context, type2));
+}
+function FromObject15(context, type) {
+  return IsCodec(type) || guard_exports.Keys(type.properties).some((key) => {
+    return FromType24(context, type.properties[key]);
+  });
+}
+function FromRecord7(context, type) {
+  return IsCodec(type) || FromType24(context, RecordValue(type));
+}
+function FromRef9(context, type) {
+  if (visited.has(type.$ref))
+    return false;
+  visited.add(type.$ref);
+  return IsCodec(type) || guard_exports.HasPropertyKey(context, type.$ref) && FromType24(context, context[type.$ref]);
+}
+function FromTuple9(context, type) {
+  return IsCodec(type) || type.items.some((type2) => FromType24(context, type2));
+}
+function FromUnion13(context, type) {
+  return IsCodec(type) || type.anyOf.some((type2) => FromType24(context, type2));
+}
+function FromType24(context, type) {
+  return IsArray2(type) ? FromArray11(context, type) : IsCyclic(type) ? FromCyclic10(context, type) : IsIntersect(type) ? FromIntersect10(context, type) : IsObject2(type) ? FromObject15(context, type) : IsRecord(type) ? FromRecord7(context, type) : IsRef(type) ? FromRef9(context, type) : IsTuple(type) ? FromTuple9(context, type) : IsUnion(type) ? FromUnion13(context, type) : IsCodec(type);
+}
+var visited = /* @__PURE__ */ new Set();
+function HasCodec(...args2) {
+  const [context, type] = arguments_exports.Match(args2, {
+    2: (context2, type2) => [context2, type2],
+    1: (type2) => [{}, type2]
+  });
+  visited.clear();
+  return FromType24(context, type);
+}
+
+// node_modules/typebox/build/value/create/error.mjs
+var CreateError = class extends Error {
+  constructor(type, message) {
+    super(message);
+    this.type = type;
+  }
+};
+
+// node_modules/typebox/build/value/create/from_default.mjs
+function FromDefault2(_context, schema) {
+  return guard_exports.IsFunction(schema.default) ? schema.default(schema) : guard_exports.IsObject(schema.default) ? Clone2(schema.default) : schema.default;
+}
+
+// node_modules/typebox/build/value/create/from_array.mjs
+function FromArray12(context, type) {
+  if (IsUniqueItems(type) && !IsDefault(type))
+    throw new CreateError(type, "Arrays with uniqueItems constraints must specify a default annotation");
+  const length = IsMinItems(type) ? type.minItems : 0;
+  return Array.from({ length }, () => FromType25(context, type.items));
+}
+
+// node_modules/typebox/build/value/create/from_bigint.mjs
+function FromBigInt7(_context, type) {
+  return IsExclusiveMinimum(type) ? BigInt(type.exclusiveMinimum) + BigInt(1) : IsMinimum(type) ? BigInt(type.minimum) : BigInt(0);
+}
+
+// node_modules/typebox/build/value/create/from_boolean.mjs
+function FromBoolean7(_context, _type) {
+  return false;
+}
+
+// node_modules/typebox/build/value/create/from_constructor.mjs
+function FromConstructor2(context, type) {
+  const instanceType = FromType25(context, type.instanceType);
+  return class {
+    constructor() {
+      Object.assign(this, instanceType);
+    }
+  };
+}
+
+// node_modules/typebox/build/value/create/from_cyclic.mjs
+function FromCyclic11(context, type) {
+  return FromType25({ ...context, ...type.$defs }, Ref(type.$ref));
+}
+
+// node_modules/typebox/build/value/create/from_enum.mjs
+function FromEnum4(context, type) {
+  return FromType25(context, Evaluate(type));
+}
+
+// node_modules/typebox/build/value/create/from_function.mjs
+function FromFunction2(context, type) {
+  const returnType = FromType25(context, type.returnType);
+  return () => returnType;
+}
+
+// node_modules/typebox/build/value/create/from_integer.mjs
+function FromInteger2(_context, type) {
+  return IsExclusiveMinimum(type) && guard_exports.IsNumber(type.exclusiveMinimum) ? type.exclusiveMinimum + 1 : IsMinimum(type) ? type.minimum : 0;
+}
+
+// node_modules/typebox/build/value/create/from_intersect.mjs
+function FromIntersect11(context, type) {
+  const instantiated = Instantiate(context, type);
+  const evaluated = Evaluate(instantiated);
+  return FromType25(context, evaluated);
+}
+
+// node_modules/typebox/build/value/create/from_literal.mjs
+function FromLiteral7(_context, type) {
+  return type.const;
+}
+
+// node_modules/typebox/build/value/create/from_never.mjs
+function FromNever(_context, type) {
+  throw new CreateError(type, "Cannot create TNever types");
+}
+
+// node_modules/typebox/build/value/create/from_null.mjs
+function FromNull3(_context, _type) {
+  return null;
+}
+
+// node_modules/typebox/build/value/create/from_number.mjs
+function FromNumber6(_context, type) {
+  return IsExclusiveMinimum(type) && guard_exports.IsNumber(type.exclusiveMinimum) ? type.exclusiveMinimum + 1 : IsMinimum(type) ? type.minimum : 0;
+}
+
+// node_modules/typebox/build/value/create/from_object.mjs
+function FromObject16(context, type) {
+  const required = guard_exports.IsUndefined(type.required) ? [] : type.required;
+  return required.reduce((result, key) => {
+    return { ...result, [key]: FromType25(context, type.properties[key]) };
+  }, {});
+}
+
+// node_modules/typebox/build/value/create/from_record.mjs
+function FromRecord8(_context, type) {
+  if (IsMinProperties(type) && !IsDefault(type))
+    throw new CreateError(type, "Record with the minProperties constraint must have a default annotation");
+  return {};
+}
+
+// node_modules/typebox/build/value/create/from_ref.mjs
+function FromRef10(context, type) {
+  return guard_exports.HasPropertyKey(context, type.$ref) ? FromType25(context, context[type.$ref]) : (() => {
+    throw new CreateError(type, "Unable to deref Ref");
+  })();
+}
+
+// node_modules/typebox/build/value/create/from_string.mjs
+function FromString8(_context, type) {
+  const needsDefault = (IsPattern(type) || IsFormat(type)) && !IsDefault(type);
+  if (needsDefault)
+    throw Error("Strings with format or pattern constraints must specify default");
+  const minLength = IsMinLength3(type) ? type.minLength : 0;
+  return "".padEnd(minLength);
+}
+
+// node_modules/typebox/build/value/create/from_symbol.mjs
+function FromSymbol2(_context, _type) {
+  return /* @__PURE__ */ Symbol();
+}
+
+// node_modules/typebox/build/value/create/from_template_literal.mjs
+function FromTemplateLiteral5(context, type) {
+  const decoded = TemplateLiteralDecode(type.pattern);
+  if (IsString3(decoded))
+    throw new CreateError(type, "Unable to create TemplateLiteral due to infinite type expansion");
+  return FromType25(context, decoded);
+}
+
+// node_modules/typebox/build/value/create/from_tuple.mjs
+function FromTuple10(context, type) {
+  return Array.from({ length: type.minItems }, (_, i) => FromType25(context, type.items[i]));
+}
+
+// node_modules/typebox/build/value/create/from_undefined.mjs
+function FromUndefined3(_context, _type) {
+  return void 0;
+}
+
+// node_modules/typebox/build/value/create/from_union.mjs
+function FromUnion14(context, type) {
+  if (guard_exports.IsEqual(type.anyOf.length, 0)) {
+    throw Error("Unable to create Union with no variants");
+  }
+  return FromType25(context, type.anyOf[0]);
+}
+
+// node_modules/typebox/build/value/create/from_void.mjs
+function FromVoid2(_context, _type) {
+  return void 0;
+}
+
+// node_modules/typebox/build/value/create/from_type.mjs
+function FromType25(context, type) {
+  return (
+    // -----------------------------------------------------
+    // Default
+    // -----------------------------------------------------
+    IsDefault(type) ? FromDefault2(context, type) : (
+      // -----------------------------------------------------
+      // Types
+      // -----------------------------------------------------
+      IsArray2(type) ? FromArray12(context, type) : IsBigInt2(type) ? FromBigInt7(context, type) : IsBoolean3(type) ? FromBoolean7(context, type) : IsConstructor2(type) ? FromConstructor2(context, type) : IsCyclic(type) ? FromCyclic11(context, type) : IsEnum(type) ? FromEnum4(context, type) : IsFunction2(type) ? FromFunction2(context, type) : IsInteger2(type) ? FromInteger2(context, type) : IsIntersect(type) ? FromIntersect11(context, type) : IsLiteral(type) ? FromLiteral7(context, type) : IsNever(type) ? FromNever(context, type) : IsNull2(type) ? FromNull3(context, type) : IsNumber3(type) ? FromNumber6(context, type) : IsObject2(type) ? FromObject16(context, type) : IsRecord(type) ? FromRecord8(context, type) : IsRef(type) ? FromRef10(context, type) : IsString3(type) ? FromString8(context, type) : IsSymbol2(type) ? FromSymbol2(context, type) : IsTemplateLiteral(type) ? FromTemplateLiteral5(context, type) : IsTuple(type) ? FromTuple10(context, type) : IsUndefined2(type) ? FromUndefined3(context, type) : IsUnion(type) ? FromUnion14(context, type) : IsVoid(type) ? FromVoid2(context, type) : void 0
+    )
+  );
+}
+
+// node_modules/typebox/build/value/create/create.mjs
+function Create2(...args2) {
+  const [context, type] = arguments_exports.Match(args2, {
+    2: (context2, type2) => [context2, type2],
+    1: (type2) => [{}, type2]
+  });
+  return FromType25(context, type);
+}
+
+// node_modules/typebox/build/value/equal/equal.mjs
+function Equal(left, right) {
+  return guard_exports.IsDeepEqual(left, right);
+}
+
+// node_modules/typebox/build/value/hash/hash.mjs
+function Hash2(value) {
+  return hash_exports.Hash(value);
+}
+
+// node_modules/typebox/build/value/parse/parse.mjs
+var ParseError = class extends AssertError {
+  constructor(value, errors) {
+    super("Parse", value, errors);
+  }
+};
+function Assert4(context, type, value) {
+  if (!Check2(context, type, value))
+    throw new ParseError(value, Errors2(context, type, value));
+  return value;
+}
+var Parser = Pipeline([
+  (_context, _type, value) => Clone2(value),
+  (context, type, value) => Default(context, type, value),
+  (context, type, value) => Convert(context, type, value),
+  (context, type, value) => Clean(context, type, value),
+  (context, type, value) => Assert4(context, type, value)
+]);
+function Parse(...args2) {
+  const [context, type, value] = arguments_exports.Match(args2, {
+    3: (context2, type2, value2) => [context2, type2, value2],
+    2: (type2, value2) => [{}, type2, value2]
+  });
+  const checked = Check2(context, type, value);
+  if (checked)
+    return value;
+  if (settings_exports.Get().correctiveParse)
+    return Parser(context, type, value);
+  throw new ParseError(value, Errors2(context, type, value));
+}
+
+// node_modules/typebox/build/value/delta/diff.mjs
+function CreateUpdate(path, value) {
+  return { type: "update", path, value };
+}
+function CreateInsert(path, value) {
+  return { type: "insert", path, value };
+}
+function CreateDelete(path) {
+  return { type: "delete", path };
+}
+function AssertCanDiffObject(value) {
+  if (guard_exports.IsObject(value) && guard_exports.IsEqual(guard_exports.Symbols(value).length, 0))
+    return;
+  throw new Error("Cannot create diffs for objects with symbols keys");
+}
+function* FromObject17(path, left, right) {
+  if (!guard_exports.IsObject(right) || guard_exports.IsArray(right))
+    return yield CreateUpdate(path, right);
+  AssertCanDiffObject(left);
+  AssertCanDiffObject(right);
+  const leftKeys = guard_exports.Keys(left);
+  const rightKeys = guard_exports.Keys(right);
+  for (const key of rightKeys) {
+    if (guard_exports.HasPropertyKey(left, key))
+      continue;
+    if (guard_exports.IsUnsafePropertyKey(key))
+      continue;
+    yield CreateInsert(`${path}/${key}`, right[key]);
+  }
+  for (const key of leftKeys) {
+    if (!guard_exports.HasPropertyKey(right, key))
+      continue;
+    if (guard_exports.IsUnsafePropertyKey(key))
+      continue;
+    if (Equal(left, right))
+      continue;
+    yield* FromValue4(`${path}/${key}`, left[key], right[key]);
+  }
+  for (const key of leftKeys) {
+    if (guard_exports.HasPropertyKey(right, key))
+      continue;
+    if (guard_exports.IsUnsafePropertyKey(key))
+      continue;
+    yield CreateDelete(`${path}/${key}`);
+  }
+}
+function* FromArray13(path, left, right) {
+  if (!guard_exports.IsArray(right))
+    return yield CreateUpdate(path, right);
+  for (let i = 0; i < Math.min(left.length, right.length); i++) {
+    yield* FromValue4(`${path}/${i}`, left[i], right[i]);
+  }
+  for (let i = 0; i < right.length; i++) {
+    if (i < left.length)
+      continue;
+    yield CreateInsert(`${path}/${i}`, right[i]);
+  }
+  for (let i = left.length - 1; i >= 0; i--) {
+    if (i < right.length)
+      continue;
+    yield CreateDelete(`${path}/${i}`);
+  }
+}
+function* FromTypedArray2(path, left, right) {
+  const typeLeft = globalThis.Object.getPrototypeOf(left).constructor.name;
+  const typeRight = globalThis.Object.getPrototypeOf(right).constructor.name;
+  const predicate = globals_exports.IsTypeArray(right) && guard_exports.IsEqual(left.length, right.length) && guard_exports.IsEqual(typeLeft, typeRight);
+  if (predicate) {
+    for (let index = 0; index < Math.min(left.length, right.length); index++) {
+      yield* FromValue4(`${path}/${index}`, left[index], right[index]);
+    }
+  } else {
+    return yield CreateUpdate(path, right);
+  }
+}
+function* FromUnknown(path, left, right) {
+  if (left === right)
+    return;
+  yield CreateUpdate(path, right);
+}
+function* FromValue4(path, left, right) {
+  return globals_exports.IsTypeArray(left) ? yield* FromTypedArray2(path, left, right) : guard_exports.IsArray(left) ? yield* FromArray13(path, left, right) : guard_exports.IsObject(left) ? yield* FromObject17(path, left, right) : yield* FromUnknown(path, left, right);
+}
+function Diff(current, next) {
+  return [...FromValue4("", current, next)];
+}
+
+// node_modules/typebox/build/value/delta/edit.mjs
+var Insert2 = _Object_({
+  type: Literal("insert"),
+  path: String2(),
+  value: Unknown()
+});
+var Update2 = Object({
+  type: Literal("update"),
+  path: String2(),
+  value: Unknown()
+});
+var Delete2 = _Object_({
+  type: Literal("delete"),
+  path: String2()
+});
+var Edit = Union([Insert2, Update2, Delete2]);
+
+// node_modules/typebox/build/value/delta/patch.mjs
+function IsRoot(edits) {
+  return edits.length > 0 && edits[0].path === "" && edits[0].type === "update";
+}
+function IsEmpty(edits) {
+  return edits.length === 0;
+}
+function Patch(current, edits) {
+  if (IsRoot(edits))
+    return Clone2(edits[0].value);
+  if (IsEmpty(edits))
+    return Clone2(current);
+  const clone = Clone2(current);
+  for (const edit of edits) {
+    switch (edit.type) {
+      case "insert": {
+        pointer_exports.Set(clone, edit.path, edit.value);
+        break;
+      }
+      case "update": {
+        pointer_exports.Set(clone, edit.path, edit.value);
+        break;
+      }
+      case "delete": {
+        pointer_exports.Delete(clone, edit.path);
+        break;
+      }
+    }
+  }
+  return clone;
+}
+
+// node_modules/typebox/build/value/repair/error.mjs
+var RepairError = class extends Error {
+  constructor(context, type, value, message) {
+    super(message);
+    this.context = context;
+    this.type = type;
+    this.value = value;
+  }
+};
+
+// node_modules/typebox/build/value/repair/from_array.mjs
+function MakeUnique(values) {
+  const [hashes, result] = [/* @__PURE__ */ new Set(), []];
+  for (const value of values) {
+    const hash = Hash2(value);
+    if (hashes.has(hash))
+      continue;
+    hashes.add(hash);
+    result.push(value);
+  }
+  return result;
+}
+function FromArray14(context, type, value) {
+  if (Check2(context, type, value))
+    return value;
+  const created = guard_exports.IsArray(value) ? value : Create2(context, type);
+  const minimum = IsMinItems(type) && created.length < type.minItems ? [...created, ...Array.from({ length: type.minItems - created.length }, () => Create2(context, type))] : created;
+  const maximum = IsMaxItems(type) && minimum.length > type.maxItems ? minimum.slice(0, type.maxItems) : minimum;
+  const repaired = maximum.map((value2) => FromType26(context, type.items, value2));
+  if (!IsUniqueItems(type) || IsUniqueItems(type) && !guard_exports.IsEqual(type.uniqueItems, true))
+    return repaired;
+  const unique = MakeUnique(repaired);
+  if (!Check2(context, type, unique))
+    throw new RepairError(context, type, value, "Failed to repair Array due to uniqueItems constraint");
+  return unique;
+}
+
+// node_modules/typebox/build/value/repair/from_enum.mjs
+function FromEnum5(context, type, value) {
+  return FromType26(context, Evaluate(type), value);
+}
+
+// node_modules/typebox/build/value/repair/from_intersect.mjs
+function FromIntersect12(context, type, value) {
+  const instantiated = Instantiate(context, type);
+  const evaluated = Evaluate(instantiated);
+  return FromType26(context, evaluated, value);
+}
+
+// node_modules/typebox/build/value/repair/from_object.mjs
+function FromObject18(context, type, value) {
+  if (Check2(context, type, value))
+    return value;
+  if (!guard_exports.IsObjectNotArray(value))
+    return Create2(context, type);
+  const required = new Set(guard_exports.IsUndefined(type.required) ? [] : type.required);
+  const result = {};
+  for (const [key, schema] of guard_exports.Entries(type.properties)) {
+    if (!required.has(key) && guard_exports.IsUndefined(value[key]))
+      continue;
+    result[key] = key in value ? FromType26(context, schema, value[key]) : Create2(context, schema);
+  }
+  const evaluatedKeys = guard_exports.Keys(type.properties);
+  if (IsAdditionalProperties(type) && guard_exports.IsObject(type.additionalProperties)) {
+    for (const key of guard_exports.Keys(value)) {
+      if (evaluatedKeys.includes(key))
+        continue;
+      result[key] = FromType26(context, type.additionalProperties, value[key]);
+    }
+  }
+  return result;
+}
+
+// node_modules/typebox/build/value/repair/from_record.mjs
+function FromRecord9(context, type, value) {
+  if (Check2(context, type, value))
+    return value;
+  if (guard_exports.IsNull(value) || !guard_exports.IsObject(value) || guard_exports.IsArray(value))
+    return Create2(context, type);
+  const recordKey = new RegExp(RecordPattern(type));
+  const recordValue = RecordValue(type);
+  const evaluatedKeys = /* @__PURE__ */ new Set();
+  const result = {};
+  for (const [key, value_] of guard_exports.Entries(value)) {
+    if (!recordKey.test(key))
+      continue;
+    result[key] = FromType26(context, recordValue, value_);
+    evaluatedKeys.add(key);
+  }
+  if (IsAdditionalProperties(type)) {
+    for (const key of guard_exports.Keys(value)) {
+      if (evaluatedKeys.has(key))
+        continue;
+      result[key] = FromType26(context, type.additionalProperties, value[key]);
+    }
+  }
+  return result;
+}
+
+// node_modules/typebox/build/value/repair/from_ref.mjs
+function FromRef11(context, type, value) {
+  return guard_exports.HasPropertyKey(context, type.$ref) ? FromType26(context, context[type.$ref], value) : (() => {
+    throw new RepairError(context, type, value, "Unable to de-reference target type");
+  })();
+}
+
+// node_modules/typebox/build/value/repair/from_template_literal.mjs
+function FromTemplateLiteral6(context, type, value) {
+  const decoded = TemplateLiteralDecode(type.pattern);
+  return FromType26(context, decoded, value);
+}
+
+// node_modules/typebox/build/value/repair/from_tuple.mjs
+function FromTuple11(context, schema, value) {
+  if (Check2(context, schema, value))
+    return value;
+  if (!guard_exports.IsArray(value))
+    return Create2(context, schema);
+  return schema.items.map((schema2, index) => FromType26(context, schema2, value[index]));
+}
+
+// node_modules/typebox/build/value/shared/union_score_select.mjs
+function Deref(context, type, value) {
+  return IsRef(type) ? guard_exports.HasPropertyKey(context, type.$ref) ? Deref(context, context[type.$ref], value) : (() => {
+    throw new Error("Unable to Deref target");
+  })() : type;
+}
+function ScoreVariant(context, type, value) {
+  if (!(IsObject2(type) && guard_exports.IsObject(value)))
+    return 0;
+  const keys = guard_exports.Keys(value);
+  const entries = guard_exports.Entries(type.properties);
+  return entries.reduce((result, [key, schema]) => {
+    const literal = IsLiteral(schema) && guard_exports.IsEqual(schema.const, value[key]) ? 100 : 0;
+    const checks = Check2(context, schema, value[key]) ? 10 : 0;
+    const exists = keys.includes(key) ? 1 : 0;
+    return result + (literal + checks + exists);
+  }, 0);
+}
+function UnionScoreSelect(context, type, value) {
+  const schemas = type.anyOf.map((schema) => Deref(context, schema, value));
+  let [select, best] = [schemas[0], 0];
+  for (const schema of schemas) {
+    const score = ScoreVariant(context, schema, value);
+    if (score > best) {
+      select = schema;
+      best = score;
+    }
+  }
+  return select;
+}
+
+// node_modules/typebox/build/value/repair/from_union.mjs
+function RepairUnion(context, type, value) {
+  const union = Union(Flatten(type.anyOf));
+  const schema = UnionScoreSelect(context, union, value);
+  return FromType26(context, schema, value);
+}
+function FromUnion15(context, type, value) {
+  if (Check2(context, type, value))
+    return Clone2(value);
+  if (IsDefault(type))
+    return Create2(context, type);
+  return RepairUnion(context, type, value);
+}
+
+// node_modules/typebox/build/value/repair/from_unknown.mjs
+function FromUnknown2(context, type, value) {
+  if (Check2(context, type, value))
+    return value;
+  const converted = Convert(context, type, value);
+  if (Check2(context, type, converted))
+    return converted;
+  return Create2(context, type);
+}
+
+// node_modules/typebox/build/value/repair/from_type.mjs
+function AssertRepairableValue(context, type, value) {
+  const unsupported = globals_exports.IsDate(value) || globals_exports.IsMap(value) || globals_exports.IsSet(value) || globals_exports.IsTypeArray(value) || guard_exports.IsConstructor(value) || guard_exports.IsFunction(value);
+  if (unsupported) {
+    throw new RepairError(context, type, value, "Value is not repairable");
+  }
+}
+function AssertRepairableType(context, type, value) {
+  const unsupported = IsConstructor2(type) || IsFunction2(type) || IsNever(type);
+  if (unsupported) {
+    throw new RepairError(context, type, value, "Type is not repairable");
+  }
+}
+function CreateWhenUndefined(context, type, value) {
+  return guard_exports.IsUndefined(value) && !IsUndefined2(type) ? Create2(context, type) : value;
+}
+function FinalizeRepair(context, type, repaired) {
+  return IsRefine(type) ? Check2(context, type, repaired) ? repaired : Create2(context, type) : repaired;
+}
+function FromType26(context, type, value) {
+  AssertRepairableValue(context, type, value);
+  AssertRepairableType(context, type, value);
+  const candidate = CreateWhenUndefined(context, type, value);
+  const repaired = IsArray2(type) ? FromArray14(context, type, candidate) : IsEnum(type) ? FromEnum5(context, type, candidate) : IsIntersect(type) ? FromIntersect12(context, type, candidate) : IsObject2(type) ? FromObject18(context, type, candidate) : IsRecord(type) ? FromRecord9(context, type, candidate) : IsRef(type) ? FromRef11(context, type, candidate) : IsTemplateLiteral(type) ? FromTemplateLiteral6(context, type, candidate) : IsTuple(type) ? FromTuple11(context, type, candidate) : IsUnion(type) ? FromUnion15(context, type, candidate) : FromUnknown2(context, type, candidate);
+  return FinalizeRepair(context, type, repaired);
+}
+
+// node_modules/typebox/build/value/repair/repair.mjs
+function Repair(...args2) {
+  const [context, type, value] = arguments_exports.Match(args2, {
+    3: (context2, type2, value2) => [context2, type2, value2],
+    2: (type2, value2) => [{}, type2, value2]
+  });
+  const repaired = FromType26(context, type, value);
+  Assert(context, type, repaired);
+  return repaired;
+}
+
+// node_modules/typebox/build/value/value.mjs
+var value_exports = {};
+__export(value_exports, {
+  Assert: () => Assert,
+  Check: () => Check2,
+  Clean: () => Clean,
+  Clone: () => Clone2,
+  Convert: () => Convert,
+  Create: () => Create2,
+  Decode: () => Decode10,
+  Default: () => Default,
+  Diff: () => Diff,
+  Encode: () => Encode10,
+  Equal: () => Equal,
+  Errors: () => Errors2,
+  HasCodec: () => HasCodec,
+  Hash: () => Hash2,
+  Parse: () => Parse,
+  Patch: () => Patch,
+  Pointer: () => pointer_exports,
+  Repair: () => Repair
+});
+
+// src/runner/schema-port.ts
+var SchemaPort = class {
+  coerce(schema, value) {
+    if (!value || typeof value !== "object" || !schema) {
+      return value;
+    }
+    try {
+      return value_exports.Convert(schema, value);
+    } catch {
+      return value;
+    }
+  }
+  validate(schema, value) {
+    if (!schema) {
+      return { isValid: true };
+    }
+    try {
+      const s = schema;
+      const isValid = value_exports.Check(s, value);
+      if (isValid) {
+        return { isValid: true };
+      }
+      const errors = [];
+      for (const err of value_exports.Errors(s, value)) {
+        const errObj = err;
+        const rawPath = errObj.path;
+        const path = rawPath ? rawPath.replace(/^\//, "") : "root";
+        errors.push(`- ${path}: ${errObj.message ?? "validation error"}`);
+      }
+      return { isValid: false, errors };
+    } catch (err) {
+      return {
+        isValid: false,
+        errors: [`- schema: ${err instanceof Error ? err.message : String(err)}`]
+      };
+    }
+  }
+};
+
+// src/runner/tool-adapter.ts
+var schemaPort = new SchemaPort();
+function hasOutput(api) {
+  return typeof api === "object" && api !== null && "output" in api && typeof api.output === "function";
+}
+function adaptExtensionTool(toolDef, executeToolFn, createToolContext, getExtensionRunner) {
+  const exposure = toolDef.exposure;
+  const isDeferred = exposure === "deferred";
+  const callers = exposure === "model-only" ? ["model"] : exposure === "codemode" || exposure === "codemode-deferred" ? ["tools"] : exposure === "hidden" ? [] : ["model", "tools"];
+  return defineTool2({
+    name: toolDef.name,
+    description: toolDef.description,
+    parameters: toolDef.parameters,
+    callers,
+    ...toolDef.promptSnippet ? { promptSnippet: toolDef.promptSnippet } : {},
+    ...toolDef.promptGuidelines?.length ? { promptGuidelines: toolDef.promptGuidelines } : {},
+    ...isDeferred ? { deferred: true } : {},
+    ...toolDef.outputSchema ? {
+      outputSchema: toolDef.outputSchema,
+      structuredOutputSchema: toolDef.outputSchema
+    } : {},
+    async execute(args2, api, runtimeContext2) {
+      const runner = getExtensionRunner?.();
+      const abortSignal = runtimeContext2?.abortSignal;
+      if (runner?.hasHandlers("tool_call")) {
+        const hookResult = await runner.emitToolCall({
+          type: "tool_call",
+          toolName: toolDef.name,
+          toolCallId: api.callId,
+          input: args2 ?? {}
+        });
+        if (hookResult?.block) {
+          const blockContent = [{ type: "text", text: `Tool execution blocked: ${hookResult.reason ?? "policy"}` }];
+          return {
+            output: blockContent,
+            isError: true
+          };
+        }
+      }
+      const base = createToolContext?.(api.callId);
+      const descriptors = {
+        ...Object.getOwnPropertyDescriptors(base ?? {}),
+        tools: {
+          get: () => base?.tools ?? [],
+          configurable: true,
+          enumerable: true
+        },
+        executeTool: {
+          value: async (name, nestedArgs, options) => base?.executeTool ? base.executeTool(name, nestedArgs, options) : executeToolFn(api.callId, name, nestedArgs, options),
+          configurable: true,
+          enumerable: true,
+          writable: true
+        }
+      };
+      const ctx = Object.defineProperties({}, descriptors);
+      const coercedArgs = schemaPort.coerce(toolDef.parameters, args2);
+      try {
+        const result = await toolDef.execute(
+          api.callId,
+          coercedArgs,
+          abortSignal,
+          (update) => {
+            if (update?.content && hasOutput(api)) {
+              const textChunks = update.content.filter((c) => c.type === "text").map((c) => c.text).join("");
+              if (textChunks.length > 0) api.output(textChunks);
+            }
+          },
+          ctx
+        );
+        if (runner?.hasHandlers("tool_result")) {
+          await runner.emitToolResult({
+            type: "tool_result",
+            toolName: toolDef.name,
+            toolCallId: api.callId,
+            input: args2 ?? {},
+            content: result.content,
+            details: result.details ?? void 0,
+            isError: result.isError ?? false
+          });
+        }
+        const structuredOutput = result.structuredContent !== void 0 ? result.structuredContent : result.structuredOutput;
+        return {
+          output: result.content,
+          isError: result.isError,
+          details: result.details ?? void 0,
+          ...structuredOutput !== void 0 ? { structuredOutput } : {}
+        };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        const errorContent = [{ type: "text", text: message }];
+        if (runner?.hasHandlers("tool_result")) {
+          await runner.emitToolResult({
+            type: "tool_result",
+            toolName: toolDef.name,
+            toolCallId: api.callId,
+            input: args2 ?? {},
+            content: errorContent,
+            details: void 0,
+            isError: true
+          });
+        }
+        return {
+          output: errorContent,
+          isError: true
+        };
+      }
+    }
+  });
+}
+function installExtensionTools(registry, tools) {
+  if (tools.length === 0) return;
+  registry.install(defineExtension3({ name: "extension-tools", tools }));
+}
+
+// src/runner/extension-mount.ts
+function createNestedToolExecutor(registry, getExtensionRunner, getEnv) {
+  return async (callerId, name, args2, options) => {
+    const runner = getExtensionRunner?.();
+    let target = registry.snapshot().tools().find((t) => t.tool.name === name);
+    if (!target && runner) {
+      const toolDef = runner.getAllRegisteredTools().find((t) => t.definition.name === name);
+      if (toolDef) {
+        const ctx = (callId) => runner.createToolContext(callId, options?.signal);
+        const adapted = adaptExtensionTool(toolDef.definition, createNestedToolExecutor(registry, getExtensionRunner, getEnv), ctx, () => runner);
+        installExtensionTools(registry, [adapted]);
+        target = registry.snapshot().tools().find((t) => t.tool.name === name);
+      }
+    }
+    if (!target) {
+      return { toolCall: { type: "toolCall", id: `${callerId}/nested`, name, arguments: args2 }, result: { content: [{ type: "text", text: `Tool ${name} not found` }], details: {} }, isError: true };
+    }
+    if (runner?.hasHandlers("tool_call")) {
+      const hook = await runner.emitToolCall({
+        type: "tool_call",
+        toolName: name,
+        toolCallId: `${callerId}/nested`,
+        parentToolCallId: callerId,
+        input: args2 ?? {}
+      });
+      if (hook?.block) {
+        return {
+          toolCall: { type: "toolCall", id: `${callerId}/nested`, name, arguments: args2 },
+          result: { content: [{ type: "text", text: `Tool execution blocked: ${hook.reason ?? "policy"}` }], details: {} },
+          isError: true
+        };
+      }
+    }
+    try {
+      const executor = target.tool.execute;
+      let outputText = "";
+      const api = {
+        callId: `${callerId}/nested`,
+        output: (chunk) => {
+          outputText += typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk);
+        },
+        retainedOutput: () => ({ text: outputText, truncated: false }),
+        outputWindow: void 0,
+        env: getEnv?.(),
+        diagnostic: () => {
+        }
+      };
+      const res = await executor(args2, api, runtimeContext);
+      const rawBlocks = res?.output;
+      const content = Array.isArray(rawBlocks) ? rawBlocks : rawBlocks !== void 0 ? [{ type: "text", text: String(rawBlocks) }] : [{ type: "text", text: outputText }];
+      if (runner?.hasHandlers("tool_result")) {
+        await runner.emitToolResult({
+          type: "tool_result",
+          toolName: name,
+          toolCallId: `${callerId}/nested`,
+          parentToolCallId: callerId,
+          input: args2 ?? {},
+          content,
+          details: res?.details,
+          isError: !!res?.isError
+        });
+      }
+      const structuredOutput = res?.structuredContent !== void 0 ? res.structuredContent : res?.structuredOutput;
+      return {
+        toolCall: { type: "toolCall", id: `${callerId}/nested`, name, arguments: args2 },
+        result: {
+          content,
+          details: res?.details,
+          ...structuredOutput !== void 0 ? { structuredOutput } : {}
+        },
+        isError: !!res?.isError
+      };
+    } catch (err) {
+      const errorContent = [{ type: "text", text: err instanceof Error ? err.message : String(err) }];
+      if (runner?.hasHandlers("tool_result")) {
+        await runner.emitToolResult({
+          type: "tool_result",
+          toolName: name,
+          toolCallId: `${callerId}/nested`,
+          parentToolCallId: callerId,
+          input: args2 ?? {},
+          content: errorContent,
+          details: {},
+          isError: true
+        });
+      }
+      return { toolCall: { type: "toolCall", id: `${callerId}/nested`, name, arguments: args2 }, result: { content: errorContent, details: {} }, isError: true };
+    }
+  };
+}
+async function mountExtensionBridge(location, modelRuntime, extensionsResult, registry, executeToolFn, report, dynamicSections, onNotice, settingsManager, dynamicNamespaces, actionsDelegate, requestInteraction2) {
+  let extensionRunner;
+  try {
+    const syncToolsToRegistry = () => {
+      if (!extensionRunner) return;
+      const all = extensionRunner.getAllRegisteredTools();
+      dynamicNamespaces?.registerFromToolDefinitions(all.map((t) => t.definition));
+      const adapted = all.map(
+        (t) => adaptExtensionTool(t.definition, executeToolFn, (callId) => extensionRunner.createToolContext(callId, void 0), () => extensionRunner)
+      );
+      installExtensionTools(registry, adapted);
+    };
+    extensionRunner = await setupExtensionRunner({
+      extensions: extensionsResult.extensions,
+      runtime: extensionsResult.runtime,
+      cwd: location.cwd,
+      modelRuntime,
+      executeToolFn,
+      requestInteraction: requestInteraction2,
+      getCallableTools: () => {
+        const map = /* @__PURE__ */ new Map();
+        for (const t of registry.snapshot().tools()) {
+          map.set(t.tool.name, { name: t.tool.name, description: t.tool.description ?? "", parameters: t.tool.parameters });
+        }
+        for (const t of extensionRunner?.getAllRegisteredTools() ?? []) {
+          map.set(t.definition.name, { ...t.definition, sourceInfo: t.sourceInfo });
+        }
+        return Array.from(map.values());
+      },
+      onToolsChanged: syncToolsToRegistry,
+      onActiveToolsChanged: (tools) => {
+        try {
+          void actionsDelegate?.onConfigureModelTools?.(tools)?.catch((err) => console.warn("[ExtensionMount] Configure model tools error:", err));
+        } catch (err) {
+          console.warn("[ExtensionMount] Synchronous error configuring model tools:", err);
+        }
+      },
+      onNotice,
+      settingsManager,
+      onAbort: () => actionsDelegate?.onAbort?.(),
+      onCompact: (i) => actionsDelegate?.onCompact?.(i),
+      getContextUsage: () => actionsDelegate?.getContextUsage?.(),
+      isIdle: () => actionsDelegate?.isIdle ? actionsDelegate.isIdle() : true,
+      onSubmitUserMessage: (c, d) => actionsDelegate?.onSubmitUserMessage?.(c, d)
+    });
+    if (extensionRunner) {
+      extensionRunner.onError((err) => {
+        report(err);
+        onNotice?.("error", `[Extension Error] ${err.extensionPath} (${err.event}): ${err.error}`);
+      });
+      syncToolsToRegistry();
+      try {
+        await new Promise((r) => setImmediate(r));
+        const currentTools = extensionRunner.getActiveTools?.() ?? registry.snapshot().tools().map((t) => t.tool.name);
+        const beforeStart = await extensionRunner.emitBeforeAgentStart(
+          { messageType: "user", prompt: "", images: void 0 },
+          { cwd: location.cwd, selectedTools: currentTools, sections: dynamicSections?.getSections() ?? {} }
+        );
+        if (beforeStart?.systemPromptOptions?.sections && dynamicSections) {
+          dynamicSections.updateSections(beforeStart.systemPromptOptions.sections);
+        }
+        const selected = beforeStart?.systemPromptOptions?.selectedTools;
+        if (selected && (selected.length !== currentTools.length || selected.some((t, i) => t !== currentTools[i]))) {
+          extensionsResult.runtime.setActiveTools?.(selected);
+        }
+      } catch (err) {
+        report(err);
+      }
+    }
+  } catch (error) {
+    report(error);
+  }
+  return {
+    extensionRunner,
+    cleanup: () => extensionRunner?.emit({ type: "session_shutdown", reason: "quit" }).catch((err) => console.warn("[ExtensionBridge] Cleanup session_shutdown:", err)) ?? Promise.resolve(),
+    setActiveTools: (tools) => extensionsResult.runtime.setActiveTools?.(tools),
+    getActiveTools: () => extensionsResult.runtime.getActiveTools?.() ?? []
+  };
+}
+
+// src/runner/extensions/bb-tools-extension.ts
+import fs from "node:fs";
+
 // src/contracts/bb-tools.ts
 import { z } from "zod";
 var bbDynamicToolSchema = z.object({
@@ -6433,18 +10618,27 @@ function createBbDynamicToolsExtension(options) {
             path: options.toolsFilePath,
             name: "bb-dynamic-tools"
           };
-          const toolEntry = {
+          const toolDef = {
             name: def.name,
             description: def.description ?? "",
             parameters: schema,
             exposure: "both",
-            namespace: "bb",
+            namespace: { name: "bb", description: "Beyond Boundaries dynamic tools" },
             execute: async (_callId, args2, _ctx) => {
               return options.forwardToolCall(def.name, args2);
-            },
+            }
+          };
+          const toolEntry = {
+            ...toolDef,
+            name: def.name,
+            description: def.description ?? "",
+            parameters: schema,
+            exposure: "both",
+            namespace: { name: "bb", description: "Beyond Boundaries dynamic tools" },
+            execute: toolDef.execute,
+            definition: toolDef,
             sourceInfo
           };
-          toolEntry.definition = toolEntry;
           tools.set(def.name, toolEntry);
         }
       }
@@ -6771,7 +10965,8 @@ async function loadHarnessEnvironment(location, options, envs) {
     },
     settingsManager,
     dynamicNamespaces,
-    actionsDelegate
+    actionsDelegate,
+    options.requestInteraction
   );
   runnerRef = mounted.extensionRunner;
   let harness;
@@ -6822,23 +11017,6 @@ async function loadHarnessEnvironment(location, options, envs) {
   };
 }
 
-// src/runner/runtime-hydration.ts
-function hydrateSessionActiveTools(rootAgent, activeEnvState) {
-  if (Array.isArray(rootAgent.tools)) {
-    activeEnvState.setActiveTools?.(rootAgent.tools.map((t) => t.name));
-  }
-}
-async function loadSummaries(harness, rootId) {
-  const summaries = [];
-  let cursor;
-  do {
-    const page = await harness.commit((tx) => tx.scanConversations({}, 256, cursor), runtimeContext);
-    for (const { id } of page.items) summaries.push({ id, label: id === rootId ? "main" : `subagent ${id}`, ...await firstInput(harness, id) });
-    cursor = page.next;
-  } while (cursor !== void 0);
-  return summaries;
-}
-
 // src/runner/runtime.ts
 async function openDurable(options = {}) {
   const location = await selectSession(options.cwd ?? process.cwd(), options.continueSession ?? false, options.session);
@@ -6874,7 +11052,7 @@ async function openDurable(options = {}) {
       }
     }
     const summaries = await loadSummaries(harness, root.id);
-    const conversation = await root.viewState(runtimeContext);
+    const conversation = await createConversationBinding(root, runtimeContext);
     const enabled = settingsManager.getEnabledModels();
     const scoped = enabled?.length ? await resolveModelScopeWithDiagnostics(enabled, modelRuntime) : void 0;
     const scopedList = scoped?.scopedModels?.length ? scoped.scopedModels.map((sm) => sm.model) : modelRuntime.getAvailableSnapshot();
@@ -6912,9 +11090,9 @@ async function openDurable(options = {}) {
     }
     activeEnvState.setNoticeForwarder?.((level, message) => notice(level, message));
     const bindings = new RuntimeBindings(root, conversation, update);
-    const unsubscribeCommits = harness.subscribeCommits((pub) => {
+    const handlePublication = (pub) => {
       let convs = state.conversations;
-      for (const ch of pub.changes) {
+      for (const ch of pub.changes ?? []) {
         if (ch.type === "conversation") {
           convs = [...convs, { id: ch.value.id, label: ch.value.id === root.id ? "main" : `subagent ${ch.value.id}` }];
         } else if (ch.type === "entry" && ch.value.kind === "pi.user") {
@@ -6923,7 +11101,10 @@ async function openDurable(options = {}) {
         }
       }
       if (convs !== state.conversations) update({ conversations: convs });
-    });
+    };
+    const observation = typeof harness.observeCommits === "function" ? harness.observeCommits({ advance: handlePublication, end: () => {
+    } }) : void 0;
+    const unsubscribeCommits = observation ? () => observation.detach?.() : harness.subscribeCommits?.(handlePublication);
     const opened = harness;
     const controller = createDurableController({
       bindings,
@@ -7001,6 +11182,131 @@ async function openDurable(options = {}) {
     await location.release().catch((err) => console.warn("[DurableRuntime] Cleanup location:", err));
     throw error;
   }
+}
+
+// src/runner/bridge/watch-events-compat.ts
+import { NestedCallDoc } from "@earendil-works/pi-durable";
+async function watchEvents(harness, conversationId, context) {
+  const conversation = await harness.conversation(conversationId, context);
+  if (!conversation) throw new Error(`Conversation not found: ${conversationId}`);
+  const watch2 = await conversation.watch(context);
+  const initial = watch2.value;
+  const snapshot = {
+    type: "snapshot",
+    entries: initial?.entries ?? [],
+    ...initial?.docs?.["pi.live"]?.run ? { run: { inputs: initial.docs["pi.live"].run.inputs } } : {},
+    tools: initial?.docs?.["pi.live"]?.tools ?? [],
+    nestedTools: initial?.docs?.["pi.live"]?.nestedTools ?? [],
+    compactions: initial?.docs?.["pi.live"]?.compactions ?? [],
+    inbox: [],
+    agent: initial?.docs?.["pi.agent"] ?? {},
+    usage: initial?.docs?.["pi.usage"] ?? {}
+  };
+  return {
+    snapshot,
+    start(listener) {
+      let seenEntriesCount = initial?.entries?.length ?? 0;
+      const emittedToolEnds = /* @__PURE__ */ new Set();
+      const seenNestedTools = /* @__PURE__ */ new Map();
+      watch2.start(async (call, ctx) => {
+        const val = call?.value ?? call;
+        if (!val) return;
+        const events = [];
+        const nested = val.docs?.["pi.live"]?.nestedTools ?? [];
+        for (const n of nested) {
+          if (n.callId && !seenNestedTools.has(n.callId)) {
+            seenNestedTools.set(n.callId, n);
+          }
+          if (n.callId && n.status === "done" && !emittedToolEnds.has(n.callId)) {
+            emittedToolEnds.add(n.callId);
+            const toolName = n.name ?? n.toolName ?? "tool";
+            let nestedResult;
+            if (n.parentTaskId && typeof harness.snapshot === "function") {
+              const key = n.callId.split("/").pop();
+              try {
+                const stored = await harness.snapshot(NestedCallDoc, n.parentTaskId, key, context);
+                nestedResult = stored?.result;
+              } catch {
+              }
+            }
+            events.push({
+              type: "tool_execution_end",
+              toolCallId: n.callId,
+              toolName,
+              taskId: n.taskId,
+              parentToolCallId: n.parentCallId,
+              parentTaskId: n.parentTaskId,
+              result: nestedResult ?? {
+                isError: Boolean(n.summary?.isError ?? n.summary?.error ?? n.isError),
+                output: n.output,
+                details: n.details
+              }
+            });
+          }
+        }
+        if (!val.docs?.["pi.live"]?.nestedTools && seenNestedTools.size > 0) {
+          for (const [callId, n] of seenNestedTools) {
+            if (!emittedToolEnds.has(callId)) {
+              emittedToolEnds.add(callId);
+              const toolName = n.name ?? n.toolName ?? "tool";
+              events.push({
+                type: "tool_execution_end",
+                toolCallId: callId,
+                toolName,
+                taskId: n.taskId,
+                parentToolCallId: n.parentCallId,
+                parentTaskId: n.parentTaskId,
+                result: n.result ?? {
+                  isError: Boolean(n.summary?.isError ?? n.summary?.error ?? n.isError),
+                  output: n.output,
+                  details: n.details
+                }
+              });
+            }
+          }
+        }
+        if (val.entries?.length && val.entries.length > seenEntriesCount) {
+          for (let i = seenEntriesCount; i < val.entries.length; i++) {
+            const entry = val.entries[i];
+            const modelMsg = entry?.model?.[0];
+            if (modelMsg?.role === "toolResult") {
+              let toolName = modelMsg.toolName ?? "tool";
+              if (!modelMsg.toolName) {
+                for (let j = i - 1; j >= 0; j--) {
+                  const prevMsg = val.entries[j]?.model?.[0];
+                  if (prevMsg?.role === "assistant" && Array.isArray(prevMsg.content)) {
+                    const call2 = prevMsg.content.find((c) => c.type === "toolCall" && c.id === modelMsg.toolCallId);
+                    if (call2?.name) {
+                      toolName = call2.name;
+                      break;
+                    }
+                  }
+                }
+              }
+              const callId = modelMsg.toolCallId ?? String(entry.id);
+              if (!emittedToolEnds.has(callId)) {
+                emittedToolEnds.add(callId);
+                events.push({
+                  type: "tool_execution_end",
+                  toolCallId: callId,
+                  toolName,
+                  entry
+                });
+              }
+            }
+            events.push({ type: "entry_appended", entry });
+          }
+          seenEntriesCount = val.entries.length;
+        }
+        if (events.length > 0) {
+          await listener(events, ctx);
+        }
+      });
+    },
+    async stop() {
+      return watch2.stop(context);
+    }
+  };
 }
 
 // src/runner/bridge/durable-contracts.ts
@@ -7220,7 +11526,7 @@ function decodeResult(result) {
   return {
     status: "result",
     isError: Boolean(result.isError),
-    rawOutput: result.structuredOutput,
+    rawOutput: result.output ?? result.structuredOutput,
     details: "details" in result ? result.details : void 0,
     diagnostics: result.diagnostics ?? []
   };
@@ -7616,7 +11922,7 @@ var DurableChildEventAdapter = class {
         this.closeThinkingIfNeeded();
         const message = event.entry?.model?.[0];
         if (message?.role === "assistant" && Array.isArray(message.content)) {
-          const fullText = message.content.flatMap((part) => part.type === "text" ? [part.text] : []).join("");
+          const fullText = message.content.flatMap((part) => part.type === "text" && part.text ? [part.text] : []).join("");
           if (fullText.startsWith(this.currentText) && fullText.length > this.currentText.length) {
             const delta = fullText.slice(this.currentText.length);
             this.output({
@@ -7878,8 +12184,7 @@ var DurableEventAdapter = class {
 
 // src/runner/subagent-watcher.ts
 import {
-  ROOT_CONVERSATION_ID as ROOT_CONVERSATION_ID2,
-  watchEvents as defaultWatchEvents
+  ROOT_CONVERSATION_ID as ROOT_CONVERSATION_ID2
 } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT as BACKGROUND_CONTEXT2 } from "@earendil-works/chord/context";
 
@@ -7914,7 +12219,7 @@ function extractChildConversationId(event) {
   return void 0;
 }
 async function startSubagentWatcher(harness, adapter, getCurrentView, options) {
-  const watch2 = options?.watchEventsFn ?? defaultWatchEvents;
+  const watch2 = options?.watchEventsFn ?? watchEvents;
   const attached = /* @__PURE__ */ new Set();
   const activeStreams = /* @__PURE__ */ new Map();
   const attach = async (conversationId, parentCallId) => {
@@ -8586,7 +12891,34 @@ import { z as z5 } from "zod";
 var runnerChannelSchema = z5.discriminatedUnion("kind", [
   z5.object({ kind: z5.literal("ready"), ready: z5.boolean().optional() }).passthrough(),
   z5.object({ kind: z5.literal("model-scope"), scopedModelIds: z5.array(z5.string()).optional(), defaultModelId: z5.string().optional() }).passthrough(),
-  z5.object({ kind: z5.literal("reply"), id: z5.union([z5.string(), z5.number()]), result: z5.unknown().optional(), error: z5.unknown().optional() }).passthrough()
+  z5.object({ kind: z5.literal("reply"), id: z5.union([z5.string(), z5.number()]), result: z5.unknown().optional(), error: z5.unknown().optional() }).passthrough(),
+  z5.object({
+    kind: z5.literal("tool_call_request"),
+    callId: z5.string(),
+    toolName: z5.string(),
+    arguments: z5.unknown().default({})
+  }).passthrough(),
+  z5.object({
+    kind: z5.literal("tool_call_response"),
+    callId: z5.string(),
+    result: z5.unknown().optional(),
+    isError: z5.boolean().optional()
+  }).passthrough(),
+  z5.object({
+    kind: z5.literal("interaction_request"),
+    id: z5.union([z5.string(), z5.number()]),
+    interactionKind: z5.string().optional(),
+    dialogKind: z5.string().optional(),
+    title: z5.string().optional(),
+    message: z5.string().optional(),
+    data: z5.unknown().optional()
+  }).passthrough(),
+  z5.object({
+    kind: z5.literal("interaction_response"),
+    id: z5.union([z5.string(), z5.number()]),
+    result: z5.unknown().optional(),
+    error: z5.unknown().optional()
+  }).passthrough()
 ]);
 var runnerBridgeRequestSchema = z5.object({
   kind: z5.literal("request"),
@@ -8613,6 +12945,90 @@ function createBridgeSender() {
     }
   };
 }
+var pendingToolCalls = /* @__PURE__ */ new Map();
+var pendingInteractions = /* @__PURE__ */ new Map();
+var nextCallSeq = 0;
+function createForwardToolCall(sendToBridge2) {
+  return (toolName, args2) => {
+    const callId = `call_${Date.now()}_${++nextCallSeq}`;
+    return new Promise((resolve3) => {
+      const timer = setTimeout(() => {
+        pendingToolCalls.delete(callId);
+        resolve3({ content: [{ type: "text", text: `Tool call ${toolName} timed out` }], isError: true });
+      }, 12e4);
+      pendingToolCalls.set(callId, { resolve: resolve3, timer });
+      sendToBridge2({ kind: "tool_call_request", callId, toolName, arguments: args2 ?? {} });
+    });
+  };
+}
+var nextInteractionSeq = 0;
+function createRequestInteraction(sendToBridge2) {
+  return (kind, payload) => {
+    const id = `interact_${Date.now()}_${++nextInteractionSeq}`;
+    return new Promise((resolve3) => {
+      const timer = setTimeout(() => {
+        pendingInteractions.delete(id);
+        resolve3(null);
+      }, 18e4);
+      pendingInteractions.set(id, { resolve: resolve3, timer });
+      sendToBridge2({
+        kind: "interaction_request",
+        id,
+        interactionKind: kind,
+        dialogKind: kind,
+        title: payload.title,
+        message: payload.message,
+        data: payload.data
+      });
+    });
+  };
+}
+function dispatchBridgeInboundFrame(value, sendToBridge2, modelScope) {
+  if (!value || typeof value !== "object") return;
+  const frame = value;
+  if (frame.kind === "request" && sendToBridge2) {
+    const result = runnerBridgeRequestSchema.safeParse(value);
+    if (!result.success) return;
+    const req = result.data;
+    if (req.method === "model-scope") {
+      sendToBridge2({ kind: "reply", id: req.id, result: modelScope });
+    } else if (req.method === "refresh-models") {
+      sendToBridge2({ kind: "reply", id: req.id, result: { refreshed: true } });
+    } else if (req.method === "leaf") {
+      sendToBridge2({ kind: "reply", id: req.id, result: { leafId: null } });
+    } else {
+      sendToBridge2({ kind: "reply", id: req.id, result: {} });
+    }
+    return;
+  }
+  if (frame.kind === "tool_call_response") {
+    const callId = String(frame.callId ?? "");
+    const pending = pendingToolCalls.get(callId);
+    if (pending) {
+      clearTimeout(pending.timer);
+      pendingToolCalls.delete(callId);
+      let content;
+      if (Array.isArray(frame.result)) {
+        content = frame.result;
+      } else if (frame.result && typeof frame.result === "object" && "content" in frame.result && Array.isArray(frame.result.content)) {
+        content = frame.result.content;
+      } else {
+        content = [{ type: "text", text: typeof frame.result === "string" ? frame.result : JSON.stringify(frame.result ?? "") }];
+      }
+      pending.resolve({ content, isError: Boolean(frame.isError) });
+    }
+    return;
+  }
+  if (frame.kind === "interaction_response") {
+    const id = frame.id;
+    const pending = pendingInteractions.get(id);
+    if (pending) {
+      clearTimeout(pending.timer);
+      pendingInteractions.delete(id);
+      pending.resolve(frame.result ?? null);
+    }
+  }
+}
 function initBridgeInboundChannel(modelScope, sendToBridge2) {
   try {
     const bridgeIn = new Socket({ fd: BRIDGE_TO_CHILD_FD, readable: true, writable: false });
@@ -8628,20 +13044,7 @@ function initBridgeInboundChannel(modelScope, sendToBridge2) {
       if (!trimmed) return;
       try {
         const value = JSON.parse(trimmed);
-        const result = runnerBridgeRequestSchema.safeParse(value);
-        if (!result.success) throw new Error("INVALID_BRIDGE_REQUEST");
-        const req = result.data;
-        if (req.kind === "request") {
-          if (req.method === "model-scope") {
-            sendToBridge2({ kind: "reply", id: req.id, result: modelScope });
-          } else if (req.method === "refresh-models") {
-            sendToBridge2({ kind: "reply", id: req.id, result: { refreshed: true } });
-          } else if (req.method === "leaf") {
-            sendToBridge2({ kind: "reply", id: req.id, result: { leafId: null } });
-          } else {
-            sendToBridge2({ kind: "reply", id: req.id, result: {} });
-          }
-        }
+        dispatchBridgeInboundFrame(value, sendToBridge2, modelScope);
       } catch (err) {
         console.error(JSON.stringify({ component: "RunnerBridgeChannel", operation: "inbound_request", code: "INVALID_MESSAGE", severity: "error", outcome: "failed" }));
         bridgeIn.destroy();
@@ -9448,7 +13851,7 @@ import { getPackageDir } from "@earendil-works/pi-coding-agent";
 import { join as join4 } from "node:path";
 import { pathToFileURL } from "node:url";
 import { existsSync as existsSync3, readFileSync as readFileSync3 } from "node:fs";
-var SUPPORTED_PI_VERSION_PREFIX = "1.4.";
+var SUPPORTED_PI_VERSION_PREFIXES = ["1.4.", "1.5."];
 var EXPECTED_GUARD_RELATIVE_PATH = "dist/core/output-guard.js";
 var UpstreamStdoutGuardPortError = class extends Error {
   reason;
@@ -9460,9 +13863,9 @@ var UpstreamStdoutGuardPortError = class extends Error {
 };
 var activeGuard = null;
 function validateUpstreamGuardVersion(version) {
-  if (!version.startsWith(SUPPORTED_PI_VERSION_PREFIX)) {
+  if (!SUPPORTED_PI_VERSION_PREFIXES.some((prefix) => version.startsWith(prefix))) {
     throw new UpstreamStdoutGuardPortError(
-      `Incompatible @earendil-works/pi-coding-agent version: "${version}". Expected ${SUPPORTED_PI_VERSION_PREFIX}x`,
+      `Incompatible @earendil-works/pi-coding-agent version: "${version}". Expected 1.4.x or 1.5.x`,
       "INCOMPATIBLE_VERSION"
     );
   }
@@ -9578,10 +13981,15 @@ function startRunnerControlChannel(sessionDir, harness, onNotice) {
     console.warn(`[ControlChannel] fs.watch not supported: ${watchErr}`);
   }
   void processPendingLines();
+  const pollInterval = setInterval(() => {
+    void processPendingLines();
+  }, 50);
+  pollInterval.unref?.();
   return {
     close: () => {
       if (isClosed) return;
       isClosed = true;
+      clearInterval(pollInterval);
       if (watcher) {
         watcher.close();
         watcher = null;
@@ -9601,6 +14009,8 @@ function output(data) {
   writeWireStdout(serializeJsonLine(data));
 }
 var sendToBridge = createBridgeSender();
+var forwardToolCall = createForwardToolCall(sendToBridge);
+var requestInteraction = createRequestInteraction(sendToBridge);
 async function main() {
   await setupRunnerStdoutGuard();
   let activeDurable = null;
@@ -9696,7 +14106,10 @@ async function main() {
     continueSession: args.continueSession,
     session: args.session,
     cli: { provider: args.provider, model: args.model, thinking: args.thinking, skills: args.skills, extension: args.extension },
-    prompt: { systemPromptPath: args.systemPromptPath, appendSystemPromptPath: args.appendSystemPromptPath }
+    prompt: { systemPromptPath: args.systemPromptPath, appendSystemPromptPath: args.appendSystemPromptPath },
+    toolsFilePath: args.toolsFilePath,
+    forwardToolCall,
+    requestInteraction
   });
   activeDurable = durable;
   activeControlChannel = startRunnerControlChannel(durable.view.current().session.directory, durable.harness);

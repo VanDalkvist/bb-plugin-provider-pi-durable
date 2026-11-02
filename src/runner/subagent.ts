@@ -1,5 +1,5 @@
 import type { JsonValue } from "@earendil-works/chord";
-import { Type } from "@earendil-works/pi-ai";
+import { Type } from "typebox";
 import {
 	configure,
 	defineExtension,

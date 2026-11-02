@@ -10,6 +10,8 @@ export interface BridgeRouterContext {
 	sendNotification: (method: string, params: Record<string, unknown>) => void;
 	sendResult: (id: string | number, result: Record<string, unknown>) => void;
 	sendError: (id: string | number, code: number, message: string) => void;
+	toolCallTracker?: import("./tool-call-tracker.ts").PendingToolCallTracker;
+	interactionTracker?: import("./interaction-tracker.ts").PendingInteractionTracker;
 }
 
 export interface TurnStartParams {
@@ -189,6 +191,10 @@ export async function handleTurnSteer(id: string | number, params: TurnSteerPara
 }
 
 export async function handleThreadStop(id: string | number, params: ThreadStopParams, ctx: BridgeRouterContext): Promise<void> {
+	const scope = params.threadId;
+	ctx.toolCallTracker?.resolvePendingToolCalls(scope, "Thread stopped");
+	ctx.interactionTracker?.resolvePendingInteractions(scope, "Thread stopped");
+
 	if (params.intent === "interrupt") {
 		const session = ctx.registry.get(params.threadId);
 		if (session) {

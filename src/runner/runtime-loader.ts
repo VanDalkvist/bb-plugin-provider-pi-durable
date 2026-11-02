@@ -102,7 +102,7 @@ export async function loadHarnessEnvironment(
 				isError: true,
 			})),
 		});
-		extensionsResult.extensions.push(dynamicToolsExt as any);
+		extensionsResult.extensions.push(dynamicToolsExt as unknown as import("@earendil-works/pi-coding-agent").Extension);
 	}
 
 	registerPendingProviders(modelRuntime, extensionsResult.runtime);
@@ -167,6 +167,7 @@ export async function loadHarnessEnvironment(
 		settingsManager,
 		dynamicNamespaces,
 		actionsDelegate,
+		options.requestInteraction,
 	);
 	runnerRef = mounted.extensionRunner;
 

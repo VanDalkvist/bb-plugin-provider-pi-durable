@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { translateToolStart, translateToolUpdate, buildToolItemShape } from "../src/host/tool-delta-translator.ts";
 import { DeltaTranslator } from "../src/host/delta-translator.ts";
 import { DurableChildEventAdapter } from "../src/runner/bridge/durable-child-event-adapter.ts";
-import type { AgentEvent } from "@earendil-works/pi-durable";
+import type { AgentEvent } from "../src/runner/bridge/contracts.ts";
 import type { RunnerEvent } from "../src/runner/bridge/contracts.ts";
 import { publicDeltaFixture, wireFixture } from "./fixtures/wire.ts";
 

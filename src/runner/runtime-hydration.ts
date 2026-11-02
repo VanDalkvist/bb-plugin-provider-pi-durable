@@ -1,5 +1,5 @@
-import type { ConversationId, Cursor, Harness } from "@earendil-works/pi-durable";
-import { firstInput, type ConversationSummary, runtimeContext } from "./runtime-types.ts";
+import type { Conversation, ConversationId, ConversationView, Cursor, Harness, TaskGraph } from "@earendil-works/pi-durable";
+import { firstInput, type ConversationSummary, type RuntimeReadBinding, runtimeContext } from "./runtime-types.ts";
 
 export function hydrateSessionActiveTools(
 	rootAgent: { readonly tools?: readonly { readonly name: string }[] | undefined },
@@ -8,6 +8,58 @@ export function hydrateSessionActiveTools(
 	if (Array.isArray(rootAgent.tools)) {
 		activeEnvState.setActiveTools?.(rootAgent.tools.map((t) => t.name));
 	}
+}
+
+export async function createConversationBinding(
+	conversation: Conversation,
+	ctx: typeof runtimeContext = runtimeContext,
+): Promise<RuntimeReadBinding<ConversationView>> {
+	if (typeof (conversation as any).viewState === "function") {
+		return (conversation as any).viewState(ctx);
+	}
+	const watch = await conversation.watch(ctx);
+	let currentVal = watch.value;
+	const subscribers = new Set<(val: ConversationView) => void>();
+	watch.start(async ({ value }: { value: ConversationView }) => {
+		currentVal = value;
+		for (const sub of subscribers) sub(value);
+	});
+	return {
+		get value() { return currentVal; },
+		subscribe(listener) {
+			subscribers.add(listener);
+			return () => subscribers.delete(listener);
+		},
+		dispose() {
+			void watch.stop(ctx);
+		},
+	};
+}
+
+export async function createTaskGraphBinding(
+	harness: Harness,
+	ctx: typeof runtimeContext = runtimeContext,
+): Promise<RuntimeReadBinding<TaskGraph>> {
+	if (typeof (harness as any).taskGraph === "function") {
+		return (harness as any).taskGraph(ctx);
+	}
+	const watch = await harness.watchTaskGraph(ctx);
+	let currentVal = watch.value;
+	const subscribers = new Set<(val: TaskGraph) => void>();
+	watch.start(async ({ value }: { value: TaskGraph }) => {
+		currentVal = value;
+		for (const sub of subscribers) sub(value);
+	});
+	return {
+		get value() { return currentVal; },
+		subscribe(listener) {
+			subscribers.add(listener);
+			return () => subscribers.delete(listener);
+		},
+		dispose() {
+			void watch.stop(ctx);
+		},
+	};
 }
 
 export async function loadSummaries(harness: Harness, rootId: ConversationId): Promise<ConversationSummary[]> {

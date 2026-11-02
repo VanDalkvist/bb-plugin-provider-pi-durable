@@ -22,14 +22,16 @@ export class SessionRegistry {
 	private sharedSkillRoots: string[] = [];
 	private admission = new SessionAdmissionCoordinator();
 	private sessionFactory: SessionFactory;
+	private sessionContext?: import("./session.ts").PiThreadSessionContext;
 
+	public setSessionContext(ctx: import("./session.ts").PiThreadSessionContext): void { this.sessionContext = ctx; }
 	public getSharedSkillRoots(): readonly string[] { return this.sharedSkillRoots; }
 	public setSharedSkillRoots(roots: readonly string[]): void { this.sharedSkillRoots = [...roots]; }
 	public getBoundProviderThreadId(threadId: string): string | undefined { return this.bindings.getBoundProviderThreadId(threadId); }
 
 	constructor(sendNotification: (method: string, params: Record<string, unknown>) => void, sessionFactory?: SessionFactory) {
 		this.sendNotification = sendNotification;
-		this.sessionFactory = sessionFactory ?? ((options, notify) => new PiThreadSession(options, notify));
+		this.sessionFactory = sessionFactory ?? ((options, notify) => new PiThreadSession(options, notify, this.sessionContext));
 	}
 
 	public track(threadId: string, session: OwnedSessionPort): void {

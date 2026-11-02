@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import { Type } from "typebox";
+import type { RegisteredTool, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { bbDynamicToolSchema } from "../../contracts/bb-tools.ts";
 
 export interface ForwardToolCallFn {
@@ -14,8 +15,26 @@ export interface BbDynamicToolsExtensionOptions {
 	forwardToolCall: ForwardToolCallFn;
 }
 
+export interface BbToolEntry extends RegisteredTool {
+	name: string;
+	description: string;
+	parameters: unknown;
+	exposure: "both";
+	namespace: { name: string; description: string };
+	execute: (_callId: string, args: unknown, _ctx: unknown) => Promise<{
+		content: Array<{ type: "text"; text: string }>;
+		isError: boolean;
+	}>;
+	definition: ToolDefinition;
+	sourceInfo: {
+		type: "synthetic";
+		path: string;
+		name: string;
+	};
+}
+
 export function createBbDynamicToolsExtension(options: BbDynamicToolsExtensionOptions) {
-	const tools = new Map<string, any>();
+	const tools = new Map<string, BbToolEntry>();
 
 	if (options.toolsFilePath && fs.existsSync(options.toolsFilePath)) {
 		try {
@@ -37,18 +56,28 @@ export function createBbDynamicToolsExtension(options: BbDynamicToolsExtensionOp
 						name: "bb-dynamic-tools",
 					};
 
-					const toolEntry: any = {
+					const toolDef: ToolDefinition = {
 						name: def.name,
 						description: def.description ?? "",
 						parameters: schema,
 						exposure: "both",
-						namespace: "bb",
+						namespace: { name: "bb", description: "Beyond Boundaries dynamic tools" },
 						execute: async (_callId: string, args: unknown, _ctx: unknown) => {
 							return options.forwardToolCall(def.name, args);
 						},
+					};
+
+					const toolEntry: BbToolEntry = {
+						...toolDef,
+						name: def.name,
+						description: def.description ?? "",
+						parameters: schema,
+						exposure: "both",
+						namespace: { name: "bb", description: "Beyond Boundaries dynamic tools" },
+						execute: toolDef.execute,
+						definition: toolDef,
 						sourceInfo,
 					};
-					toolEntry.definition = toolEntry;
 					tools.set(def.name, toolEntry);
 				}
 			}
@@ -65,7 +94,7 @@ export function createBbDynamicToolsExtension(options: BbDynamicToolsExtensionOp
 			path: options.toolsFilePath ?? "bb-dynamic-tools",
 			name: "bb-dynamic-tools",
 		},
-		handlers: new Map(),
+		handlers: new Map<string, Array<(...args: unknown[]) => Promise<unknown>>>(),
 		tools,
 		messageRenderers: new Map(),
 		commands: new Map(),

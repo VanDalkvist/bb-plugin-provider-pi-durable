@@ -56,10 +56,16 @@ export function startRunnerControlChannel(
 
 	void processPendingLines();
 
+	const pollInterval = setInterval(() => {
+		void processPendingLines();
+	}, 50);
+	pollInterval.unref?.();
+
 	return {
 		close: () => {
 			if (isClosed) return;
 			isClosed = true;
+			clearInterval(pollInterval);
 			if (watcher) {
 				watcher.close();
 				watcher = null;

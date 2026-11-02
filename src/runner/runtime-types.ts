@@ -91,6 +91,7 @@ export interface OpenDurableOptions {
 	};
 	readonly toolsFilePath?: string;
 	readonly forwardToolCall?: (name: string, args: unknown) => Promise<{ content: Array<{ type: "text"; text: string }>; isError: boolean }>;
+	readonly requestInteraction?: import("../shared/extension-ui-context.ts").ExtensionUIDialogRequester;
 	readonly prompt?: PromptOptions;
 	readonly plugins?: import("./plugins/types.ts").DurablePlugin[];
 }

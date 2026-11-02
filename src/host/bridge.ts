@@ -32,14 +32,18 @@ export class ProviderBridge {
 		interactionTracker?: PendingInteractionTracker,
 	) {
 		this.sendRaw = sendRaw;
-		this.registry = registry ?? new SessionRegistry((method, params) => {
-			this.sendNotification(method, params);
-		});
 		this.toolCallTracker = toolCallTracker ?? new PendingToolCallTracker((msg) => {
 			this.sendRaw(JSON.stringify(msg));
 		});
 		this.interactionTracker = interactionTracker ?? new PendingInteractionTracker((msg) => {
 			this.sendRaw(JSON.stringify(msg));
+		});
+		this.registry = registry ?? new SessionRegistry((method, params) => {
+			this.sendNotification(method, params);
+		});
+		this.registry.setSessionContext({
+			toolCallTracker: this.toolCallTracker,
+			interactionTracker: this.interactionTracker,
 		});
 	}
 
@@ -69,6 +73,8 @@ export class ProviderBridge {
 			sendNotification: (m, p) => this.sendNotification(m, p),
 			sendResult: (i, r) => this.sendResult(i, r),
 			sendError: (i, c, m) => this.sendError(i, c, m),
+			toolCallTracker: this.toolCallTracker,
+			interactionTracker: this.interactionTracker,
 		};
 	}
 
@@ -162,7 +168,10 @@ export class ProviderBridge {
 				}
 
 				case "thread/discard": {
-					await this.registry.stop(String(params.threadId ?? ""));
+					const scope = String(params.threadId ?? "");
+					this.toolCallTracker.resolvePendingToolCalls(scope, "Thread stopped");
+					this.interactionTracker.resolvePendingInteractions(scope, "Thread stopped");
+					await this.registry.stop(scope);
 					this.sendResult(id, { ok: true });
 					break;
 				}

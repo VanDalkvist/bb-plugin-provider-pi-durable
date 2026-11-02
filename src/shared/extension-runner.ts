@@ -135,6 +135,7 @@ export interface SetupExtensionRunnerOptions {
 	getContextUsage?: () => { tokens: number | null; contextWindow: number } | undefined;
 	isIdle?: () => boolean;
 	onSubmitUserMessage?: (content: string, deliverAs?: "steer" | "followUp") => Promise<void> | void;
+	requestInteraction?: import("./extension-ui-context.ts").ExtensionUIDialogRequester;
 }
 
 export async function setupExtensionRunner(options: SetupExtensionRunnerOptions): Promise<ExtensionRunner> {
@@ -142,7 +143,7 @@ export async function setupExtensionRunner(options: SetupExtensionRunnerOptions)
 	const modelRegistry = new ModelRegistry(options.modelRuntime);
 	const runner = new ExtensionRunner(options.extensions, options.runtime, options.cwd, sessionManager, modelRegistry);
 
-	runner.setUIContext(createExtensionUIContext(options.onNotice));
+	runner.setUIContext(createExtensionUIContext(options.onNotice, options.requestInteraction));
 
 	const initialActive = options.initialActiveTools
 		? [...options.initialActiveTools]
