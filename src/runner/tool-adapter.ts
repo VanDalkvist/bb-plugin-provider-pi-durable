@@ -11,6 +11,9 @@ import {
 	type Registry,
 	type ToolRegistration,
 } from "@earendil-works/pi-durable";
+import { SchemaPort } from "./schema-port.ts";
+
+const schemaPort = new SchemaPort();
 
 type JsonValue = string | number | boolean | null | { [key: string]: JsonValue } | JsonValue[];
 
@@ -114,11 +117,12 @@ export function adaptExtensionTool(
 				},
 			};
 			const ctx = Object.defineProperties({}, descriptors) as ExtensionToolContext;
+			const coercedArgs = schemaPort.coerce(toolDef.parameters, args);
 
 			try {
 				const result = await toolDef.execute(
 					api.callId,
-					args,
+					coercedArgs,
 					abortSignal,
 					(update) => {
 						if (update?.content && hasOutput(api)) {
