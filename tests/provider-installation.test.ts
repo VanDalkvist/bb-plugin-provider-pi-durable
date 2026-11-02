@@ -130,34 +130,38 @@ describe("Native Provider Installation Lifecycle (Cycle 76)", () => {
 		assert.equal(status.versionUnsupported, false);
 		assert.notEqual(status.installAction, null);
 		assert.equal(status.installAction?.kind, "update");
-		assert.equal(status.installAction?.command, "bb plugin update provider-pi-durable");
+		assert.equal(status.installAction?.command, "bb plugin update provider-pi-durable --yes");
 	});
 
-	it("provider/installation/run returns valid discriminated union for update action", async () => {
-		const runResult = await getProviderInstallationRun("update");
-		const parsed = providerInstallationRunResultSchema.safeParse(runResult);
+	for (const action of ["install", "update"] as const) {
+		it(`provider/installation/run returns a non-interactive command for ${action}`, async () => {
+			const runResult = await getProviderInstallationRun(action);
+			const parsed = providerInstallationRunResultSchema.safeParse(runResult);
 
-		assert.equal(parsed.success, true);
-		assert.equal(runResult.available, true);
-		if (runResult.available) {
-			assert.equal(runResult.command.command, "bb");
-			assert.deepEqual(runResult.command.args, ["plugin", "update", "provider-pi-durable"]);
-			assert.equal(runResult.command.displayCommand, "bb plugin update provider-pi-durable");
-			assert.equal(runResult.verification.kind, "version_changed");
-			if (runResult.verification.kind === "version_changed") {
-				assert.equal(runResult.verification.previousVersion, pkgVersion);
+			assert.equal(parsed.success, true);
+			assert.equal(runResult.available, true);
+			if (runResult.available) {
+				assert.equal(runResult.command.command, "bb");
+				assert.deepEqual(runResult.command.args, ["plugin", "update", "provider-pi-durable", "--yes"]);
+				assert.equal(runResult.command.displayCommand, [runResult.command.command, ...runResult.command.args].join(" "));
+				assert.equal(runResult.verification.kind, "version_changed");
+				if (runResult.verification.kind === "version_changed") {
+					assert.equal(runResult.verification.previousVersion, pkgVersion);
+				}
 			}
-		}
-	});
+		});
+	}
 
 	it("discovery-handler routes provider/installation/status and provider/installation/run via typed params", async () => {
 		const statusRes = await handleDiscoveryRequest("provider/installation/status", { checkUpdates: false }, mockCatalog);
 		assert.notEqual(statusRes, null);
 		assert.equal(providerInstallationStatusSchema.safeParse(statusRes).success, true);
 
-		const runRes = await handleDiscoveryRequest("provider/installation/run", { action: "update" }, mockCatalog);
-		assert.notEqual(runRes, null);
-		assert.equal(providerInstallationRunResultSchema.safeParse(runRes).success, true);
+		for (const action of ["install", "update"] as const) {
+			const runRes = providerInstallationRunResultSchema.parse(await handleDiscoveryRequest("provider/installation/run", { action }, mockCatalog));
+			assert.equal(runRes.available, true);
+			if (runRes.available) assert.deepEqual(runRes.command.args, ["plugin", "update", "provider-pi-durable", "--yes"]);
+		}
 	});
 
 	it("getProviderInstallationStatus sets needsUpdate: true when remote version is higher", async () => {

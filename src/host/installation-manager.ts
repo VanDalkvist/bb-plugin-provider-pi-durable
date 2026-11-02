@@ -34,6 +34,9 @@ export type ProviderInstallationRunResult =
 
 const PLUGIN_PACKAGE_NAME = "bb-plugin-provider-pi-durable";
 const PLUGIN_EXECUTABLE_NAME = "bb";
+// BB's installation-log PTY cannot answer interactive CLI confirmation prompts.
+const PLUGIN_UPDATE_ARGS = ["plugin", "update", "provider-pi-durable", "--yes"];
+const PLUGIN_UPDATE_COMMAND = `${PLUGIN_EXECUTABLE_NAME} ${PLUGIN_UPDATE_ARGS.join(" ")}`;
 const MINIMUM_SUPPORTED_VERSION = "0.2.0";
 
 const BUNDLED_PLUGIN_VERSION =
@@ -165,7 +168,7 @@ export async function getProviderInstallationStatus(
 		installAction: {
 			kind: "update",
 			label: "Update",
-			command: "bb plugin update provider-pi-durable",
+			command: PLUGIN_UPDATE_COMMAND,
 		},
 		needsUpdate,
 		versionUnsupported,
@@ -187,9 +190,9 @@ export async function getProviderInstallationRun(
 	return {
 		available: true,
 		command: {
-			command: "bb",
-			args: ["plugin", "update", "provider-pi-durable"],
-			displayCommand: "bb plugin update provider-pi-durable",
+			command: PLUGIN_EXECUTABLE_NAME,
+			args: [...PLUGIN_UPDATE_ARGS],
+			displayCommand: PLUGIN_UPDATE_COMMAND,
 		},
 		verification,
 	};
