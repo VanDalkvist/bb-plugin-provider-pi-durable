@@ -21,7 +21,7 @@ test("adaptExtensionTool maps exposure correctly (BL-CM-04)", () => {
 	};
 	const reg1 = adaptExtensionTool(codemodeTool, dummyExecutor);
 	assert.deepEqual(reg1.callers, ["tools"]);
-	assert.equal(reg1.deferred, true, "codemode tool must have deferred: true");
+	assert.equal(reg1.deferred, undefined, "codemode tool must have deferred: undefined so it is rendered in codemode prompt");
 
 	// Test 2: exposure 'deferred' -> callers: ['model', 'tools'], deferred: true
 	const deferredTool: ToolDefinition = {
