@@ -804,5 +804,47 @@
 - **Residual Risk:**
   - Нулевой. Все 448 тестов плагина и 171 тест рантайма проходят на 100% green без обратных регрессий.
 
+### Session Lifecycle Hooks, Admission Receipts and Codemode Sandbox Isolation (Cycle 107) — 2026-11-02
+
+- **Цель и статус:** Реализовать архитектурные требования внешних исследователей (`Diffuzmetall/pi-durable-host`), устранив гонки возобновления сессий через хук `beforeResume`, обеспечив атомарный возврат `AdmissionReceipt` из `controller.submit()` и полностью изолировав песочницу QuickJS Codemode от кросс-сессионного загрязнения. Статус: **PASS (VERIFIED)**.
+- **Связанные аудиты и планы:**
+  - Аудит: `docs/arch-improvement/audits/2026-11-02-cycle-107-admission-hooks-and-sandbox-isolation-audit.md`
+  - План: `docs/superpowers/plans/2026-11-02-arch-improvement-cycle-107-admission-hooks-and-sandbox-isolation.md`
+- **Архитектурные правила (AP Gates):**
+  - AP-003 (Protocol & Contract Completeness): Возврат атомарного чека допуска `AdmissionReceipt`. PASSED.
+  - AP-010 (Hexagonal Architecture / Ports & Adapters): Чистая изоляция домена, адаптеров и хуков жизненного цикла. PASSED.
+  - AP-013 (Data Integrity & State Isolation): Изоляция состояния сессий и песочниц в памяти. PASSED.
+  - AP-014 (Defensive Concurrency & Lifecycle Invariants): Детерминированный порядок инициализации (`beforeResume` строго перед `resume`). PASSED.
+  - AP-019 (Line Budgets): Каждый файл строго < 250 LOC (максимальный файл: `packages/core/src/runtime-controller.ts` — 229 LOC; в плагине: `src/host/session.ts` — 246 LOC). PASSED.
+- **Устранённые дефекты и компоненты:**
+  - *Slice 1 / D-107-01 (P1, AP-010, AP-014): Хук `beforeResume` в `openDurable` (@durable-zero/core).*
+    В `OpenDurableOptions` добавлен опциональный хук `beforeResume?: (harness: Harness) => Promise<void>`. В `packages/core/src/runtime.ts` хук вызывается через `await options.beforeResume?.(harness)` СТРОГО перед вызовом `await harness.resume()`, исключая состояние гонки между фоновым планировщиком задач сессии и инициализацией наблюдателей/вотчеров хоста.
+  - *Slice 2 / D-107-02 (P1, AP-003, AP-013): Атомарный чек допуска `AdmissionReceipt` из `controller.submit()` (@durable-zero/core).*
+    В `packages/core/src/runtime-types.ts` объявлен интерфейс `AdmissionReceipt`: `{ requestId: string; conversationId: string; status: "accepted"; sequence?: number }`. В `DurableController.submit()` обновлен возвращаемый тип с `Promise<void>` на `Promise<AdmissionReceipt>`. Метод немедленно возвращает чек допуска при успешном `submit` в FSM, сохраняя асинхронный фоновый `watchAnswer`. Фасад `DurableEngine.prompt()` обновлен для сквозного возврата квитанции.
+  - *Slice 3 / D-107-03 (P2, AP-010, AP-013): Изоляция песочницы Codemode (@durable-zero/core).*
+    В `packages/core/src/builtin-extensions/codemode.ts` полностью ликвидирован модуль-синглтон `let activeSandbox`. Состояние песочницы инкапсулировано в классе `CodemodeExtension` с хранением экземпляров песочниц на уровне инстанса и в `WeakMap<BuiltinExtensionContext, CodemodeSandbox>`. Экспортирована фабрика `createCodemodeBuiltinExtension()`, интегрированная в `createCodingRegistry` (`harness-setup.ts`). Вызов `teardown()` закрывает только песочницы данного экземпляра, исключая порчу соседних сессий.
+  - *Slice 4: Двухконтурная верификация и сборка раннера.*
+    Пересобран standalone runner bundle `packages/core/dist/runner.js` и сборка всех пакетов `durable-zero`. Проверена совместимость с хостом `bb-plugin-provider-pi-durable`.
+- **TDD и доказательная база:**
+  - Новые TDD тесты цикла:
+    * `durable-zero/packages/core/test/before-resume.test.ts`: тест перехвата порядка вызовов, гарантирующий, что `beforeResume` завершается до старта `harness.resume()`. (PASS)
+    * `durable-zero/packages/core/test/admission-receipt.test.ts`: тест возврата валидного `AdmissionReceipt` с полями `requestId`, `conversationId`, `status: "accepted"`, `sequence`. (PASS)
+    * `durable-zero/packages/core/test/codemode-sandbox-isolation.test.ts`: тест независимости параллельных песочниц Codemode и избирательного teardown без утечек в глобальную область. (PASS)
+  - Сьют тестов `durable-zero`: **175 pass, 0 fail (100% green)**.
+  - Сьют тестов `bb-plugin-provider-pi-durable`: **448 pass (331 backend + 117 UI), 0 fail (100% green)**.
+  - Контрактная безопасность: `npm run test:contracts` (Negative contract guard TS2322 PASS, 0 type errors).
+  - Фаервол слоёв: `node scripts/verify-layer-boundaries.mjs` (0 нарушений).
+  - Проверка здоровья: `npm run doctor` (PASSED / Healthy).
+- **Line Budgets (AP-019):**
+  - `packages/core/src/builtin-extensions/codemode.ts`: 58 LOC (< 250 LOC).
+  - `packages/core/src/engine.ts`: 84 LOC (< 250 LOC).
+  - `packages/core/src/harness-setup.ts`: 179 LOC (< 250 LOC).
+  - `packages/core/src/runtime-controller.ts`: 229 LOC (< 250 LOC).
+  - `packages/core/src/runtime-types.ts`: 146 LOC (< 250 LOC).
+  - `packages/core/src/runtime.ts`: 194 LOC (< 250 LOC).
+  - Все файлы строго соответствуют лимиту < 250 LOC.
+- **Residual Risk:**
+  - Нулевой. Все 175 тестов рантайма и 448 тестов плагина проходят без регрессий.
+
 
 

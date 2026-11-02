@@ -299,6 +299,27 @@
 - Use next time: The host harness must never touch the agent's SQLite session database or execute SQL statements against internal tables. Storage layout, WAL checkpoints, `VACUUM INTO`, and checkpoint pruning belong strictly inside `@durable-zero/core` (`forkSessionDatabase`). The host interacts with session state solely via domain service functions or RPC wire commands (`session_fork`).
 - Evidence: `durable-zero/packages/core/src/session-fork.ts`, `bb-plugin-provider-pi-durable/src/host/thread-fork.ts`, `tests/sovereign-rpc-and-db-leakage.test.ts`, Cycle 106.
 
+## 2026-11-02 - Session Lifecycle Synchronization with beforeResume (Cycle 107)
+- Context: Headless agent session initialization in `openDurable` (`packages/core/src/runtime.ts`).
+- Symptom: Asynchronous background task scheduler started executing pending session tasks via `harness.resume()` before host observers, telemetry hooks, or subagent watchers were completely configured, causing race conditions in turn delivery.
+- Cause: `openDurable` had no pre-resume synchronization hook, directly invoking `harness.resume()`.
+- Use next time: Always provide an asynchronous `beforeResume?: (harness: Harness) => Promise<void>` hook in `OpenDurableOptions`. Await this hook strictly before calling `harness.resume()`, giving callers deterministic control to attach listeners and synchronize invariants prior to task scheduler activation.
+- Evidence: `durable-zero/packages/core/src/runtime.ts`, `packages/core/test/before-resume.test.ts`, Cycle 107.
+
+## 2026-11-02 - Atomic Admission Receipts from Submission Controller (Cycle 107)
+- Context: Prompt submission to Durable FSM via `DurableController.submit()` (`packages/core/src/runtime-controller.ts`).
+- Symptom: Method returned `Promise<void>`, forcing hosts to guess submission IDs or query database records out of band to track request admission.
+- Cause: Host-level `Submission` object was discarded inside `submit()` once passed to background `watchAnswer()`.
+- Use next time: Domain submission controllers must immediately return an atomic `AdmissionReceipt` (`{ requestId, conversationId, status: "accepted", sequence? }`) upon input admission, decoupling synchronous acceptance receipt from long-running turn execution.
+- Evidence: `durable-zero/packages/core/src/runtime-controller.ts`, `packages/core/src/runtime-types.ts`, `packages/core/test/admission-receipt.test.ts`, Cycle 107.
+
+## 2026-11-02 - QuickJS Codemode Sandbox Instance Isolation (Cycle 107)
+- Context: QuickJS WASM sandbox management in built-in extension (`packages/core/src/builtin-extensions/codemode.ts`).
+- Symptom: Opening parallel sessions or running concurrent subagents resulted in cross-session contamination, where teardown of one session prematurely terminated the sandbox of another session.
+- Cause: `activeSandbox` was stored as a module-scoped singleton variable in `codemode.ts`.
+- Use next time: Never store stateful execution engines (WASM sandboxes, worker threads, subprocess handles) in module-level variables. Encapsulate sandbox lifecycle inside extension class instances (`CodemodeExtension`) and map sandboxes to `BuiltinExtensionContext` using `WeakMap`. Each session registry must instantiate its own extension instance via a factory (`createCodemodeBuiltinExtension()`).
+- Evidence: `durable-zero/packages/core/src/builtin-extensions/codemode.ts`, `packages/core/test/codemode-sandbox-isolation.test.ts`, Cycle 107.
+
 
 
 

@@ -152,9 +152,7 @@ export class PiThreadSession {
 				threadId: this.options.threadId, providerThreadId: this.options.providerThreadId,
 				toolName: event.toolName, arguments: event.arguments, scope: this.options.threadId,
 			});
-			await this.runner.request({ type: "host_tool_result", callId: event.callId, result: res.content, isError: res.isError }).catch((err) => {
-				console.warn(`[PiThreadSession] host_tool_result delivery warning: ${err}`);
-			});
+			await this.runner.request({ type: "host_tool_result", callId: event.callId, result: res.content, isError: res.isError });
 			return;
 		}
 
@@ -164,9 +162,8 @@ export class PiThreadSession {
 				threadId: this.options.threadId, providerThreadId: this.options.providerThreadId,
 				kind: dialogKind, title: event.title, message: event.message, data: event.data, scope: this.options.threadId,
 			});
-			await this.runner.request({ type: "host_interaction_response", id: event.id, result: res }).catch((err) => {
-				console.warn(`[PiThreadSession] host_interaction_response delivery warning: ${err}`);
-			});
+			const interactionId = (event as any).interactionId || event.id;
+			await this.runner.request({ type: "host_interaction_response", interactionId, result: res });
 			return;
 		}
 

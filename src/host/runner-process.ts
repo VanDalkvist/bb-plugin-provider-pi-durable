@@ -126,10 +126,6 @@ export class RunnerProcess {
 		return res;
 	}
 
-	public sendChannel(_msg: unknown): void {
-		// Retained for backward-compatible interface; all RPC now traverses stdio.
-	}
-
 	public cleanup(): void {
 		this.cleanupPrompts();
 		if (this.options.toolsFilePath && existsSync(this.options.toolsFilePath)) {
