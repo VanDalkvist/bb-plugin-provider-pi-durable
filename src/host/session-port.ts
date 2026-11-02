@@ -12,6 +12,8 @@ export interface SessionCreationParams {
 	task?: string;
 	model?: unknown;
 	thinkingLevel?: unknown;
+	dynamicTools?: unknown[];
+	disallowedTools?: string[];
 	shellEnvOverrides?: NodeJS.ProcessEnv;
 	providerOptions?: Record<string, unknown>;
 	options?: {
@@ -23,6 +25,8 @@ export interface SessionCreationParams {
 		envVars?: NodeJS.ProcessEnv;
 		providerOptions?: Record<string, unknown>;
 		instructions?: string;
+		dynamicTools?: unknown[];
+		disallowedTools?: string[];
 		[key: string]: unknown;
 	};
 	baseInstructions?: string;

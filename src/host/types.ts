@@ -52,6 +52,7 @@ export interface SessionOptions {
 	additionalExtensionPaths?: string[];
 	noGlobalExtensions?: boolean;
 	dynamicTools?: unknown[];
+	toolsFilePath?: string;
 	noSession?: boolean;
 	onExtensionUiRequest?: (request: unknown) => void;
 	providerOptions?: Record<string, unknown>;

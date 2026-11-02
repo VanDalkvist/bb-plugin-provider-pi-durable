@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import path from "node:path";
 import { requireExtensionPath, requireScratchDir, resolveSessionDir, resolveSessionFilePath } from "./paths.ts";
 import { resolveSessionPrompts } from "./runner-prompts.ts";
 import type { SessionCreationParams } from "./session-port.ts";
@@ -21,11 +23,33 @@ export function buildSessionOptions(
 	const rawProviderOptions = params.options?.providerOptions ?? params.providerOptions;
 	const providerOptions = typeof rawProviderOptions === "object" && rawProviderOptions !== null && !Array.isArray(rawProviderOptions) ? (rawProviderOptions as Record<string, unknown>) : undefined;
 
+	const rawDynamicTools = params.dynamicTools ?? params.options?.dynamicTools;
+	const rawDisallowedTools = params.disallowedTools ?? params.options?.disallowedTools;
+	const disallowedSet = new Set(
+		Array.isArray(rawDisallowedTools)
+			? rawDisallowedTools.filter((t): t is string => typeof t === "string")
+			: [],
+	);
+
+	let toolsFilePath: string | undefined;
+	if (Array.isArray(rawDynamicTools)) {
+		const filtered = rawDynamicTools.filter((tool) => {
+			if (typeof tool === "object" && tool !== null && "name" in tool && typeof (tool as { name: unknown }).name === "string") {
+				return !disallowedSet.has((tool as { name: string }).name);
+			}
+			return true;
+		});
+		const safeKey = sessionKey.replace(/[^a-zA-Z0-9_-]/g, "_");
+		toolsFilePath = path.join(scratchDir, `pi-tools-${safeKey}.json`);
+		fs.writeFileSync(toolsFilePath, JSON.stringify(filtered, null, 2), "utf8");
+	}
+
 	if (isNativeChildParent) {
 		return {
 			threadId, providerThreadId: sessionKey, cwd: params.cwd, sessionFilePath, sessionDir, extensionPath, scratchDir,
 			model: undefined, thinkingLevel: undefined, shellEnvOverrides: resolvedEnv,
 			...resolveSessionPrompts(params), providerOptions, ...(skillRoots.length > 0 ? { additionalSkillPaths: skillRoots } : {}),
+			...(toolsFilePath ? { toolsFilePath } : {}),
 		};
 	}
 
@@ -46,5 +70,6 @@ export function buildSessionOptions(
 		threadId, providerThreadId, cwd: params.cwd, sessionFilePath, sessionDir, extensionPath, scratchDir,
 		model: resolvedModel, thinkingLevel: resolvedThinking, shellEnvOverrides: resolvedEnv,
 		...resolveSessionPrompts(params), providerOptions, ...(skillRoots.length > 0 ? { additionalSkillPaths: skillRoots } : {}),
+		...(toolsFilePath ? { toolsFilePath } : {}),
 	};
 }
