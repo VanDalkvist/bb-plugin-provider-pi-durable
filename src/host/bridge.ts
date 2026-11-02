@@ -2,6 +2,7 @@ import { getSharedCatalog } from "./catalog.ts";
 import { SessionRegistry } from "./session-registry.ts";
 import { handleDiscoveryRequest } from "./discovery-handler.ts";
 import { forkSessionDatabase } from "./thread-fork.ts";
+import { PendingToolCallTracker } from "./tool-call-tracker.ts";
 import {
 	sendJsonRpcResult,
 	sendJsonRpcError,
@@ -20,12 +21,20 @@ import {
 export class ProviderBridge {
 	private sendRaw: (json: string) => void;
 	private registry: SessionRegistry;
+	private toolCallTracker: PendingToolCallTracker;
 
-	constructor(sendRaw: (json: string) => void, registry?: SessionRegistry) {
+	constructor(sendRaw: (json: string) => void, registry?: SessionRegistry, toolCallTracker?: PendingToolCallTracker) {
 		this.sendRaw = sendRaw;
 		this.registry = registry ?? new SessionRegistry((method, params) => {
 			this.sendNotification(method, params);
 		});
+		this.toolCallTracker = toolCallTracker ?? new PendingToolCallTracker((msg) => {
+			this.sendRaw(JSON.stringify(msg));
+		});
+	}
+
+	public getToolCallTracker(): PendingToolCallTracker {
+		return this.toolCallTracker;
 	}
 
 	public sendResult(id: string | number, result: Record<string, unknown>) {
@@ -53,7 +62,7 @@ export class ProviderBridge {
 		const trimmed = line.trim();
 		if (!trimmed) return;
 
-		let req: { id?: string | number; method?: string; params?: Record<string, unknown> };
+		let req: { id?: string | number; method?: string; params?: Record<string, unknown>; result?: unknown; error?: unknown };
 		try {
 			req = JSON.parse(trimmed);
 		} catch (err) {
@@ -64,6 +73,13 @@ export class ProviderBridge {
 
 		if (req && typeof req.method === "string") {
 			await this.handleRequest({ id: req.id ?? 0, method: req.method, params: req.params });
+			return;
+		}
+
+		if (req && (req.result !== undefined || req.error !== undefined)) {
+			if (this.toolCallTracker.handleToolCallResponse(req)) {
+				return;
+			}
 		}
 	}
 
@@ -155,6 +171,7 @@ export class ProviderBridge {
 	}
 
 	public async shutdown(): Promise<void> {
+		this.toolCallTracker.dispose();
 		await this.registry.stopAll();
 		getSharedCatalog().close();
 	}
