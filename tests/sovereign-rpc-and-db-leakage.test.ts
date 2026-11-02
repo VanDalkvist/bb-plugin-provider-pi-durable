@@ -31,4 +31,23 @@ test("Defect D-106-02 & D-106-04: RunnerProcess must use strictly 3 stdio pipes 
 		content.includes('["pipe", "pipe", "pipe"]'),
 		"RunnerProcess must spawn with strictly standard POSIX stdio: ['pipe', 'pipe', 'pipe']",
 	);
+	assert.equal(
+		content.includes("sendChannel"),
+		false,
+		"RunnerProcess must not retain dead sendChannel stub",
+	);
+});
+
+test("Defect D-106-01: dynamic tools must be mounted via standard Pi extension, not --tools-file flag", () => {
+	const telemetryPath = fileURLToPath(new URL("../src/host/session-telemetry.ts", import.meta.url));
+	const telemetryContent = readFileSync(telemetryPath, "utf8");
+	assert.equal(
+		telemetryContent.includes('"--tools-file"'),
+		false,
+		"session-telemetry must not pass obsolete --tools-file flag to durable-zero runner",
+	);
+	assert.ok(
+		telemetryContent.includes('"--extension"'),
+		"session-telemetry must pass standard Pi --extension flag",
+	);
 });

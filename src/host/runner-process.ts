@@ -41,7 +41,11 @@ export class RunnerProcess {
 			this.child = spawn(process.execPath, [runnerPath, ...options.args, ...prompts.args], {
 				cwd: options.cwd,
 				stdio: ["pipe", "pipe", "pipe"],
-				env: { ...process.env, ...options.env },
+				env: {
+					...process.env,
+					...options.env,
+					...(options.toolsFilePath ? { PI_BB_TOOLS_FILE: options.toolsFilePath } : {}),
+				},
 			});
 		} catch (error) {
 			this.cleanupPrompts();

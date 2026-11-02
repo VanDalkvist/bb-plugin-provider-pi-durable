@@ -53,7 +53,7 @@ test("Finding 2A (P1): stop child waiter cancels wait, does not attach later, do
 	const mockSession = sessionFixture({
 		options: { threadId: "thr_root", providerThreadId: "pi_sess_2" },
 		start: async () => {
-			await new Promise((r) => setTimeout(r, 40));
+			await new Promise((r) => setTimeout(r, 120));
 		},
 		getSubagentState: () => ({ status: "running", task: "task" }),
 		registerThread: (threadId: string) => {
@@ -95,7 +95,7 @@ test("Finding 2B (P1): child initiates creation before root: stop child creator 
 		const mockSession = sessionFixture({
 			options: { threadId: "thr_root", providerThreadId: "pi_sess_3" },
 			start: async () => {
-				await new Promise((r) => setTimeout(r, 40));
+				await new Promise((r) => setTimeout(r, 120));
 			},
 			getSubagentState: () => ({ status: "running", task: "task" }),
 			kill: () => {
@@ -129,7 +129,7 @@ test("Finding 2C (P1): dispose/stopAll rejects all affected requests with safe t
 	const mockSession = sessionFixture({
 		options: { threadId: "thr_root", providerThreadId: "pi_sess_4" },
 		start: async () => {
-			await new Promise((r) => setTimeout(r, 40));
+			await new Promise((r) => setTimeout(r, 120));
 		},
 		kill: () => {
 			killed = true;

@@ -25,6 +25,14 @@ export function getBbDataDir(env: NodeJS.ProcessEnv = process.env): string {
 	return custom ? resolve(custom) : join(homedir(), ".bb");
 }
 
+export function resolveBbToolsExtensionPath(): string {
+	const devCandidate = resolve(__dirname, "..", "extension", "bb-tools-extension.ts");
+	if (existsSync(devCandidate)) return devCandidate;
+	const distCandidate = resolve(__dirname, "extension", "bb-tools-extension.js");
+	if (existsSync(distCandidate)) return distCandidate;
+	return devCandidate;
+}
+
 export function resolveRunnerPath(options?: ResolveRunnerOptions): string {
 	const env = options?.env ?? process.env;
 	const envCmd = env.BB_PI_DURABLE_BRIDGE_COMMAND?.trim() || env.PI_DURABLE_RUNNER_PATH?.trim();

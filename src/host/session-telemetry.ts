@@ -1,5 +1,7 @@
 import type { SessionOptions, ThreadDelta } from "./types.ts";
 
+import { resolveBbToolsExtensionPath } from "./paths.ts";
+
 export interface SessionStats {
 	tokens: number | null;
 	contextWindow: number;
@@ -85,7 +87,7 @@ export function buildRunnerArgs(options: SessionOptions): string[] {
 		}
 	}
 	if (options.toolsFilePath) {
-		args.push("--tools-file", options.toolsFilePath);
+		args.push("--extension", resolveBbToolsExtensionPath());
 	}
 	return args;
 }
