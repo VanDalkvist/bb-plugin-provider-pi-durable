@@ -1,4 +1,41 @@
 
+### BB Dynamic Tools & Interaction Bridge (Cycle 104) — 2026-11-02 (Execution Receipt)
+- **Цель и статус:** Реализация полной двунаправленной поддержки динамических инструментов Beyond Boundaries (`dynamicTools`, `item/tool/call`), политик фильтрации (`disallowedTools`) и интерактивных UI диалогов (`interaction/request`) в `bb-plugin-provider-pi-durable` для достижения 100% паритета с BB 0.48.1 при сохранении суверенности ядра `@durable-zero` (0 утечек абстракций BB). Статус: **PASS (VERIFIED)**.
+- **Реализованные компоненты и срезы:**
+  1. *[Slice 1: Контракты Zod (AP-010, AP-011, AP-026)]:*
+     - `src/contracts/bb-tools.ts`: строгие схемы Zod `bbDynamicToolSchema`, `bbToolCallRequestParamsSchema`, `bbToolCallResponseSchema`, `bbInteractionRequestParamsSchema`.
+     - `tests/contracts-bb-tools.test.ts`: TDD RED/GREEN тесты валидации схем (100% pass).
+  2. *[Slice 2: Персистентность инструментов и фильтрация политик (AP-010, AP-012, AP-019)]:*
+     - `src/host/session-options.ts`, `src/host/types.ts`, `src/host/session-port.ts`: извлечение `dynamicTools` и `disallowedTools`, фильтрация заблокированных инструментов по `disallowedTools` Set, запись JSON-файла `pi-tools-<sessionKey>.json` в `scratchDir`, проброс `toolsFilePath` в `SessionOptions`.
+     - `tests/host-session-options-dynamic-tools.test.ts`: TDD RED/GREEN тест сериализации и фильтрации (100% pass).
+  3. *[Slice 3: Двунаправленный RPC-трекер вызовов инструментов (AP-010, AP-012, AP-014, AP-028)]:*
+     - `src/host/tool-call-tracker.ts`: класс `PendingToolCallTracker` с монотонными ID, таймаутами, отменой по `scope`, разрешением `item/tool/call` ответов. Интегрирован в `ProviderBridge.handleLine` для перехвата JSON-RPC ответов с `result`/`error`.
+     - `tests/host-tool-call-tracker.test.ts`: TDD RED/GREEN тесты пересылки вызова, сопоставления ответа и отмены (100% pass).
+  4. *[Slice 4: Runner BB Dynamic Tools Extension и монтирование в Registry (AP-010, AP-026, AP-028, AP-073)]:*
+     - `src/runner/extensions/bb-tools-extension.ts`: фабрика `createBbDynamicToolsExtension` сопоставляет JSON Schema в TypeBox через `Type.Unsafe`, оборачивает инструменты с неймспейсом `bb` и делегирует выполнение в `forwardToolCall`.
+     - `src/runner/cli-args.ts`, `src/host/session-telemetry.ts`, `src/runner/runtime-types.ts`, `src/runner/runtime-loader.ts`: проброс аргумента `--tools-file <path>` из host в runner процесс, авто-монтирование в `extensionsResult.extensions` и синхронизация в Durable Registry и Codemode namespaces через существующий `syncToolsToRegistry`.
+     - `tests/runner-bb-tools-extension.test.ts`: TDD RED/GREEN тест регистрации и выполнения инструментов (100% pass).
+  5. *[Slice 5: Интерактивные диалоги интерфейса (interaction/request) (AP-010, AP-012, AP-014)]:*
+     - `src/host/interaction-tracker.ts`: класс `PendingInteractionTracker` форматирует и отслеживает запросы `interaction/request` (`select`, `confirm`, `input`, `editor`), интегрирован в `ProviderBridge`.
+     - `src/shared/extension-ui-context.ts`: контекст `createExtensionUIContext` делегирует вызовы диалогов `select`, `confirm`, `input`, `editor` в `requestInteraction` с распаковкой ответов.
+     - `tests/extension-ui-interaction.test.ts`: TDD RED/GREEN тесты форматирования, маршрутизации в Bridge и делегирования в UIContext (100% pass).
+- **TDD и доказательная база:**
+  - `npm test`: **650 тестов runner pass + 117 тестов UI pass = 767 pass, 0 fail (100% pass)**.
+  - `npm run test:contracts`: PASS (0 errors, negative TS2322 guarded).
+  - `scripts/verify-import-graph.mjs`: 0 cycles across 171 files.
+  - `scripts/verify-layer-boundaries.mjs`: 0 boundary violations (Ports & Adapters strictly respected).
+  - `npm run doctor`: HEALTHY.
+  - `npm run build`: Сборка runner, server, app и host успешна.
+- **Line Budgets (AP-019):**
+  - `src/contracts/bb-tools.ts`: 57 строк (< 250 LOC).
+  - `src/host/session-options.ts`: 75 строк (< 250 LOC).
+  - `src/host/tool-call-tracker.ts`: 129 строк (< 250 LOC).
+  - `src/runner/extensions/bb-tools-extension.ts`: 75 строк (< 250 LOC).
+  - `src/host/interaction-tracker.ts`: 99 строк (< 250 LOC).
+  - `src/shared/extension-ui-context.ts`: 75 строк (< 250 LOC).
+  - `src/host/bridge.ts`: 196 строк (< 250 LOC).
+  - Все `.ts` файлы в `src/` строго < 250 LOC (максимальный: `session-registry.ts` 239 LOC).
+
 ### Public Sovereign Library `durable-zero` & 100% Codemode Parity (Cycle 103, v0.5.0) — 2026-11-02 (Execution Receipt)
 - **Цель и статус:** Выделение суверенного ядра агентов в публичную независимую библиотеку и CLI-инструмент `durable-zero` (MIT License, zero-leak Ports & Adapters, Unix Domain Socket Daemon), устранение 2 дефектов паритета `codemode` (BL-CM-09, BL-CM-10), регистрация проекта в `~/Projects/registry.json`, релиз v0.5.0. Статус: **PASS (VERIFIED)**.
 - **Устранённые дефекты и первоисточники:**
