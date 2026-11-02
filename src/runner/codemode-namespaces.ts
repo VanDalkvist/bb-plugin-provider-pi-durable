@@ -43,6 +43,19 @@ export class DynamicCodemodeNamespaces {
 					...(def.namespace?.description ? { description: def.namespace.description } : {}),
 					...(def.namespace?.instructions ? { instructions: def.namespace.instructions } : {}),
 				});
+			} else if (def.namespace?.name) {
+				const name = def.namespace.name;
+				const prefix = def.name.startsWith(`${name}__`)
+					? `${name}__`
+					: def.name.startsWith(`${name}_`)
+						? `${name}_`
+						: `${name}:`;
+				this.registerNamespace({
+					name,
+					prefix,
+					...(def.namespace.description ? { description: def.namespace.description } : {}),
+					...(def.namespace.instructions ? { instructions: def.namespace.instructions } : {}),
+				});
 			}
 		}
 	}
