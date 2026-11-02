@@ -3,6 +3,7 @@ import { SessionRegistry } from "./session-registry.ts";
 import { handleDiscoveryRequest } from "./discovery-handler.ts";
 import { forkSessionDatabase } from "./thread-fork.ts";
 import { PendingToolCallTracker } from "./tool-call-tracker.ts";
+import { PendingInteractionTracker } from "./interaction-tracker.ts";
 import {
 	sendJsonRpcResult,
 	sendJsonRpcError,
@@ -22,8 +23,14 @@ export class ProviderBridge {
 	private sendRaw: (json: string) => void;
 	private registry: SessionRegistry;
 	private toolCallTracker: PendingToolCallTracker;
+	private interactionTracker: PendingInteractionTracker;
 
-	constructor(sendRaw: (json: string) => void, registry?: SessionRegistry, toolCallTracker?: PendingToolCallTracker) {
+	constructor(
+		sendRaw: (json: string) => void,
+		registry?: SessionRegistry,
+		toolCallTracker?: PendingToolCallTracker,
+		interactionTracker?: PendingInteractionTracker,
+	) {
 		this.sendRaw = sendRaw;
 		this.registry = registry ?? new SessionRegistry((method, params) => {
 			this.sendNotification(method, params);
@@ -31,10 +38,17 @@ export class ProviderBridge {
 		this.toolCallTracker = toolCallTracker ?? new PendingToolCallTracker((msg) => {
 			this.sendRaw(JSON.stringify(msg));
 		});
+		this.interactionTracker = interactionTracker ?? new PendingInteractionTracker((msg) => {
+			this.sendRaw(JSON.stringify(msg));
+		});
 	}
 
 	public getToolCallTracker(): PendingToolCallTracker {
 		return this.toolCallTracker;
+	}
+
+	public getInteractionTracker(): PendingInteractionTracker {
+		return this.interactionTracker;
 	}
 
 	public sendResult(id: string | number, result: Record<string, unknown>) {
@@ -78,6 +92,9 @@ export class ProviderBridge {
 
 		if (req && (req.result !== undefined || req.error !== undefined)) {
 			if (this.toolCallTracker.handleToolCallResponse(req)) {
+				return;
+			}
+			if (this.interactionTracker.handleInteractionResponse(req)) {
 				return;
 			}
 		}
@@ -172,6 +189,7 @@ export class ProviderBridge {
 
 	public async shutdown(): Promise<void> {
 		this.toolCallTracker.dispose();
+		this.interactionTracker.dispose();
 		await this.registry.stopAll();
 		getSharedCatalog().close();
 	}
