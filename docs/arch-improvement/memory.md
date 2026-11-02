@@ -1,5 +1,23 @@
 # Arch Improvement Memory — `bb-plugin-provider-pi-durable`
 
+## 2026-11-02 - ToolExposure: 'codemode' Must Not Set 'deferred: true' in Upstream Parity (BL-CM-09)
+- Context: Upstream Pi parity for `codemode` vs `deferred` tool exposure.
+- Symptom: Tools declared with `exposure: "codemode"` were completely invisible in the system prompt and inaccessible via `tool_search`.
+- Cause: In `adaptExtensionTool`, setting `isDeferred = true` for `exposure === "codemode"` caused Durable's `codemodeSection()` in `describe.ts` to filter out the tool (`tool.deferred !== true`). Simultaneously, `callers: ["tools"]` prevented the tool from entering `agent.deferred` (which only indexes `modelCallable` tools). The tool was dropped from both prompt and search.
+- Use next time: Remember the upstream Pi matrix:
+  - `exposure: "codemode"` -> `callers: ["tools"]`, `deferred: undefined`. Listed in `<codemode>` section with its TypeScript declaration!
+  - `exposure: "deferred"` -> `callers: ["model", "tools"]`, `deferred: true`. Excluded from inline prompt, discovered and activated via `tool_search`.
+- Evidence: `tests/codemode-exposure-prompt.test.ts`, `docs/arch-improvement/audits/2026-11-02-codemode-upstream-parity-audit.md`.
+
+## 2026-11-02 - Multi-Client SQLite Session Concurrency Requires IPC Socket Daemon (BL-DZ-01)
+- Context: Concurrent session attachment by subthreads, CLI, or inspectors.
+- Symptom: Launching a secondary process or subthread on an active session caused `SESSION_ALREADY_OPEN` from `proper-lockfile`.
+- Cause: SQLite WAL requires single-process writer locking. Spawning a new Node.js runner process per connection cannot share the in-memory SQLite connection or transaction lock.
+- Use next time: Use `SessionDaemon` on Unix Domain Socket (`runner.sock`). The first process becomes the Master Daemon, subsequent processes connect as Client Proxies over IPC, routing JSON-RPC frames without colliding on `session.lock`.
+- Evidence: `src/runner/session-daemon.ts`, `tests/session-socket-daemon.test.ts`.
+
+
+
 ## 2026-10-12 - Provider Bridge is a Slave Protocol: Subthreads Require Explicit BB Server DB Creation
 - Context: Native subagents and composite `providerThreadId` in Beyond Boundaries.
 - Symptom: A subagent executed in Pi Durable (`tx.createConversation`), but no child thread appeared in the BB IDE sidebar.

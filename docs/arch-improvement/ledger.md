@@ -1,4 +1,38 @@
 
+### Public Sovereign Library `durable-zero` & 100% Codemode Parity (Cycle 103, v0.5.0) — 2026-11-02 (Execution Receipt)
+- **Цель и статус:** Выделение суверенного ядра агентов в публичную независимую библиотеку и CLI-инструмент `durable-zero` (MIT License, zero-leak Ports & Adapters, Unix Domain Socket Daemon), устранение 2 дефектов паритета `codemode` (BL-CM-09, BL-CM-10), регистрация проекта в `~/Projects/registry.json`, релиз v0.5.0. Статус: **PASS (VERIFIED)**.
+- **Устранённые дефекты и первоисточники:**
+  1. *[P2: Искажение семантики exposure: "codemode" (BL-CM-09, AP-010, AP-011)]:*
+     - Первоисточник: `docs/arch-improvement/audits/2026-11-02-codemode-upstream-parity-audit.md`, `packages/coding-agent/src/core/extensions/types.ts:40–55`.
+     - Коренная причина: `adaptExtensionTool` в `src/runner/tool-adapter.ts` для `exposure === "codemode"` выставлял `isDeferred = true`. Функция `codemodeSection()` в ядре Durable принудительно исключает любые инструменты с `deferred === true`, а из-за `callers: ["tools"]` инструмент не попадал в `agent.deferred` и не находился `tool_search`. Инструмент полностью скрывался от модели.
+     - Решение: Для `exposure: "codemode"` выставляется `callers: ["tools"]` и `deferred: undefined`. Инструмент появляется в секции `<codemode>` системного промпта со своей TypeScript-сигнатурой, а `deferred: true` выставляется строго для `exposure: "deferred"`.
+  2. *[P2: Хардкод regex mcp__*__ в DynamicCodemodeNamespaces (BL-CM-10, AP-011, AP-014)]:*
+     - Первоисточник: `src/runner/codemode-namespaces.ts:32–45`.
+     - Коренная причина: Регистрация пространств имён проверяла только соответствие `/^mcp__([a-zA-Z0-9_\-]+?)__/`. Не-MCP расширения, объявляющие `ToolNamespace`, игнорировались.
+     - Решение: Добавлена поддержка универсальных неймспейсов `def.namespace.name` независимо от префикса инструмента с автоматическим определением префикса вызова (`name__`, `name_` или `name:`).
+  3. *[P1: Конкуренция блокировки сессии и сокет-демон (BL-DZ-01, AP-010, AP-013, AP-023)]:*
+     - Первоисточник: `src/runner/index.ts:100` (`proper-lockfile`), Issue #23.
+     - Коренная причина: Попытка одновременного подключения субтреда или CLI к активной сессии падала с `SESSION_ALREADY_OPEN`.
+     - Решение: Реализован `SessionDaemon` (`src/runner/session-daemon.ts`) на базе Unix Domain Socket (`runner.sock`). Первый процесс поднимает мастер-демон, последующие процессы автоматически подключаются в режиме Proxy Client без конфликтов блокировки SQLite.
+  4. *[P1: Выделение суверенного публичного репозитория durable-zero (BL-DZ-02..BL-DZ-04, AP-010, AP-020)]:*
+     - Первоисточник: PRD `docs/superpowers/specs/2026-11-02-v0.5.0-durable-zero-public-library-and-codemode-parity-prd.md`.
+     - Решение: Создан монорепозиторий `~/Projects/durable-zero` (MIT, pnpm workspace) с пакетами `@durable-zero/contracts`, `@durable-zero/sdk`, `@durable-zero/plugins`, `@durable-zero/core` и CLI `durable-zero` (`bin/durable-zero.js`). Добавлена запись в `~/Projects/registry.json`. Проверено: 0 импортов `@get-bb/*`.
+- **TDD и доказательная база:**
+  - `tests/codemode-exposure-prompt.test.ts`: RED/GREEN тест видимости `exposure: "codemode"` в промпте (PASS).
+  - `tests/universal-namespaces.test.ts`: RED/GREEN тест универсальных неймспейсов для не-MCP расширений (PASS).
+  - `tests/session-socket-daemon.test.ts`: RED/GREEN тест `SessionDaemon` мастер/клиент IPC и очистки stale сокетов (PASS).
+  - `packages/cli/test/cli.test.ts`: тесты CLI `durable-zero --version`, `doctor`, `serve --no-session` (PASS).
+  - `npm test`: **638 тестов runner pass + 117 тестов UI pass = 755 pass, 0 fail**.
+  - `npm run test:contracts`: PASS (0 errors, negative TS2322 guarded).
+  - `scripts/verify-layer-boundaries.mjs`: 0 boundary violations.
+- **Line Budgets (AP-019):**
+  - `src/runner/tool-adapter.ts`: 185 строк (< 250 LOC).
+  - `src/runner/codemode-namespaces.ts`: 62 строки (< 250 LOC).
+  - `src/runner/session-daemon.ts`: 126 строк (< 250 LOC).
+- **Сборка и релиз:**
+  - Версия `0.4.4` $\to$ `0.5.0` в `package.json`.
+  - Репозиторий `durable-zero` инициализирован на коммите `76303f4`.
+
 ### Active Tool Loadout & Prompt Parity (Cycle 98) — 2026-10-31 (Execution Receipt)
 - **Цель и статус:** Устранение раздувания стартового префикса треда на ~55k токенов (Issue #32) за счёт честного подключения `ExtensionAPI` (`pi.setActiveTools` и `before_agent_start.systemPromptOptions.selectedTools`) к нативному `AgentDoc.modelTools` в `@earendil-works/pi-durable`; сохранение сниппетов и инструкций инструментов при адаптации (`adaptExtensionTool`); устранение ложных фоллбеков описаний в тексте промпта; обеспечение персистентности набора при resume без лишних ходов; сохранение 100% работоспособности Codemode и субагентов. Статус: **PASS (VERIFIED)**.
 - **Устранённые дефекты и первоисточники:**
