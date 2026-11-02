@@ -24,3 +24,35 @@ test("buildSessionOptions serializes dynamic tools and filters disallowed tools"
 	// Clean up
 	fs.unlinkSync(opts.toolsFilePath);
 });
+
+test("buildSessionOptions and buildRunnerArgs forward external extensions and isolation flags", async () => {
+	const { buildRunnerArgs } = await import("../src/host/session-telemetry.ts");
+
+	const params = {
+		cwd: "/test/cwd",
+		options: {
+			providerOptions: {
+				extensions: ["/custom/ext1.ts", "/custom/ext2.js"],
+				noGlobalExtensions: true,
+			},
+		},
+	};
+
+	const opts = buildSessionOptions("thr_1", "pi_thread_1", "pi_thread_1", params as any, []);
+	assert.deepEqual(opts.additionalExtensionPaths, ["/custom/ext1.ts", "/custom/ext2.js"]);
+	assert.equal(opts.noGlobalExtensions, true);
+
+	const runnerArgs = buildRunnerArgs(opts);
+	assert.ok(runnerArgs.includes("--no-global-extensions"));
+
+	// Find all --extension arguments
+	const extensionArgs: string[] = [];
+	for (let i = 0; i < runnerArgs.length; i++) {
+		if (runnerArgs[i] === "--extension" && i + 1 < runnerArgs.length) {
+			extensionArgs.push(runnerArgs[i + 1]);
+		}
+	}
+
+	assert.ok(extensionArgs.includes("/custom/ext1.ts"));
+	assert.ok(extensionArgs.includes("/custom/ext2.js"));
+});
