@@ -34,8 +34,10 @@ export class SchemaPort {
 
 			const errors: string[] = [];
 			for (const err of Value.Errors(s, value)) {
-				const path = err.path ? err.path.replace(/^\//, "") : "root";
-				errors.push(`- ${path}: ${err.message}`);
+				const errObj = err as { path?: string; message?: string };
+				const rawPath = errObj.path;
+				const path = rawPath ? rawPath.replace(/^\//, "") : "root";
+				errors.push(`- ${path}: ${errObj.message ?? "validation error"}`);
 			}
 			return { isValid: false, errors };
 		} catch (err) {
