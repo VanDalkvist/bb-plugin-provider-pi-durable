@@ -1,6 +1,7 @@
 import { defineTask, type Task, type TaskRecord } from "@earendil-works/pi-durable";
 import { SubagentsDoc } from "./subagent-docs.ts";
 import type { Admission, CourierState, SubagentTaskExtension } from "./subagent-delivery-types.ts";
+import { unwrapWatchValue } from "./watcher-compat.ts";
 
 export const GATHER_MS = 50;
 export const DEFAULT_HOLD_TIMEOUT_MS = 5000;
@@ -91,7 +92,8 @@ export function courierFor(admit?: Admission, holdTimeoutMs = DEFAULT_HOLD_TIMEO
 					await new Promise<void>((resolve) => {
 						const timer = setTimeout(() => resolve(), holdTimeoutMs);
 						timer.unref?.();
-						watch.start((v) => {
+						watch.start((rawCall) => {
+							const v = unwrapWatchValue<any>(rawCall);
 							if (v?.deliveryHold === undefined) {
 								clearTimeout(timer);
 								resolve();
