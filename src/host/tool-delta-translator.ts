@@ -103,14 +103,10 @@ export function translateToolEnd(
 	const callId = String(event.toolCallId);
 	const toolName = String(event.toolName);
 	const isDelegation = isDelegationTool(toolName);
-	const shape = cachedShape ?? {
-		type: toolName === "bash" ? "command" : isDelegation ? "delegation" : "tool",
-		...(toolName === "bash"
-			? { command: "", cwd: fallbackCwd }
-			: isDelegation
-				? { childRef: "agent", label: "Agent delegation", background: false }
-				: { tool: toolName, server: "pi" }),
-	};
+	const eventArgs = (event && typeof event === "object" && "args" in event && typeof (event as any).args === "object" && (event as any).args !== null)
+		? (event as any).args as Record<string, unknown>
+		: {};
+	const shape = cachedShape ?? buildToolItemShape(toolName, eventArgs, fallbackCwd);
 
 	const resultText = typeof event.result === "string"
 		? event.result

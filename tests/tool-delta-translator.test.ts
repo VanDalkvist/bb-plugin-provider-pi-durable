@@ -192,3 +192,58 @@ test("D-21: normalizeGitPatch standardizes patch headers for edit tool with clea
 	].join("\n");
 	assert.equal(normalized, expected);
 });
+
+test("bash command tool presentation: preserves command text across start and end", () => {
+	const start = translateToolStart(
+		{
+			type: "tool_execution_start",
+			toolCallId: "call_bash_42",
+			toolName: "bash",
+			args: { command: "git status --porcelain" },
+		},
+		"/Users/vanya/work",
+	);
+
+	assert.equal(start.delta.kind, "item.open");
+	const startItem = start.delta.item as { type: string; command: string };
+	assert.equal(startItem.type, "command");
+	assert.equal(startItem.command, "git status --porcelain");
+
+	const end = translateToolEnd(
+		{
+			type: "tool_execution_end",
+			toolCallId: "call_bash_42",
+			toolName: "bash",
+			result: "M file.ts",
+			isError: false,
+		},
+		start.shape,
+		"/Users/vanya/work",
+	);
+
+	assert.equal(end.kind, "item.close");
+	const endItem = end.item as { type: string; command: string };
+	assert.equal(endItem.type, "command");
+	assert.equal(endItem.command, "git status --porcelain");
+});
+
+test("bash command tool presentation: recovers command from event.args when cachedShape is missing", () => {
+	const end = translateToolEnd(
+		{
+			type: "tool_execution_end",
+			toolCallId: "call_bash_unpaired",
+			toolName: "bash",
+			result: "error output",
+			isError: true,
+			args: { command: "npm test" },
+		} as any,
+		undefined, // simulated missing cachedShape
+		"/Users/vanya/work",
+	);
+
+	assert.equal(end.kind, "item.close");
+	assert.equal(end.status, "failed");
+	const endItem = end.item as { type: string; command: string };
+	assert.equal(endItem.type, "command");
+	assert.equal(endItem.command, "npm test");
+});

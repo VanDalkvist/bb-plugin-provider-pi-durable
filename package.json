@@ -1,6 +1,6 @@
 {
   "name": "bb-plugin-provider-pi-durable",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "type": "module",
   "engines": {
     "bb": ">=0.47.1",
@@ -34,7 +34,7 @@
     "@earendil-works/pi-schema": "1.5.0",
     "@get-bb/plugin-sdk": "0.6.79",
     "@types/proper-lockfile": "^4.1.4",
-    "durable-zero": "github:VanDalkvist/durable-zero#v0.8.0",
+    "durable-zero": "github:VanDalkvist/durable-zero#v0.8.1",
     "proper-lockfile": "^4.1.2",
     "quickjs-wasi": "3.6.2",
     "zod": "^4.6.6"

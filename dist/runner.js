@@ -1,10 +1,10 @@
 import { createRequire as __createRequire } from "node:module";
 const require = __createRequire(import.meta.url);
 
-// src/runtime.ts
+// packages/core/src/runtime.ts
 import { resolveModelScopeWithDiagnostics } from "@earendil-works/pi-coding-agent";
 
-// src/harness-setup.ts
+// packages/core/src/harness-setup.ts
 import {
   createRegistry
 } from "@earendil-works/pi-durable";
@@ -14,7 +14,7 @@ import {
   resolveCliModel
 } from "@earendil-works/pi-coding-agent";
 
-// src/prompt.ts
+// packages/core/src/prompt.ts
 import { existsSync, readFileSync } from "node:fs";
 import { defineExtension, section } from "@earendil-works/pi-durable";
 import {
@@ -179,7 +179,7 @@ ${text}
   });
 }
 
-// src/shared/errors.ts
+// packages/core/src/shared/errors.ts
 var DurableHarnessError = class extends Error {
   code;
   constructor(message, code, cause) {
@@ -214,7 +214,7 @@ var BuiltinExtensionError = class extends DurableHarnessError {
   }
 };
 
-// src/builtin-extensions/registry.ts
+// packages/core/src/builtin-extensions/registry.ts
 var BuiltinExtensionRegistry = class {
   #extensions = /* @__PURE__ */ new Map();
   register(extension) {
@@ -259,7 +259,7 @@ var BuiltinExtensionRegistry = class {
   }
 };
 
-// src/builtin-extensions/coding-tools.ts
+// packages/core/src/builtin-extensions/coding-tools.ts
 import { createCodingTools, CodingTools } from "@earendil-works/pi-durable/tools";
 import { createNodePhotonImages } from "@earendil-works/pi-durable/images/node";
 var codingToolsExtension = {
@@ -278,7 +278,7 @@ var codingToolsExtension = {
   }
 };
 
-// src/builtin-extensions/codemode.ts
+// packages/core/src/builtin-extensions/codemode.ts
 import { CodemodeSandbox } from "@earendil-works/pi-codemode";
 import { createCodemodeExtension } from "@earendil-works/pi-durable/codemode";
 var CodemodeExtension = class {
@@ -327,7 +327,7 @@ function createCodemodeBuiltinExtension() {
 }
 var codemodeExtension = new CodemodeExtension();
 
-// src/subagent.ts
+// packages/core/src/subagent.ts
 import { Type } from "@sinclair/typebox";
 import {
   configure,
@@ -335,7 +335,7 @@ import {
   defineTool
 } from "@earendil-works/pi-durable";
 
-// src/subagent-docs.ts
+// packages/core/src/subagent-docs.ts
 import {
   AssistantEntry,
   defineDoc
@@ -363,16 +363,16 @@ async function answerText(api, answer, context) {
   return extractAssistantText(entry);
 }
 
-// src/subagent-delivery.ts
+// packages/core/src/subagent-delivery.ts
 import {
   AssistantEntry as AssistantEntry2,
   defineTask as defineTask2
 } from "@earendil-works/pi-durable";
 
-// src/subagent-courier.ts
+// packages/core/src/subagent-courier.ts
 import { defineTask } from "@earendil-works/pi-durable";
 
-// src/watcher-compat.ts
+// packages/core/src/watcher-compat.ts
 function isWatchCall(item) {
   return typeof item === "object" && item !== null && "kind" in item && item.kind === "value" && "value" in item;
 }
@@ -383,7 +383,7 @@ function unwrapWatchValue(item) {
   return item;
 }
 
-// src/subagent-courier.ts
+// packages/core/src/subagent-courier.ts
 var GATHER_MS = 50;
 var DEFAULT_HOLD_TIMEOUT_MS = 5e3;
 function courierIsIdle(active) {
@@ -494,7 +494,7 @@ ${prompt}`;
   return asExtensionTask(task, "durable.subagent-courier");
 }
 
-// src/subagent-delivery.ts
+// packages/core/src/subagent-delivery.ts
 var BACKGROUND = { ownership: { kind: "conversation" }, background: true };
 var Anchor = asExtensionTask(
   defineTask2({
@@ -559,7 +559,7 @@ function reporterFor(courier, admit) {
 var DefaultCourier = courierFor();
 var DefaultReporter = reporterFor(DefaultCourier);
 
-// src/subagent-role.ts
+// packages/core/src/subagent-role.ts
 function buildTechnicalWorkerRole() {
   return [
     "You are an isolated worker subagent.",
@@ -568,10 +568,10 @@ function buildTechnicalWorkerRole() {
   ].join("\n");
 }
 
-// src/policy/resolver.ts
+// packages/core/src/policy/resolver.ts
 import { getSupportedThinkingLevels } from "@earendil-works/pi-ai/models";
 
-// src/shared/model-ref.ts
+// packages/core/src/shared/model-ref.ts
 function normalizeModelReference(raw, defaultProvider) {
   if (!raw || typeof raw !== "object") return void 0;
   const r = raw;
@@ -583,7 +583,7 @@ function normalizeModelReference(raw, defaultProvider) {
   return { provider, modelId: cleanModelId };
 }
 
-// src/policy/errors.ts
+// packages/core/src/policy/errors.ts
 var SubagentPolicyError = class extends Error {
   cause;
   constructor(message, options) {
@@ -617,7 +617,7 @@ var SubagentRevisionConflictError = class extends SubagentPolicyError {
   }
 };
 
-// src/policy/resolver.ts
+// packages/core/src/policy/resolver.ts
 function mapBbReasoningToNativeThinking(level) {
   if (level === "none" || level === void 0) {
     return "off";
@@ -670,7 +670,7 @@ function resolveSubagentModelConfiguration(record, parentContext, availableModel
   };
 }
 
-// src/subagent.ts
+// packages/core/src/subagent.ts
 function createSubagentExtension(getPolicy) {
   return defineExtension2({
     name: "subagent",
@@ -831,7 +831,7 @@ function createSubagentExtension(getPolicy) {
   });
 }
 
-// src/builtin-extensions/subagents.ts
+// packages/core/src/builtin-extensions/subagents.ts
 var subagentsExtension = {
   id: "subagents",
   name: "Subagents",
@@ -849,7 +849,7 @@ var subagentsExtension = {
   }
 };
 
-// src/harness-setup.ts
+// packages/core/src/harness-setup.ts
 function configureHarnessHttp(settingsManager) {
   const proxy = settingsManager.getGlobalSettings()?.httpProxy?.trim();
   if (proxy) {
@@ -965,7 +965,7 @@ async function findInitialAgentModel(settingsManager, modelRuntime, cli) {
   return {};
 }
 
-// src/session-storage.ts
+// packages/core/src/session-storage.ts
 import { execFileSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
@@ -973,7 +973,7 @@ import "node:os";
 import { basename, join as join2, resolve as resolve2 } from "node:path";
 import lockfile from "proper-lockfile";
 
-// src/shared/agent-dir.ts
+// packages/core/src/shared/agent-dir.ts
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 function getAgentDir(env = process.env) {
@@ -982,7 +982,7 @@ function getAgentDir(env = process.env) {
   return join(homedir(), ".pi", "agent");
 }
 
-// src/session-storage.ts
+// packages/core/src/session-storage.ts
 function isProcessAlive(pid) {
   if (!pid || pid <= 0) return false;
   try {
@@ -1111,7 +1111,7 @@ async function selectSession(cwdInput, continueSession, targetSession) {
   return { id, directory, database: join2(directory, "session.sqlite"), cwd, created, release };
 }
 
-// src/runtime-types.ts
+// packages/core/src/runtime-types.ts
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import {
   ROOT_CONVERSATION_ID
@@ -1139,7 +1139,7 @@ async function firstInput(harness, id) {
   return titleOf(first);
 }
 
-// src/compaction-hooks.ts
+// packages/core/src/compaction-hooks.ts
 var CompactionSideEffectError = class extends Error {
   code;
   operation;
@@ -1161,10 +1161,10 @@ async function runCompactionSideEffect(operation, action, notice) {
   }
 }
 
-// src/runtime-controller.ts
+// packages/core/src/runtime-controller.ts
 import { clampThinkingLevel, getSupportedThinkingLevels as getSupportedThinkingLevels2 } from "@earendil-works/pi-ai";
 
-// src/runtime-hydration.ts
+// packages/core/src/runtime-hydration.ts
 function hydrateSessionActiveTools(rootAgent, activeEnvState) {
   if (Array.isArray(rootAgent.tools)) {
     activeEnvState.setActiveTools?.(rootAgent.tools.map((t) => t.name));
@@ -1233,7 +1233,7 @@ async function loadSummaries(harness, rootId) {
   return summaries;
 }
 
-// src/runtime-controller.ts
+// packages/core/src/runtime-controller.ts
 function createDurableController(ctx) {
   let queue = Promise.resolve();
   const command = (operation) => {
@@ -1414,7 +1414,7 @@ function createDurableController(ctx) {
   };
 }
 
-// src/runtime-bindings.ts
+// packages/core/src/runtime-bindings.ts
 var RuntimeBindings = class {
   conversation;
   view;
@@ -1532,7 +1532,7 @@ var RuntimeBindings = class {
   }
 };
 
-// src/runtime-cleanup.ts
+// packages/core/src/runtime-cleanup.ts
 async function closeRuntimeResources(operations) {
   const failures = [];
   for (const operation of operations) {
@@ -1545,7 +1545,7 @@ async function closeRuntimeResources(operations) {
   if (failures.length) throw new AggregateError(failures, "RUNTIME_CLEANUP_FAILED");
 }
 
-// src/runtime-loader.ts
+// packages/core/src/runtime-loader.ts
 import {
   DefaultResourceLoader,
   ModelRuntime,
@@ -1553,7 +1553,7 @@ import {
   initTheme
 } from "@earendil-works/pi-coding-agent";
 
-// src/shared/extension-runner.ts
+// packages/core/src/shared/extension-runner.ts
 import {
   createMcpExtension,
   ExtensionRunner,
@@ -1561,7 +1561,7 @@ import {
   SessionManager
 } from "@earendil-works/pi-coding-agent";
 
-// src/host-rpc.ts
+// packages/core/src/host-rpc.ts
 var HostRpcManager = class {
   pendingToolCalls = /* @__PURE__ */ new Map();
   pendingInteractions = /* @__PURE__ */ new Map();
@@ -1644,7 +1644,7 @@ function requestHostInteraction(kind, payload) {
   return activeInteractionRequester(kind, payload);
 }
 
-// src/shared/extension-ui-context.ts
+// packages/core/src/shared/extension-ui-context.ts
 function createExtensionUIContext(onNotice, requestInteraction = requestHostInteraction) {
   return {
     select: async (title, options) => {
@@ -1704,7 +1704,7 @@ function createExtensionUIContext(onNotice, requestInteraction = requestHostInte
   };
 }
 
-// src/shared/extension-runner.ts
+// packages/core/src/shared/extension-runner.ts
 function createStandardExtensionFactories() {
   return [createMcpExtension()];
 }
@@ -1843,7 +1843,7 @@ async function setupExtensionRunner(options) {
   return runner;
 }
 
-// src/tool-adapter.ts
+// packages/core/src/tool-adapter.ts
 import {
   createMcpExtension as createMcpExtension2
 } from "@earendil-works/pi-coding-agent";
@@ -1852,7 +1852,7 @@ import {
   defineTool as defineTool2
 } from "@earendil-works/pi-durable";
 
-// src/schema-port.ts
+// packages/core/src/schema-port.ts
 import { Value } from "@sinclair/typebox/value";
 var SchemaPort = class {
   coerce(schema, value) {
@@ -1892,7 +1892,7 @@ var SchemaPort = class {
   }
 };
 
-// src/tool-adapter.ts
+// packages/core/src/tool-adapter.ts
 var schemaPort = new SchemaPort();
 function hasOutput(api) {
   return typeof api === "object" && api !== null && "output" in api && typeof api.output === "function";
@@ -2006,7 +2006,7 @@ function installExtensionTools(registry, tools) {
   registry.install(defineExtension3({ name: "extension-tools", tools }));
 }
 
-// src/extension-mount.ts
+// packages/core/src/extension-mount.ts
 import "@earendil-works/pi-coding-agent";
 function createNestedToolExecutor(registry, getExtensionRunner, getEnv) {
   return async (callerId, name, args2, options) => {
@@ -2176,11 +2176,11 @@ async function mountExtensionBridge(location, modelRuntime, extensionsResult, re
   };
 }
 
-// src/runtime-loader.ts
+// packages/core/src/runtime-loader.ts
 import { Harness } from "@earendil-works/pi-durable";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 
-// src/codemode-namespaces.ts
+// packages/core/src/codemode-namespaces.ts
 var DynamicCodemodeNamespaces = class {
   list = [];
   seen = /* @__PURE__ */ new Set();
@@ -2230,10 +2230,10 @@ var DynamicCodemodeNamespaces = class {
   }
 };
 
-// src/subagent-policy-ack.ts
+// packages/core/src/subagent-policy-ack.ts
 import { defineDoc as defineDoc2 } from "@earendil-works/pi-durable";
 
-// src/policy/schema.ts
+// packages/core/src/policy/schema.ts
 import { z } from "zod";
 var subagentThinkingLevelSchema = z.enum([
   "off",
@@ -2279,7 +2279,7 @@ var subagentPolicySetOutputSchema = z.object({
   record: subagentPolicyRecordSchema
 }).strict();
 
-// src/subagent-policy-state.ts
+// packages/core/src/subagent-policy-state.ts
 function createSubagentPolicyHolder(options) {
   let currentRecord = options.initialRecord ? subagentPolicyRecordSchema.parse(options.initialRecord) : {
     version: 1,
@@ -2325,7 +2325,7 @@ function createSubagentPolicyHolder(options) {
   };
 }
 
-// src/subagent-policy-ack.ts
+// packages/core/src/subagent-policy-ack.ts
 var SubagentPolicyAckDoc = defineDoc2({
   kind: "durable.subagent-policy-ack",
   version: 1,
@@ -2358,7 +2358,7 @@ async function loadSubagentPolicyHolder(harness) {
   });
 }
 
-// src/runtime-loader.ts
+// packages/core/src/runtime-loader.ts
 function logRegError(kind, identifier, err) {
   const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
   if (!msg.includes("already registered") && !msg.includes("duplicate")) {
@@ -2518,7 +2518,7 @@ async function loadHarnessEnvironment(location, options, envs) {
   };
 }
 
-// src/runtime.ts
+// packages/core/src/runtime.ts
 async function openDurable(options = {}) {
   const location = await selectSession(options.cwd ?? process.cwd(), options.continueSession ?? false, options.session ?? options.sessionDir);
   const envs = new ExecutionEnvs(location.cwd);
@@ -2686,11 +2686,27 @@ async function openDurable(options = {}) {
   }
 }
 
-// src/bridge/durable-contracts.ts
+// packages/core/src/bridge/durable-contracts.ts
 import "@earendil-works/pi-durable";
 
-// src/bridge/watch-events-compat.ts
+// packages/core/src/bridge/watch-events-compat.ts
 import { NestedCallDoc } from "@earendil-works/pi-durable";
+function findToolCallInEntries(entries, callId) {
+  if (!Array.isArray(entries)) return {};
+  for (let j = entries.length - 1; j >= 0; j--) {
+    const prevMsg = entries[j]?.model?.[0];
+    if (prevMsg?.role === "assistant" && Array.isArray(prevMsg.content)) {
+      const call = prevMsg.content.find((c) => c.type === "toolCall" && (c.id === callId || c.callId === callId));
+      if (call) {
+        return {
+          toolName: call.name,
+          args: call.arguments && typeof call.arguments === "object" ? call.arguments : {}
+        };
+      }
+    }
+  }
+  return {};
+}
 async function watchEvents(harness, conversationId, context) {
   const conversation = await harness.conversation(conversationId, context);
   if (!conversation) throw new Error(`Conversation not found: ${conversationId}`);
@@ -2711,16 +2727,79 @@ async function watchEvents(harness, conversationId, context) {
     snapshot,
     start(listener) {
       let seenEntriesCount = initial?.entries?.length ?? 0;
+      const emittedToolStarts = /* @__PURE__ */ new Set();
       const emittedToolEnds = /* @__PURE__ */ new Set();
       const seenNestedTools = /* @__PURE__ */ new Map();
       watch2.start(async (call, ctx) => {
         const val = call?.value ?? call;
         if (!val) return;
         const events = [];
+        const liveTools = val.docs?.["pi.live"]?.tools ?? [];
+        for (const t of liveTools) {
+          if (t.callId && !emittedToolStarts.has(t.callId)) {
+            let toolName = t.name ?? "tool";
+            let args2 = {};
+            const genContent = val.docs?.["pi.live"]?.generation?.message?.content;
+            if (Array.isArray(genContent)) {
+              const match = genContent.find((c) => c.type === "toolCall" && (c.id === t.callId || c.callId === t.callId));
+              if (match) {
+                if (match.name) toolName = match.name;
+                if (match.arguments && typeof match.arguments === "object") args2 = match.arguments;
+              }
+            }
+            if (Object.keys(args2).length === 0) {
+              const fromEntries = findToolCallInEntries(val.entries, t.callId);
+              if (fromEntries.toolName) toolName = fromEntries.toolName;
+              if (fromEntries.args) args2 = fromEntries.args;
+            }
+            emittedToolStarts.add(t.callId);
+            events.push({
+              type: "tool_execution_start",
+              toolCallId: t.callId,
+              toolName,
+              args: args2
+            });
+          }
+          if (t.callId && t.status === "running" && typeof t.output === "string") {
+            events.push({
+              type: "tool_execution_update",
+              toolCallId: t.callId,
+              toolName: t.name ?? "tool",
+              output: { set: t.output },
+              details: t.details,
+              diagnostics: t.diagnostics
+            });
+          }
+        }
         const nested = val.docs?.["pi.live"]?.nestedTools ?? [];
         for (const n of nested) {
           if (n.callId && !seenNestedTools.has(n.callId)) {
             seenNestedTools.set(n.callId, n);
+          }
+          if (n.callId && !emittedToolStarts.has(n.callId)) {
+            emittedToolStarts.add(n.callId);
+            const toolName = n.name ?? n.toolName ?? "tool";
+            events.push({
+              type: "tool_execution_start",
+              toolCallId: n.callId,
+              toolName,
+              taskId: n.taskId,
+              parentToolCallId: n.parentCallId,
+              parentTaskId: n.parentTaskId,
+              args: n.arguments && typeof n.arguments === "object" ? n.arguments : {}
+            });
+          }
+          if (n.callId && n.status === "running" && typeof n.output === "string") {
+            events.push({
+              type: "tool_execution_update",
+              toolCallId: n.callId,
+              toolName: n.name ?? n.toolName ?? "tool",
+              parentToolCallId: n.parentCallId,
+              parentTaskId: n.parentTaskId,
+              output: { set: n.output },
+              details: n.details,
+              diagnostics: n.diagnostics
+            });
           }
           if (n.callId && n.status === "done" && !emittedToolEnds.has(n.callId)) {
             emittedToolEnds.add(n.callId);
@@ -2745,7 +2824,8 @@ async function watchEvents(harness, conversationId, context) {
                 isError: Boolean(n.summary?.isError ?? n.summary?.error ?? n.isError),
                 output: n.output,
                 details: n.details
-              }
+              },
+              args: n.arguments && typeof n.arguments === "object" ? n.arguments : {}
             });
           }
         }
@@ -2765,7 +2845,8 @@ async function watchEvents(harness, conversationId, context) {
                   isError: Boolean(n.summary?.isError ?? n.summary?.error ?? n.isError),
                   output: n.output,
                   details: n.details
-                }
+                },
+                args: n.arguments && typeof n.arguments === "object" ? n.arguments : {}
               });
             }
           }
@@ -2774,28 +2855,43 @@ async function watchEvents(harness, conversationId, context) {
           for (let i = seenEntriesCount; i < val.entries.length; i++) {
             const entry = val.entries[i];
             const modelMsg = entry?.model?.[0];
-            if (modelMsg?.role === "toolResult") {
-              let toolName = modelMsg.toolName ?? "tool";
-              if (!modelMsg.toolName) {
-                for (let j = i - 1; j >= 0; j--) {
-                  const prevMsg = val.entries[j]?.model?.[0];
-                  if (prevMsg?.role === "assistant" && Array.isArray(prevMsg.content)) {
-                    const call2 = prevMsg.content.find((c) => c.type === "toolCall" && c.id === modelMsg.toolCallId);
-                    if (call2?.name) {
-                      toolName = call2.name;
-                      break;
-                    }
-                  }
+            if (modelMsg?.role === "assistant" && Array.isArray(modelMsg.content)) {
+              for (const part of modelMsg.content) {
+                if (part.type === "toolCall" && part.id && !emittedToolStarts.has(part.id)) {
+                  emittedToolStarts.add(part.id);
+                  events.push({
+                    type: "tool_execution_start",
+                    toolCallId: part.id,
+                    toolName: part.name ?? "tool",
+                    args: part.arguments && typeof part.arguments === "object" ? part.arguments : {}
+                  });
                 }
               }
+            }
+            if (modelMsg?.role === "toolResult") {
+              let toolName = modelMsg.toolName ?? "tool";
+              let toolArgs = {};
+              const found = findToolCallInEntries(val.entries, modelMsg.toolCallId ?? String(entry.id));
+              if (found.toolName && !modelMsg.toolName) toolName = found.toolName;
+              if (found.args) toolArgs = found.args;
               const callId = modelMsg.toolCallId ?? String(entry.id);
+              if (!emittedToolStarts.has(callId)) {
+                emittedToolStarts.add(callId);
+                events.push({
+                  type: "tool_execution_start",
+                  toolCallId: callId,
+                  toolName,
+                  args: toolArgs
+                });
+              }
               if (!emittedToolEnds.has(callId)) {
                 emittedToolEnds.add(callId);
                 events.push({
                   type: "tool_execution_end",
                   toolCallId: callId,
                   toolName,
-                  entry
+                  entry,
+                  args: toolArgs
                 });
               }
             }
@@ -2814,7 +2910,7 @@ async function watchEvents(harness, conversationId, context) {
   };
 }
 
-// src/bridge/durable-contracts.ts
+// packages/core/src/bridge/durable-contracts.ts
 function isAgentDocument(doc) {
   return typeof doc === "object" && doc !== null;
 }
@@ -2828,7 +2924,7 @@ function isConversationEntryRecord(entry) {
   return typeof entry === "object" && entry !== null;
 }
 
-// src/bridge/assistant-message-builder.ts
+// packages/core/src/bridge/assistant-message-builder.ts
 function extractCumulativeUsage(current) {
   const rawUsageDoc = current?.conversation?.docs?.["pi.usage"];
   if (!rawUsageDoc || typeof rawUsageDoc !== "object") {
@@ -2934,7 +3030,7 @@ function buildFinalAssistantMessage(current, lastGenerationText, lastThinkingTex
   };
 }
 
-// src/bridge/turn-summary.ts
+// packages/core/src/bridge/turn-summary.ts
 function findSubmissionFault(inputs, submissions, lastTaskError) {
   if (inputs && submissions) {
     for (const id of inputs) {
@@ -2993,7 +3089,7 @@ function resolveTurnSummary(current, currentText, currentThinking, lastAssistant
   return { finalMsg, cw, cumulativeUsage, isAborted, isError, errorMessage, lastCheckpointId };
 }
 
-// src/bridge/native-tool-result.ts
+// packages/core/src/bridge/native-tool-result.ts
 function extractCanonicalToolDetails(event) {
   if (typeof event !== "object" || event === null) return void 0;
   const rec = event;
@@ -3066,7 +3162,7 @@ function decodeNativeToolEnd(event) {
   };
 }
 
-// src/bridge/tool-result-presentation.ts
+// packages/core/src/bridge/tool-result-presentation.ts
 import {
   DEFAULT_MAX_BYTES,
   DEFAULT_MAX_LINES,
@@ -3149,7 +3245,7 @@ ${diagText}` : diagText;
   }).content;
 }
 
-// src/bridge/tool-progress-state.ts
+// packages/core/src/bridge/tool-progress-state.ts
 var ToolProgressState = class {
   active = /* @__PURE__ */ new Map();
   applyOutputUpdate(callId, output2) {
@@ -3205,7 +3301,7 @@ var ToolProgressState = class {
   }
 };
 
-// src/bridge/tool-result-extractor.ts
+// packages/core/src/bridge/tool-result-extractor.ts
 function buildTerminalError(event, decoded, canonicalDetails, parentRef) {
   return {
     type: "tool_execution_end",
@@ -3213,6 +3309,7 @@ function buildTerminalError(event, decoded, canonicalDetails, parentRef) {
     toolName: event.toolName,
     result: decoded.errorMessage,
     isError: true,
+    ..."args" in event && typeof event.args === "object" && event.args !== null ? { args: event.args } : {},
     ...canonicalDetails !== void 0 ? { details: canonicalDetails } : {},
     ...parentRef !== void 0 ? { parentRef } : {}
   };
@@ -3232,6 +3329,7 @@ function buildTerminalSuccess(event, decoded, scoped, canonicalDetails, parentRe
     toolName: event.toolName,
     result,
     isError: decoded.isError,
+    ..."args" in event && typeof event.args === "object" && event.args !== null ? { args: event.args } : {},
     ...details !== void 0 ? { details } : {},
     ...parentRef !== void 0 ? { parentRef } : {}
   };
@@ -3283,7 +3381,7 @@ var ToolEventProjector = class {
   }
 };
 
-// src/bridge/child-run-outcome.ts
+// packages/core/src/bridge/child-run-outcome.ts
 function resolveChildRunOutcome(inputs, submissions, lastTaskError) {
   if (inputs && submissions) {
     let hasDoneInput = false;
@@ -3317,7 +3415,7 @@ function resolveChildRunOutcome(inputs, submissions, lastTaskError) {
   return { status: "completed" };
 }
 
-// src/bridge/durable-child-event-adapter.ts
+// packages/core/src/bridge/durable-child-event-adapter.ts
 var DurableChildEventAdapter = class {
   output;
   parentRef;
@@ -3480,7 +3578,7 @@ var DurableChildEventAdapter = class {
   }
 };
 
-// src/bridge/tool-args-resolver.ts
+// packages/core/src/bridge/tool-args-resolver.ts
 function resolveToolCallArgs(callId, current) {
   const rawLive = current.conversation.docs["pi.live"];
   const live = typeof rawLive === "object" && rawLive !== null ? rawLive : {};
@@ -3522,7 +3620,7 @@ function resolveToolCallArgs(callId, current) {
   return {};
 }
 
-// src/bridge/durable-event-adapter.ts
+// packages/core/src/bridge/durable-event-adapter.ts
 var DurableEventAdapter = class {
   output;
   resolveContextWindow;
@@ -3687,13 +3785,13 @@ var DurableEventAdapter = class {
   }
 };
 
-// src/subagent-watcher.ts
+// packages/core/src/subagent-watcher.ts
 import {
   ROOT_CONVERSATION_ID as ROOT_CONVERSATION_ID2
 } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT as BACKGROUND_CONTEXT2 } from "@earendil-works/chord/context";
 
-// src/binding-docs.ts
+// packages/core/src/binding-docs.ts
 import { defineDoc as defineDoc3 } from "@earendil-works/pi-durable";
 var BindingDoc = defineDoc3({
   kind: "durable.binding",
@@ -3715,7 +3813,7 @@ function identityKey(identity) {
   return JSON.stringify([identity.providerId, identity.sessionId, identity.threadId]);
 }
 
-// src/subagent-watcher.ts
+// packages/core/src/subagent-watcher.ts
 function extractChildConversationId(event) {
   if (event.type === "tool_execution_update" || event.type === "tool_execution_end") {
     const details = extractCanonicalToolDetails(event);
@@ -3797,7 +3895,7 @@ async function startSubagentWatcher(harness, adapter, getCurrentView, options) {
   };
 }
 
-// src/engine.ts
+// packages/core/src/engine.ts
 var DurableEngine = class _DurableEngine {
   #instance;
   sessionDir;
@@ -3857,7 +3955,7 @@ var DurableEngine = class _DurableEngine {
   }
 };
 
-// src/model-setup.ts
+// packages/core/src/model-setup.ts
 import {
   DefaultResourceLoader as DefaultResourceLoader2,
   ModelRuntime as ModelRuntime2,
@@ -3929,7 +4027,7 @@ async function setupRunnerModels(cwd, args2) {
   };
 }
 
-// src/jsonl.ts
+// packages/core/src/jsonl.ts
 import { StringDecoder } from "node:string_decoder";
 function serializeJsonLine(value) {
   return `${JSON.stringify(value)}
@@ -3967,7 +4065,7 @@ function attachJsonlLineReader(stream, onLine) {
   };
 }
 
-// src/cli-args.ts
+// packages/core/src/cli-args.ts
 function parseCliArgs(argv2) {
   const args2 = {};
   for (let i = 0; i < argv2.length; i++) {
@@ -4004,11 +4102,11 @@ function parseCliArgs(argv2) {
   return args2;
 }
 
-// src/session-commands.ts
+// packages/core/src/session-commands.ts
 import { ROOT_CONVERSATION_ID as ROOT_CONVERSATION_ID5 } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT as BACKGROUND_CONTEXT4 } from "@earendil-works/chord/context";
 
-// src/binding-commands.ts
+// packages/core/src/binding-commands.ts
 function toConversationId(id) {
   if (typeof id === "number" && Number.isInteger(id) && id > 0) {
     return id;
@@ -4082,12 +4180,12 @@ async function handleBindingCommand(cmd, durable, responder) {
   return false;
 }
 
-// src/session-state-commands.ts
+// packages/core/src/session-state-commands.ts
 import { ROOT_CONVERSATION_ID as ROOT_CONVERSATION_ID4 } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT as BACKGROUND_CONTEXT3 } from "@earendil-works/chord/context";
 import { estimateContextTokens } from "@earendil-works/pi-ai/utils/estimate";
 
-// src/conversation-id.ts
+// packages/core/src/conversation-id.ts
 import { ROOT_CONVERSATION_ID as ROOT_CONVERSATION_ID3 } from "@earendil-works/pi-durable";
 function parseConversationId(id) {
   if (id === void 0 || id === null) return ROOT_CONVERSATION_ID3;
@@ -4102,7 +4200,7 @@ function parseConversationId(id) {
   return num;
 }
 
-// src/session-state-commands.ts
+// packages/core/src/session-state-commands.ts
 async function handleSessionStateCommand(cmd, durable, modelRuntime, args2, respond) {
   if (cmd.type === "get_state") {
     const targetId = parseConversationId(cmd.conversationId);
@@ -4172,7 +4270,7 @@ async function handleSessionStateCommand(cmd, durable, modelRuntime, args2, resp
   return false;
 }
 
-// src/session-fork.ts
+// packages/core/src/session-fork.ts
 import { existsSync as existsSync2, mkdirSync, readdirSync, rmSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { join as join3, resolve as resolve3 } from "node:path";
@@ -4239,7 +4337,7 @@ function forkSessionDatabase(options) {
   }
 }
 
-// src/session-commands.ts
+// packages/core/src/session-commands.ts
 function toDurableInput(message, images) {
   const msg = message ?? "";
   const imgs = Array.isArray(images) ? images : [];
@@ -4380,7 +4478,7 @@ async function handleActiveSessionCommand(cmd, durable, modelRuntime, args2, res
   }
 }
 
-// ../contracts/dist/index.js
+// packages/contracts/dist/index.js
 import { z as z2 } from "zod";
 import { z as z22 } from "zod";
 import { z as z4 } from "zod";
@@ -4789,7 +4887,7 @@ var runnerResponseSchema = z10.discriminatedUnion("success", [
   base.extend({ success: z10.literal(false), error: z10.string() }).passthrough()
 ]);
 
-// src/shared/version.ts
+// packages/core/src/shared/version.ts
 import { existsSync as existsSync3, readFileSync as readFileSync2 } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join as join4 } from "node:path";
@@ -4825,7 +4923,7 @@ function getPiDurableVersion() {
   return "1.0.0";
 }
 
-// src/task-tokens.ts
+// packages/core/src/task-tokens.ts
 function normalizeUsage(raw) {
   if (!raw || typeof raw !== "object") return void 0;
   const u = raw;
@@ -4881,7 +4979,7 @@ function extractTerminalTokens(task, current, recentEntries) {
   return void 0;
 }
 
-// src/runtime-graph-receipts.ts
+// packages/core/src/runtime-graph-receipts.ts
 var MAX_ERROR_MESSAGE_LENGTH = 1024;
 var MAX_ERROR_CODE_LENGTH = 64;
 var RuntimeGraphReceiptsCollector = class {
@@ -5018,7 +5116,7 @@ var RuntimeGraphReceiptsCollector = class {
   }
 };
 
-// src/runtime-graph-conversations.ts
+// packages/core/src/runtime-graph-conversations.ts
 var RuntimeGraphConversations = class {
   known = /* @__PURE__ */ new Map();
   constructor(rootConversationId) {
@@ -5057,7 +5155,7 @@ var RuntimeGraphConversations = class {
   }
 };
 
-// src/task-labels.ts
+// packages/core/src/task-labels.ts
 var MAX_NAME = 48;
 var MAX_TARGET_HINT = 128;
 var MAX_TASK_NAMES = 512;
@@ -5137,7 +5235,7 @@ function taskLabel(node, names, modelLabel) {
   return call !== void 0 || plain !== void 0 ? kind : `${kind} \xB7 ${state.phase}`;
 }
 
-// src/runtime-graph-state.ts
+// packages/core/src/runtime-graph-state.ts
 function extractTaskGraph(current) {
   if (!current || typeof current !== "object") return { tasks: {} };
   const obj = current;
@@ -5171,7 +5269,7 @@ function mapTaskGraphNodeState(state) {
   }
 }
 
-// src/runtime-graph-mapper.ts
+// packages/core/src/runtime-graph-mapper.ts
 function extractTaskModelMeta(node, current, rootConvId) {
   if (node.kind !== "pi.generation") return {};
   const cp = node.state?.checkpoint ?? node.checkpoint;
@@ -5280,7 +5378,7 @@ function recordTerminalWithDetails(receipts, task, names, nativeStartedAt, curre
   });
 }
 
-// src/runtime-graph-source.ts
+// packages/core/src/runtime-graph-source.ts
 var RuntimeGraphSource = class {
   viewSource;
   scope;
@@ -5456,10 +5554,10 @@ var RuntimeGraphSource = class {
   }
 };
 
-// src/runner-server.ts
+// packages/core/src/runner-server.ts
 import { ROOT_CONVERSATION_ID as ROOT_CONVERSATION_ID6 } from "@earendil-works/pi-durable";
 
-// src/stdout-guard.ts
+// packages/core/src/stdout-guard.ts
 import { getPackageDir } from "@earendil-works/pi-coding-agent";
 import { join as join5 } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -5550,7 +5648,7 @@ async function flushWireStdout() {
   }
 }
 
-// src/control-channel.ts
+// packages/core/src/control-channel.ts
 import { existsSync as existsSync5, readFileSync as readFileSync4, watch } from "node:fs";
 import { join as join6 } from "node:path";
 import { BACKGROUND_CONTEXT as BACKGROUND_CONTEXT5 } from "@earendil-works/chord/context";
@@ -5611,7 +5709,7 @@ function startRunnerControlChannel(sessionDir, harness, onNotice) {
   };
 }
 
-// src/runner-server.ts
+// packages/core/src/runner-server.ts
 var argv = process.argv.slice(2);
 if (argv.includes("--version") || argv.includes("-v")) {
   console.log(getPiDurableVersion());
