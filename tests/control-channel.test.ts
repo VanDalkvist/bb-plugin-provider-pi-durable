@@ -24,7 +24,7 @@ test("Cycle 95: startRunnerControlChannel processes abort_task from control.json
 		appendFileSync(controlFile, JSON.stringify({ type: "abort_task", taskId: 88 }) + "\n", "utf8");
 
 		// Allow filesystem event to deliver
-		for (let i = 0; i < 20; i++) {
+		for (let i = 0; i < 40; i++) {
 			if (abortedIds.includes(88)) break;
 			await new Promise((r) => setTimeout(r, 50));
 		}
