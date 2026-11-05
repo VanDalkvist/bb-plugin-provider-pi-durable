@@ -25,8 +25,12 @@ and committer rules are maintained below.
 ⛔ **Deterministic Testing (AP-028, AP-013).**
 Каждый цикл сопровождается честными unit/integration тестами (`npm test`). Запрещены фейковые тесты и замаскированные ошибки.
 
-⛔ **Dogfooding Invariant: ALL SUBTHREADS ON PI-DURABLE.**
-Все вспомогательные субтреды (воркеры реализации, автономные архитектурные ревьюеры) в этом репозитории ОБЯЗАНЫ запускаться СТРОГО через `--provider pi-durable`. Запрещено съезжать на базовый провайдер `pi`. Догфудинг собственного рантайма является непреложным правилом разработки.
+⛔ **Temporary operator override: ALL NEW SUBTHREADS ON PI.**
+Прямое указание Вани 2026-11-05: pi-durable provider пока не обновлён и сломан.
+До отдельной отмены ограничения все новые воркеры и ревьюеры запускаются через
+`--provider pi --model antigravity/gemini-3.8-flash --reasoning-level high`.
+Прежний обязательный догфудинг pi-durable приостановлен. Не возобновлять остановленные
+pi-durable-сабы и не подменять этим разрешением установку/перезапуск пользовательского рантайма.
 
 ## Subagent Model Policy & Boundary Authority
 
